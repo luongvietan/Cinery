@@ -8,12 +8,14 @@ interface ImportAssetVersionButtonProps {
   assetId: string;
   /** Called after a successful import so the parent can refetch the asset. */
   onImported: () => void;
+  className?: string;
 }
 
 export function ImportAssetVersionButton({
   projectRootPath,
   assetId,
   onImported,
+  className,
 }: ImportAssetVersionButtonProps) {
   const [error, setError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
@@ -46,10 +48,10 @@ export function ImportAssetVersionButton({
   }
 
   return (
-    <div>
-      {error && <p role="alert">{error}</p>}
+    <div className={className}>
+      {error ? <p role="alert">{error}</p> : null}
       <button type="button" onClick={handleClick} disabled={importing}>
-        Import New Version
+        {importing ? "Importing…" : "Import Version"}
       </button>
     </div>
   );

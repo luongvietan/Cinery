@@ -1,16 +1,32 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { type FormEvent, useEffect, useState } from "react";
-import type { Asset, AssetType } from "@cinematic/domain";
+import type { AssetSummary, AssetType } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { createAsset, listAssets } from "./api";
-import { humanizeAssetType, SPRINT_ONE_ASSET_TYPES } from "./format";
+import {
+  describeAssetListStatus,
+  humanizeAssetType,
+  SPRINT_ONE_ASSET_TYPES,
+} from "./format";
+import { joinProjectRelativePath } from "./paths";
+import { BackButton } from "../../components/BackButton";
 
 interface AssetListProps {
   projectRootPath: string;
+  selectedAssetId: string | null;
+  refreshKey?: number;
   onSelectAsset: (assetId: string) => void;
+  onBack?: () => void;
 }
 
-export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
-  const [assets, setAssets] = useState<Asset[]>([]);
+export function AssetList({
+  projectRootPath,
+  selectedAssetId,
+  refreshKey = 0,
+  onSelectAsset,
+  onBack,
+}: AssetListProps) {
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -24,7 +40,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
     let cancelled = false;
     setLoaded(false);
 
-    refreshAssets(projectRootPath)
+    listAssets(projectRootPath)
       .then((result) => {
         if (!cancelled) {
           setAssets(result);
@@ -44,11 +60,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
     return () => {
       cancelled = true;
     };
-  }, [projectRootPath]);
-
-  function refreshAssets(rootPath: string): Promise<Asset[]> {
-    return listAssets(rootPath);
-  }
+  }, [projectRootPath, refreshKey]);
 
   function handleNewAssetClick() {
     setError(null);
@@ -70,7 +82,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
         type: assetType,
         label,
       });
-      const refreshed = await refreshAssets(projectRootPath);
+      const refreshed = await listAssets(projectRootPath);
       setAssets(refreshed);
       setIsCreateOpen(false);
       setLabel("");
@@ -84,7 +96,8 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
 
   return (
     <section aria-label="Assets">
-      {error && <p role="alert">{error}</p>}
+      {onBack ? <BackButton label="← Workspace" onClick={onBack} /> : null}
+      {error ? <p role="alert">{error}</p> : null}
 
       <button
         type="button"
@@ -94,7 +107,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
         New Asset
       </button>
 
-      {isCreateOpen && (
+      {isCreateOpen ? (
         <form onSubmit={handleCreateSubmit}>
           <label htmlFor="new-asset-type">Type</label>
           <select
@@ -128,25 +141,68 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
             Cancel
           </button>
         </form>
-      )}
+      ) : null}
 
       {loaded && !error && assets.length === 0 ? (
         <p>No assets yet</p>
       ) : (
-        <ul>
-          {assets.map((asset) => (
-            <li key={asset.id}>
-              <button type="button" onClick={() => onSelectAsset(asset.id)}>
-                <span>{asset.label}</span>
-                <span>{humanizeAssetType(asset.type)}</span>
-                <span>
-                  {asset.canonicalVersionId
-                    ? "Canonical set"
-                    : "No canonical version"}
-                </span>
-              </button>
-            </li>
-          ))}
+        <ul className="asset-sidebar-list">
+          {assets.map((asset) => {
+            const statusLabel = describeAssetListStatus(asset);
+            const hasCanonical = asset.canonicalVersionNumber !== null;
+            const hasVersions = asset.versionCount > 0;
+            const isSelected = asset.id === selectedAssetId;
+
+            return (
+              <li key={asset.id}>
+                <button
+                  type="button"
+                  className={
+                    isSelected
+                      ? "asset-sidebar-item asset-sidebar-item--selected"
+                      : "asset-sidebar-item"
+                  }
+                  onClick={() => onSelectAsset(asset.id)}
+                >
+                  {asset.previewThumbnailPath ? (
+                    <img
+                      className="asset-sidebar-thumb"
+                      src={convertFileSrc(
+                        joinProjectRelativePath(
+                          projectRootPath,
+                          asset.previewThumbnailPath,
+                        ),
+                      )}
+                      alt=""
+                    />
+                  ) : (
+                    <span
+                      className="asset-sidebar-thumb asset-sidebar-thumb--empty"
+                      aria-hidden="true"
+                    />
+                  )}
+                  <span className="asset-sidebar-copy">
+                    <span className="asset-sidebar-label">{asset.label}</span>
+                    <span className="asset-sidebar-type">
+                      {humanizeAssetType(asset.type)}
+                    </span>
+                    <span
+                      className={
+                        hasCanonical
+                          ? "asset-sidebar-status asset-sidebar-status--canonical"
+                          : "asset-sidebar-status"
+                      }
+                    >
+                      <span aria-hidden="true">
+                        {hasVersions ? (hasCanonical ? "●" : "○") : "○"}
+                      </span>{" "}
+                      {statusLabel}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>

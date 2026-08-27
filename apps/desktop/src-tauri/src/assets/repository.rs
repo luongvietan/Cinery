@@ -1,4 +1,4 @@
-use crate::assets::model::{AssetRecord, AssetVersionRecord, CanonicalPromotionResult};
+use crate::assets::model::{AssetRecord, AssetSummaryRecord, AssetVersionRecord, CanonicalPromotionResult};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -25,18 +25,29 @@ pub fn insert_asset(conn: &Connection, record: &AssetRecord) -> Result<(), AppEr
     Ok(())
 }
 
-/// Lists every asset belonging to `project_id`.
-pub fn list_assets(conn: &Connection, project_id: &str) -> Result<Vec<AssetRecord>, AppError> {
+/// Lists every asset belonging to `project_id` with sidebar summary fields.
+pub fn list_asset_summaries(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Vec<AssetSummaryRecord>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, project_id, type, label, owner_entity_id, canonical_version_id, \
-             created_at, updated_at \
-             FROM assets WHERE project_id = ?1 ORDER BY created_at ASC",
+            "SELECT a.id, a.project_id, a.type, a.label, a.owner_entity_id, \
+             a.canonical_version_id, a.created_at, a.updated_at, \
+             (SELECT COUNT(*) FROM asset_versions WHERE asset_id = a.id) AS version_count, \
+             cv.version_number AS canonical_version_number, \
+             COALESCE(cv.thumbnail_path, \
+               (SELECT thumbnail_path FROM asset_versions \
+                WHERE asset_id = a.id ORDER BY version_number DESC LIMIT 1)) \
+             AS preview_thumbnail_path \
+             FROM assets a \
+             LEFT JOIN asset_versions cv ON cv.id = a.canonical_version_id \
+             WHERE a.project_id = ?1 ORDER BY a.created_at ASC",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let rows = stmt
-        .query_map(params![project_id], row_to_asset_record)
+        .query_map(params![project_id], row_to_asset_summary_record)
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let mut assets = Vec::new();
@@ -70,7 +81,7 @@ pub fn list_asset_versions(
     let mut stmt = conn
         .prepare(
             "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-             original_filename, mime_type, byte_size, parent_version_id, created_at \
+             original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
              FROM asset_versions WHERE asset_id = ?1 ORDER BY version_number DESC",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -96,7 +107,7 @@ pub fn get_asset_version_by_id(
 ) -> Result<Option<AssetVersionRecord>, AppError> {
     conn.query_row(
         "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-         original_filename, mime_type, byte_size, parent_version_id, created_at \
+         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
          FROM asset_versions WHERE id = ?1",
         params![version_id],
         row_to_asset_version_record,
@@ -116,7 +127,7 @@ pub fn find_version_by_hash(
 ) -> Result<Option<AssetVersionRecord>, AppError> {
     tx.query_row(
         "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-         original_filename, mime_type, byte_size, parent_version_id, created_at \
+         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
          FROM asset_versions WHERE asset_id = ?1 AND sha256 = ?2",
         params![asset_id, sha256],
         row_to_asset_version_record,
@@ -146,8 +157,8 @@ pub fn insert_asset_version(
     tx.execute(
         "INSERT INTO asset_versions \
          (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-          original_filename, mime_type, byte_size, parent_version_id, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          original_filename, mime_type, byte_size, width, height, parent_version_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             record.id,
             record.asset_id,
@@ -159,6 +170,8 @@ pub fn insert_asset_version(
             record.original_filename,
             record.mime_type,
             record.byte_size,
+            record.width,
+            record.height,
             record.parent_version_id,
             record.created_at,
         ],
@@ -268,7 +281,25 @@ fn row_to_asset_version_record(row: &rusqlite::Row) -> rusqlite::Result<AssetVer
         original_filename: row.get(7)?,
         mime_type: row.get(8)?,
         byte_size: row.get(9)?,
-        parent_version_id: row.get(10)?,
-        created_at: row.get(11)?,
+        width: row.get(10)?,
+        height: row.get(11)?,
+        parent_version_id: row.get(12)?,
+        created_at: row.get(13)?,
+    })
+}
+
+fn row_to_asset_summary_record(row: &rusqlite::Row) -> rusqlite::Result<AssetSummaryRecord> {
+    Ok(AssetSummaryRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        asset_type: row.get(2)?,
+        label: row.get(3)?,
+        owner_entity_id: row.get(4)?,
+        canonical_version_id: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        version_count: row.get(8)?,
+        canonical_version_number: row.get(9)?,
+        preview_thumbnail_path: row.get(10)?,
     })
 }

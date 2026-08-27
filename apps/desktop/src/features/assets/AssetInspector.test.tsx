@@ -5,9 +5,28 @@ import { AssetInspector } from "./AssetInspector";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
 
 vi.mock("./api");
+vi.mock("./shell", () => ({
+  openAssetFolder: vi.fn(),
+  openProjectRelativePath: vi.fn(),
+  revealProjectRelativePath: vi.fn(),
+}));
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `mock-asset://${path}`,
 }));
+
+const baseVersion = {
+  assetId: "asset-1",
+  filePath: "assets/asset-1/v002/v2.png",
+  thumbnailPath: "thumbnails/asset-1/v2.webp",
+  sha256: "hash2",
+  originalFilename: "second.png",
+  mimeType: "image/png" as const,
+  byteSize: 100,
+  width: 2048,
+  height: 2048,
+  parentVersionId: null,
+  createdAt: "2026-08-27T06:10:00Z",
+};
 
 describe("AssetInspector", () => {
   beforeEach(() => {
@@ -31,17 +50,9 @@ describe("AssetInspector", () => {
       versions: [
         {
           id: "v2",
-          assetId: "asset-1",
           versionNumber: 2,
           status: "candidate",
-          filePath: "assets/asset-1/v002/v2.png",
-          thumbnailPath: "thumbnails/asset-1/v2.webp",
-          sha256: "hash2",
-          originalFilename: "second.png",
-          mimeType: "image/png",
-          byteSize: 100,
-          parentVersionId: null,
-          createdAt: "2026-08-27T06:10:00Z",
+          ...baseVersion,
         },
         {
           id: "v1",
@@ -54,6 +65,8 @@ describe("AssetInspector", () => {
           originalFilename: "first.png",
           mimeType: "image/png",
           byteSize: 100,
+          width: 1024,
+          height: 1024,
           parentVersionId: null,
           createdAt: "2026-08-27T06:05:00Z",
         },
@@ -65,13 +78,14 @@ describe("AssetInspector", () => {
     );
 
     const versions = await screen.findAllByTestId("asset-version");
-    expect(versions[0]).toHaveTextContent("V02");
+    expect(versions[0]).toHaveTextContent("v002");
     expect(versions[0]).toHaveTextContent("Candidate");
-    expect(versions[1]).toHaveTextContent("V01");
+    expect(versions[1]).toHaveTextContent("v001");
     expect(versions[1]).toHaveTextContent("Canonical");
+    expect(screen.getByText("Canonical: v001")).toBeInTheDocument();
   });
 
-  it("shows immutable metadata for each version", async () => {
+  it("shows metadata and distinguishes no canonical from no versions", async () => {
     vi.mocked(getAssetWithVersions).mockResolvedValue({
       asset: {
         id: "asset-1",
@@ -86,15 +100,17 @@ describe("AssetInspector", () => {
       versions: [
         {
           id: "v1",
-          assetId: "asset-1",
           versionNumber: 1,
           status: "candidate",
+          assetId: "asset-1",
           filePath: "assets/asset-1/v001/v1.png",
           thumbnailPath: "thumbnails/asset-1/v1.webp",
           sha256: "abcdef1234",
           originalFilename: "first.png",
           mimeType: "image/png",
           byteSize: 2048,
+          width: 512,
+          height: 512,
           parentVersionId: null,
           createdAt: "2026-08-27T06:05:00Z",
         },
@@ -107,16 +123,11 @@ describe("AssetInspector", () => {
 
     const version = await screen.findByTestId("asset-version");
     expect(version).toHaveTextContent("first.png");
-    expect(version).toHaveTextContent("abcdef1234");
-    expect(version).toHaveTextContent("2048");
-    expect(version).toHaveTextContent("image/png");
-    expect(version).toHaveTextContent("assets/asset-1/v001/v1.png");
-    expect(screen.getByText("No canonical version")).toBeInTheDocument();
-
-    const thumbnail = screen.getByRole("img") as HTMLImageElement;
-    expect(thumbnail.src).toContain(
-      "mock-asset://",
-    );
+    expect(version).toHaveTextContent("512 × 512");
+    expect(version).toHaveTextContent("PNG");
+    expect(screen.getByText("Canonical: No canonical version")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
   });
 
   it("promotes a candidate only after explicit user action and refreshes backend state", async () => {
@@ -134,17 +145,9 @@ describe("AssetInspector", () => {
       versions: [
         {
           id: "v2",
-          assetId: "asset-1",
           versionNumber: 2,
           status: "candidate" as const,
-          filePath: "assets/asset-1/v002/v2.png",
-          thumbnailPath: "thumbnails/asset-1/v2.webp",
-          sha256: "hash2",
-          originalFilename: "second.png",
-          mimeType: "image/png" as const,
-          byteSize: 100,
-          parentVersionId: null,
-          createdAt: "2026-08-27T06:10:00Z",
+          ...baseVersion,
         },
         {
           id: "v1",
@@ -157,6 +160,8 @@ describe("AssetInspector", () => {
           originalFilename: "first.png",
           mimeType: "image/png" as const,
           byteSize: 100,
+          width: 1024,
+          height: 1024,
           parentVersionId: null,
           createdAt: "2026-08-27T06:05:00Z",
         },
@@ -185,20 +190,20 @@ describe("AssetInspector", () => {
     );
 
     const promoteButton = await screen.findByRole("button", {
-      name: "Promote V02 to Canon",
+      name: "Set Canonical",
     });
     expect(promoteAssetVersion).not.toHaveBeenCalled();
 
     await user.click(promoteButton);
 
     expect(confirm).toHaveBeenCalledWith(
-      "Make V02 the canonical version of MARA-FACE?\nThe current canonical version will be preserved and marked Superseded.",
+      "Make v002 the canonical version of MARA-FACE?\nThe current canonical version will be preserved and marked Superseded.",
     );
     expect(promoteAssetVersion).toHaveBeenCalledWith({
       projectRootPath: "/projects/red-door",
       assetVersionId: "v2",
     });
-    expect(await screen.findByText("Canonical version: v2")).toBeInTheDocument();
+    expect(await screen.findByText("Canonical: v002")).toBeInTheDocument();
     expect(getAssetWithVersions).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,5 +1,6 @@
 import type {
   Asset,
+  AssetSummary,
   AssetVersion,
   AssetWithVersions,
   CanonicalPromotionResult,
@@ -31,8 +32,8 @@ export function promoteAssetVersion(
   });
 }
 
-export function listAssets(projectRootPath: string): Promise<Asset[]> {
-  return invokeCommand<Asset[]>("list_assets", { projectRootPath });
+export function listAssets(projectRootPath: string): Promise<AssetSummary[]> {
+  return invokeCommand<AssetSummary[]>("list_assets", { projectRootPath });
 }
 
 export function getAssetWithVersions(

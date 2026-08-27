@@ -77,10 +77,10 @@ impl AssetService {
     }
 
     /// Lists every asset belonging to the project rooted at `project_root`.
-    pub fn list_assets(project_root: &Path) -> Result<Vec<AssetRecord>, AppError> {
+    pub fn list_assets(project_root: &Path) -> Result<Vec<crate::assets::model::AssetSummaryRecord>, AppError> {
         let conn = open_project_db(project_root)?;
         let project_id = project_repository::read_project(&conn)?.id;
-        repository::list_assets(&conn, &project_id)
+        repository::list_asset_summaries(&conn, &project_id)
     }
 
     /// Fetches a single asset (scoped to the open project) along with all
@@ -200,6 +200,8 @@ impl AssetService {
             original_filename,
             mime_type: inspected.mime_type.to_string(),
             byte_size: inspected.byte_size as i64,
+            width: Some(inspected.width as i64),
+            height: Some(inspected.height as i64),
             parent_version_id,
             created_at: Utc::now().to_rfc3339(),
         };

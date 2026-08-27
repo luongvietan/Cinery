@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cinery-desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@cinematic/desktop", "run", "dev"],
+      "port": 1420
+    }
+  ]
+}

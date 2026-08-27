@@ -1,64 +1,72 @@
 import { useState } from "react";
 import type { ProjectSummary } from "@cinematic/domain";
+import { BackButton } from "../../components/BackButton";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
-import { ImportAssetVersionButton } from "../assets/ImportAssetVersionButton";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
+  onCloseProject: () => void;
 }
 
 type PanelView = "none" | "assets";
 
-export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
+export function ProjectWorkspace({
+  project,
+  onCloseProject,
+}: ProjectWorkspaceProps) {
   const [panelView, setPanelView] = useState<PanelView>("none");
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
-  const [importGeneration, setImportGeneration] = useState(0);
+  const [assetRefreshKey, setAssetRefreshKey] = useState(0);
+
+  function handleAssetChanged() {
+    setAssetRefreshKey((key) => key + 1);
+  }
+
+  function handleAssetsPanelBack() {
+    setPanelView("none");
+    setSelectedAssetId(null);
+  }
 
   return (
     <>
-      <header>
-        <h1>{project.name}</h1>
-        <span>{project.rootPath}</span>
+      <header className="workspace-header">
+        <BackButton label="← Projects" onClick={onCloseProject} />
+        <div className="workspace-header-copy">
+          <h1>{project.name}</h1>
+          <span>{project.rootPath}</span>
+        </div>
       </header>
       <nav>
-        <button type="button" onClick={() => setPanelView("assets")}>
+        <button
+          type="button"
+          className={panelView === "assets" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => setPanelView("assets")}
+        >
           Assets
         </button>
       </nav>
       <section aria-label="Project workspace">
-        {panelView === "assets" && (
+        {panelView === "assets" ? (
           <>
             <AssetList
               projectRootPath={project.rootPath}
+              selectedAssetId={selectedAssetId}
+              refreshKey={assetRefreshKey}
               onSelectAsset={(assetId) => setSelectedAssetId(assetId)}
+              onBack={handleAssetsPanelBack}
             />
-            {selectedAssetId && (
-              <div>
-                <AssetInspector
-                  key={`${selectedAssetId}:${importGeneration}`}
-                  projectRootPath={project.rootPath}
-                  assetId={selectedAssetId}
-                />
-                {/*
-                  Keyed on `selectedAssetId` alone (not `importGeneration`,
-                  unlike the inspector above) so it remounts - and its
-                  in-flight `importing`/`error` state resets - on every asset
-                  switch, but not on every import completion for the
-                  currently-selected asset.
-                */}
-                <ImportAssetVersionButton
-                  key={selectedAssetId}
-                  projectRootPath={project.rootPath}
-                  assetId={selectedAssetId}
-                  onImported={() =>
-                    setImportGeneration((generation) => generation + 1)
-                  }
-                />
-              </div>
-            )}
+            {selectedAssetId ? (
+              <AssetInspector
+                key={selectedAssetId}
+                projectRootPath={project.rootPath}
+                assetId={selectedAssetId}
+                onAssetChanged={handleAssetChanged}
+                onBack={() => setSelectedAssetId(null)}
+              />
+            ) : null}
           </>
-        )}
+        ) : null}
       </section>
     </>
   );

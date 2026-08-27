@@ -47,8 +47,24 @@ export interface AssetVersion {
   originalFilename: string;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   byteSize: number;
+  width: number | null;
+  height: number | null;
   parentVersionId: string | null;
   createdAt: string;
+}
+
+export interface AssetSummary {
+  id: string;
+  projectId: string;
+  type: AssetType;
+  label: string;
+  ownerEntityId: string | null;
+  canonicalVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  versionCount: number;
+  canonicalVersionNumber: number | null;
+  previewThumbnailPath: string | null;
 }
 
 export interface AssetWithVersions {
@@ -82,7 +98,7 @@ export interface CanonicalPromotionResult {
 }
 
 export function formatVersionNumber(value: number): string {
-  return `V${String(value).padStart(2, "0")}`;
+  return `v${String(value).padStart(3, "0")}`;
 }
 
 export function validateAssetLabel(value: string): string {

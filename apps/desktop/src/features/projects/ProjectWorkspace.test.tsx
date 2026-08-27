@@ -15,8 +15,16 @@ import {
 } from "../assets/api";
 
 vi.mock("../assets/api");
+vi.mock("../assets/shell", () => ({
+  openAssetFolder: vi.fn(),
+  openProjectRelativePath: vi.fn(),
+  revealProjectRelativePath: vi.fn(),
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
+}));
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `mock-asset://${path}`,
 }));
 
 const project: ProjectSummary = {
@@ -54,6 +62,9 @@ describe("ProjectWorkspace", () => {
         label: "Asset A",
         ownerEntityId: null,
         canonicalVersionId: null,
+        versionCount: 0,
+        canonicalVersionNumber: null,
+        previewThumbnailPath: null,
         createdAt: "2026-08-27T06:00:00Z",
         updatedAt: "2026-08-27T06:00:00Z",
       },
@@ -64,6 +75,9 @@ describe("ProjectWorkspace", () => {
         label: "Asset B",
         ownerEntityId: null,
         canonicalVersionId: null,
+        versionCount: 0,
+        canonicalVersionNumber: null,
+        previewThumbnailPath: null,
         createdAt: "2026-08-27T06:00:00Z",
         updatedAt: "2026-08-27T06:00:00Z",
       },
@@ -89,46 +103,69 @@ describe("ProjectWorkspace", () => {
     );
 
     const user = userEvent.setup();
-    render(<ProjectWorkspace project={project} />);
+    render(
+      <ProjectWorkspace project={project} onCloseProject={vi.fn()} />,
+    );
 
     await user.click(screen.getByRole("button", { name: "Assets" }));
     await screen.findByText("Asset A");
 
-    // Select asset A and start an import that never resolves during this test.
     await user.click(screen.getByRole("button", { name: /Asset A/ }));
     await screen.findByRole("heading", { level: 2, name: "Asset A" });
-    await user.click(
-      screen.getByRole("button", { name: "Import New Version" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Import Version" }));
 
     const importButton = await screen.findByRole("button", {
-      name: "Import New Version",
+      name: "Importing…",
     });
     expect(importButton).toBeDisabled();
 
-    // Switch to asset B before A's import settles.
     await user.click(screen.getByRole("button", { name: /Asset B/ }));
     await screen.findByRole("heading", { level: 2, name: "Asset B" });
 
     const importButtonForB = screen.getByRole("button", {
-      name: "Import New Version",
+      name: "Import Version",
     });
     expect(importButtonForB).not.toBeDisabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 
-    // A's import now rejects - since the button remounted on the asset
-    // switch, this must not surface as an error under asset B's button.
     rejectImport({ message: "disk is full" });
     await Promise.resolve();
     await Promise.resolve();
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Import New Version" }),
+      screen.getByRole("button", { name: "Import Version" }),
     ).not.toBeDisabled();
 
-    // Keep the linter happy about the unused resolver - the promise already
-    // settled via rejectImport above, so this is a harmless no-op.
     void resolveImport;
+  });
+
+  it("navigates back through workspace, assets list, and asset detail", async () => {
+    const onCloseProject = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ProjectWorkspace project={project} onCloseProject={onCloseProject} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Assets" }));
+    expect(screen.getByRole("button", { name: "← Workspace" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Asset A/ }));
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Asset A" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "← Assets" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "← Assets" }));
+    expect(
+      screen.queryByRole("heading", { level: 2, name: "Asset A" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Asset A")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "← Workspace" }));
+    expect(screen.queryByText("Asset A")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "← Projects" }));
+    expect(onCloseProject).toHaveBeenCalledTimes(1);
   });
 });

@@ -36,8 +36,29 @@ pub struct AssetVersionRecord {
     pub original_filename: String,
     pub mime_type: String,
     pub byte_size: i64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
     pub parent_version_id: Option<String>,
     pub created_at: String,
+}
+
+/// Summary row for the asset sidebar: core asset fields plus version
+/// counts and canonical preview metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetSummaryRecord {
+    pub id: String,
+    pub project_id: String,
+    #[serde(rename = "type")]
+    pub asset_type: String,
+    pub label: String,
+    pub owner_entity_id: Option<String>,
+    pub canonical_version_id: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub version_count: i64,
+    pub canonical_version_number: Option<i64>,
+    pub preview_thumbnail_path: Option<String>,
 }
 
 /// An asset together with all of its versions, ordered newest-first.

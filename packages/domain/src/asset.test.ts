@@ -7,9 +7,9 @@ import {
 
 describe("asset domain", () => {
   it("formats version numbers for display", () => {
-    expect(formatVersionNumber(1)).toBe("V01");
-    expect(formatVersionNumber(12)).toBe("V12");
-    expect(formatVersionNumber(105)).toBe("V105");
+    expect(formatVersionNumber(1)).toBe("v001");
+    expect(formatVersionNumber(12)).toBe("v012");
+    expect(formatVersionNumber(105)).toBe("v105");
   });
 
   it("trims a valid label", () => {

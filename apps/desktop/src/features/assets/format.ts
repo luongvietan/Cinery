@@ -1,4 +1,4 @@
-import { ASSET_TYPES, type AssetType } from "@cinematic/domain";
+import { ASSET_TYPES, type AssetType, formatVersionNumber } from "@cinematic/domain";
 
 /**
  * The asset types Sprint 1's UI offers when creating an asset. `video` and
@@ -25,4 +25,50 @@ export function humanizeAssetType(type: AssetType): string {
 
 export function formatStatusLabel(status: string): string {
   return humanizeSnakeCase(status);
+}
+
+export function formatByteSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function formatImageDimensions(
+  width: number | null,
+  height: number | null,
+): string {
+  if (width === null || height === null) {
+    return "Unknown";
+  }
+  return `${width} × ${height}`;
+}
+
+export function formatImageFormat(mimeType: string): string {
+  const format = mimeType.split("/")[1]?.toUpperCase();
+  return format ?? mimeType;
+}
+
+export function formatImportedDate(isoDate: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(isoDate));
+}
+
+export function describeAssetListStatus(summary: {
+  versionCount: number;
+  canonicalVersionNumber: number | null;
+}): string {
+  if (summary.versionCount === 0) {
+    return "No versions";
+  }
+  if (summary.canonicalVersionNumber !== null) {
+    return `${formatVersionNumber(summary.canonicalVersionNumber)} Canonical`;
+  }
+  return "No canonical version";
 }
