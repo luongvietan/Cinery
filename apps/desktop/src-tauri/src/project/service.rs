@@ -201,6 +201,29 @@ mod tests {
     }
 
     #[test]
+    fn rejects_open_when_database_id_diverges_from_manifest() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        let created = ProjectService::create(root, "Red Door").unwrap();
+
+        // Corrupt the database row's id so it no longer matches the id
+        // recorded in project.yaml, simulating a manifest/database
+        // divergence (e.g. a manifest restored from a different backup).
+        let conn = db::open_connection(&root.join("project.db")).unwrap();
+        conn.execute(
+            "UPDATE projects SET id = ?1 WHERE id = ?2",
+            rusqlite::params!["different-id", created.id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let error = ProjectService::open(root).unwrap_err();
+
+        assert!(matches!(error, AppError::ProjectIdentityMismatch));
+    }
+
+    #[test]
     fn rejects_blank_name() {
         let temp = tempdir().unwrap();
 

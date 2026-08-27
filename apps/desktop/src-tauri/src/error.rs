@@ -40,25 +40,65 @@ pub struct AppCommandError {
 }
 
 impl AppError {
-    /// Stable SCREAMING_SNAKE_CASE identifier for this error variant.
-    pub fn code(&self) -> &'static str {
-        match self {
-            AppError::InvalidProjectName => "INVALID_PROJECT_NAME",
-            AppError::InvalidProjectPath => "INVALID_PROJECT_PATH",
-            AppError::ProjectDirectoryNotEmpty => "PROJECT_DIRECTORY_NOT_EMPTY",
-            AppError::InvalidProjectDirectory => "INVALID_PROJECT_DIRECTORY",
-            AppError::ProjectIdentityMismatch => "PROJECT_IDENTITY_MISMATCH",
-            AppError::FileSystem(_) => "FILE_SYSTEM_ERROR",
-            AppError::Database(_) => "DATABASE_ERROR",
-        }
+    /// Stable SCREAMING_SNAKE_CASE identifier for this error variant,
+    /// mechanically derived from the variant's PascalCase name (e.g.
+    /// `ProjectDirectoryNotEmpty` -> `PROJECT_DIRECTORY_NOT_EMPTY`). No
+    /// variant is special-cased: a tuple variant's payload is discarded
+    /// before the name is converted.
+    pub fn code(&self) -> String {
+        let debug_repr = format!("{self:?}");
+        let variant_name = debug_repr.split('(').next().unwrap_or(&debug_repr);
+        to_screaming_snake_case(variant_name)
     }
+}
+
+/// Converts a PascalCase identifier (e.g. `ProjectIdentityMismatch`) into
+/// SCREAMING_SNAKE_CASE (e.g. `PROJECT_IDENTITY_MISMATCH`) by inserting an
+/// underscore before every uppercase letter that isn't the first character.
+fn to_screaming_snake_case(variant_name: &str) -> String {
+    let mut result = String::with_capacity(variant_name.len() + 4);
+    for (index, ch) in variant_name.chars().enumerate() {
+        if ch.is_uppercase() && index != 0 {
+            result.push('_');
+        }
+        result.extend(ch.to_uppercase());
+    }
+    result
 }
 
 impl From<AppError> for AppCommandError {
     fn from(error: AppError) -> Self {
         AppCommandError {
-            code: error.code().to_string(),
+            code: error.code(),
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_screaming_snake_case_codes_mechanically() {
+        assert_eq!(AppError::InvalidProjectName.code(), "INVALID_PROJECT_NAME");
+        assert_eq!(AppError::InvalidProjectPath.code(), "INVALID_PROJECT_PATH");
+        assert_eq!(
+            AppError::ProjectDirectoryNotEmpty.code(),
+            "PROJECT_DIRECTORY_NOT_EMPTY"
+        );
+        assert_eq!(
+            AppError::InvalidProjectDirectory.code(),
+            "INVALID_PROJECT_DIRECTORY"
+        );
+        assert_eq!(
+            AppError::ProjectIdentityMismatch.code(),
+            "PROJECT_IDENTITY_MISMATCH"
+        );
+        assert_eq!(
+            AppError::FileSystem("boom".to_string()).code(),
+            "FILE_SYSTEM"
+        );
+        assert_eq!(AppError::Database("boom".to_string()).code(), "DATABASE");
     }
 }
