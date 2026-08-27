@@ -213,7 +213,8 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             WorkflowStepDefinition::Execute {
                 request_artifact_ref,
                 ..
-            } if approval_artifact_ref != Some(request_artifact_ref.as_str()) => {
+            } if approval_artifact_ref.is_none()
+                || approval_artifact_ref != Some(request_artifact_ref.as_str()) => {
                 return Err(AppError::InvalidBuiltinSkillDefinition(
                     "execute step must use the approval artifact".to_string(),
                 ));
@@ -276,6 +277,11 @@ mod tests {
         let mut definition = builtin_character_builder();
         definition.operations[0].id = "other.operation".to_string();
         definition.operations[0].workflow.swap(0, 1);
+        assert!(validate_definition(&definition).is_err());
+
+        let mut definition = builtin_character_builder();
+        definition.operations[0].id = "other.operation".to_string();
+        definition.operations[0].workflow.remove(3);
         assert!(validate_definition(&definition).is_err());
     }
 
