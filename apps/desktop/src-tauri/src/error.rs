@@ -39,6 +39,18 @@ pub enum AppError {
 
     #[error("Asset was not found")]
     AssetNotFound,
+
+    #[error("Parent version does not belong to the target asset")]
+    ParentVersionMismatch,
+
+    #[error("Only PNG, JPEG, and WebP images can be imported in Sprint 1")]
+    UnsupportedImageFormat,
+
+    #[error("This exact media file is already a version of the asset")]
+    DuplicateAssetVersion,
+
+    #[error("Image processing failed: {0}")]
+    ImageProcessing(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

@@ -1,4 +1,4 @@
-use crate::assets::model::{AssetRecord, AssetWithVersions};
+use crate::assets::model::{AssetRecord, AssetVersionRecord, AssetWithVersions};
 use crate::assets::service::AssetService;
 use crate::error::AppCommandError;
 use crate::project::service as project_service;
@@ -34,4 +34,20 @@ pub fn get_asset_with_versions(
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
     AssetService::get_asset_with_versions(&root, &asset_id).map_err(Into::into)
+}
+
+/// Imports `source_path` as a brand-new, immutable version of `asset_id` in
+/// the project rooted at `project_root_path`.
+#[tauri::command]
+pub fn import_asset_version(
+    project_root_path: String,
+    asset_id: String,
+    source_path: String,
+    parent_version_id: Option<String>,
+) -> Result<AssetVersionRecord, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    let source = PathBuf::from(source_path);
+    AssetService::import_asset_version(&root, &asset_id, &source, parent_version_id)
+        .map_err(Into::into)
 }

@@ -14,6 +14,7 @@ pub fn run() {
       assets::commands::create_asset,
       assets::commands::list_assets,
       assets::commands::get_asset_with_versions,
+      assets::commands::import_asset_version,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

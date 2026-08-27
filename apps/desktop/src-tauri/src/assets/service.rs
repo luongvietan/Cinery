@@ -1,11 +1,16 @@
-use crate::assets::model::{AssetRecord, AssetWithVersions};
+use crate::assets::import;
+use crate::assets::model::{AssetRecord, AssetVersionRecord, AssetWithVersions};
 use crate::assets::repository;
+use crate::assets::thumbnail;
 use crate::db;
 use crate::db::migrations::run_migrations;
 use crate::error::AppError;
 use crate::project::repository as project_repository;
 use chrono::Utc;
-use std::path::Path;
+use rusqlite::TransactionBehavior;
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
 use ulid::Ulid;
 
 /// The full set of asset types recognized by the schema. Mirrors
@@ -92,6 +97,193 @@ impl AssetService {
 
         Ok(AssetWithVersions { asset, versions })
     }
+
+    /// Imports `source_path` as a brand-new, immutable version of
+    /// `asset_id`.
+    ///
+    /// Every imported version starts life as `candidate` -- importing never
+    /// promotes anything, and this function never touches
+    /// `canonical_version_id`. Promotion is a separate concern (Task 7).
+    ///
+    /// `source_path` is only ever read from, never modified, moved, or
+    /// deleted: the file is copied into a new, unique, project-managed
+    /// location under `assets/`, and a WebP thumbnail is generated under
+    /// `thumbnails/`. Duplicate content on the same asset (by SHA-256) is
+    /// rejected before anything is written to disk.
+    ///
+    /// If `parent_version_id` is given, it must name an existing version of
+    /// *this* asset; a parent that doesn't exist at all, or that belongs to
+    /// a different asset, is reported the same way
+    /// (`AppError::ParentVersionMismatch`) -- callers only need to know the
+    /// lineage they asked for isn't valid, not which of the two reasons
+    /// caused it.
+    pub fn import_asset_version(
+        project_root: &Path,
+        asset_id: &str,
+        source_path: &Path,
+        parent_version_id: Option<String>,
+    ) -> Result<AssetVersionRecord, AppError> {
+        let mut conn = open_project_db(project_root)?;
+
+        // Confirm the asset itself exists before doing anything else.
+        repository::get_asset(&conn, asset_id)?;
+
+        // A parent version, if named, must belong to this same asset.
+        if let Some(parent_id) = &parent_version_id {
+            match repository::get_asset_version_by_id(&conn, parent_id)? {
+                Some(parent) if parent.asset_id == asset_id => {}
+                _ => return Err(AppError::ParentVersionMismatch),
+            }
+        }
+
+        // Pure filesystem read, no DB side effects yet -- do this before
+        // opening a transaction.
+        let inspected = import::inspect_image(source_path)?;
+
+        // Acquire the write lock up front (IMMEDIATE) rather than letting
+        // SQLite upgrade a DEFERRED transaction later, which can fail under
+        // concurrent access.
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Reject duplicate content on this asset. Nothing has been written
+        // to disk yet, so this leaves zero filesystem footprint.
+        if repository::find_version_by_hash(&tx, asset_id, &inspected.sha256)?.is_some() {
+            return Err(AppError::DuplicateAssetVersion);
+        }
+
+        let version_number = repository::next_version_number(&tx, asset_id)?;
+        let version_id = Ulid::new().to_string();
+
+        let media_relative = managed_media_path(
+            asset_id,
+            version_number,
+            &version_id,
+            inspected.extension,
+        );
+        let thumbnail_relative = managed_thumbnail_path(asset_id, &version_id);
+        let media_absolute = project_root.join(&media_relative);
+        let thumbnail_absolute = project_root.join(&thumbnail_relative);
+
+        if let Err(err) =
+            materialize_version_files(source_path, &media_absolute, &thumbnail_absolute)
+        {
+            cleanup_failed_import(&media_absolute, &thumbnail_absolute);
+            return Err(err);
+        }
+
+        let original_filename = source_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let record = AssetVersionRecord {
+            id: version_id,
+            asset_id: asset_id.to_string(),
+            version_number,
+            status: "candidate".to_string(),
+            file_path: to_forward_slash(&media_relative),
+            thumbnail_path: to_forward_slash(&thumbnail_relative),
+            sha256: inspected.sha256,
+            original_filename,
+            mime_type: inspected.mime_type.to_string(),
+            byte_size: inspected.byte_size as i64,
+            parent_version_id,
+            created_at: Utc::now().to_rfc3339(),
+        };
+
+        if let Err(err) = repository::insert_asset_version(&tx, &record) {
+            cleanup_failed_import(&media_absolute, &thumbnail_absolute);
+            return Err(err);
+        }
+
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        Ok(record)
+    }
+}
+
+/// Copies `source_path` into `media_absolute` (via a temporary sibling
+/// file, fsynced before the atomic rename into place) and generates a
+/// thumbnail for it at `thumbnail_absolute`.
+fn materialize_version_files(
+    source_path: &Path,
+    media_absolute: &Path,
+    thumbnail_absolute: &Path,
+) -> Result<(), AppError> {
+    if let Some(parent) = media_absolute.parent() {
+        fs::create_dir_all(parent).map_err(|e| AppError::FileSystem(e.to_string()))?;
+    }
+
+    let tmp_media_path = with_tmp_suffix(media_absolute);
+    fs::copy(source_path, &tmp_media_path)
+        .map_err(|e| AppError::FileSystem(format!("copy failed: {e}")))?;
+
+    // Fsync the copy before it is renamed into place, for durability.
+    // Opened with write access: on Windows, FlushFileBuffers (which
+    // `sync_all` calls) requires GENERIC_WRITE, so a read-only handle from
+    // `File::open` would fail here with "Access is denied".
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&tmp_media_path)
+        .map_err(|e| AppError::FileSystem(format!("open-for-sync failed: {e}")))?;
+    file.sync_all()
+        .map_err(|e| AppError::FileSystem(format!("sync_all failed: {e}")))?;
+    drop(file);
+
+    fs::rename(&tmp_media_path, media_absolute)
+        .map_err(|e| AppError::FileSystem(format!("rename failed: {e}")))?;
+
+    // Thumbnail from the immutable managed copy, not the (mutable, caller
+    // owned) original source.
+    thumbnail::generate_thumbnail(media_absolute, thumbnail_absolute)?;
+
+    Ok(())
+}
+
+/// Removes only the filesystem entries a failed import attempt itself may
+/// have created. Never touches the user's original source file.
+fn cleanup_failed_import(media_absolute: &Path, thumbnail_absolute: &Path) {
+    let _ = fs::remove_file(with_tmp_suffix(media_absolute));
+    let _ = fs::remove_file(media_absolute);
+    let _ = fs::remove_file(with_tmp_suffix(thumbnail_absolute));
+    let _ = fs::remove_file(thumbnail_absolute);
+}
+
+fn with_tmp_suffix(path: &Path) -> PathBuf {
+    let mut os_string: OsString = path.as_os_str().to_os_string();
+    os_string.push(".tmp");
+    PathBuf::from(os_string)
+}
+
+/// Relative (to the project root) path of the managed media file for a
+/// version: `assets/<asset-id>/v<NNN>/<version-id>.<extension>`.
+fn managed_media_path(
+    asset_id: &str,
+    version_number: i64,
+    version_id: &str,
+    extension: &str,
+) -> PathBuf {
+    Path::new("assets")
+        .join(asset_id)
+        .join(format!("v{version_number:03}"))
+        .join(format!("{version_id}.{extension}"))
+}
+
+/// Relative (to the project root) path of a version's thumbnail:
+/// `thumbnails/<asset-id>/<version-id>.webp`.
+fn managed_thumbnail_path(asset_id: &str, version_id: &str) -> PathBuf {
+    Path::new("thumbnails")
+        .join(asset_id)
+        .join(format!("{version_id}.webp"))
+}
+
+/// Normalizes a path built with the OS-native separator into the
+/// forward-slash form stored in the database, so stored paths stay
+/// portable regardless of the platform that created them.
+fn to_forward_slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Opens the project's database and ensures it is fully migrated, the same
@@ -129,6 +321,7 @@ fn validate_asset_type(value: &str) -> Result<&str, AppError> {
 
 #[cfg(test)]
 pub(crate) mod test_support {
+    use crate::assets::service::AssetService;
     use crate::project::model::ProjectSummary;
     use crate::project::service::ProjectService;
     use std::path::PathBuf;
@@ -161,11 +354,65 @@ pub(crate) mod test_support {
             }
         }
     }
+
+    /// A real, on-disk project (via `ProjectFixture`) that already has one
+    /// `face_lock` asset created in it, plus a *separate* temp directory --
+    /// standing in for something like the user's Downloads folder -- to
+    /// write candidate source images into. Keeping the source directory
+    /// distinct from the project root is what lets tests assert that
+    /// imported originals are left untouched and are never confused with
+    /// project-managed files.
+    pub struct AssetFixture {
+        _project: ProjectFixture,
+        _source_temp: TempDir,
+        pub project_root: PathBuf,
+        pub asset_id: String,
+    }
+
+    impl AssetFixture {
+        pub fn face_asset() -> Self {
+            let project = ProjectFixture::new();
+            let asset =
+                AssetService::create_asset(&project.root, "face_lock", "MARA-FACE", None)
+                    .unwrap();
+            let source_temp = tempfile::tempdir().unwrap();
+            let project_root = project.root.clone();
+
+            Self {
+                _project: project,
+                _source_temp: source_temp,
+                project_root,
+                asset_id: asset.id,
+            }
+        }
+
+        /// Writes a real PNG with a default fill color outside the project
+        /// directory and returns its path.
+        pub fn write_png(&self, name: &str, width: u32, height: u32) -> PathBuf {
+            self.write_png_with_pixel(name, width, height, [12, 34, 56, 255])
+        }
+
+        /// Same as `write_png`, but with a caller-chosen fill color, so two
+        /// images can be guaranteed to differ (or match) in content.
+        pub fn write_png_with_pixel(
+            &self,
+            name: &str,
+            width: u32,
+            height: u32,
+            pixel: [u8; 4],
+        ) -> PathBuf {
+            let path = self._source_temp.path().join(name);
+            let image: image::RgbaImage =
+                image::ImageBuffer::from_pixel(width, height, image::Rgba(pixel));
+            image.save(&path).expect("failed to write test PNG");
+            path
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::ProjectFixture;
+    use super::test_support::{AssetFixture, ProjectFixture};
     use super::*;
     use crate::error::AppError;
     use crate::project::service::ProjectService;
@@ -292,5 +539,239 @@ mod tests {
 
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].id, created.id);
+    }
+
+    #[test]
+    fn imports_png_as_candidate_version_one() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("candidate.png", 64, 64);
+
+        let version = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(version.version_number, 1);
+        assert_eq!(version.status, "candidate");
+        assert!(fixture.project_root.join(&version.file_path).exists());
+        assert!(fixture.project_root.join(&version.thumbnail_path).exists());
+        assert!(source.exists());
+        assert_eq!(version.mime_type, "image/png");
+        assert_eq!(version.original_filename, "candidate.png");
+        assert!(!version.file_path.contains('\\'));
+        assert!(!version.thumbnail_path.contains('\\'));
+    }
+
+    #[test]
+    fn second_distinct_import_becomes_version_two() {
+        let fixture = AssetFixture::face_asset();
+        let first = fixture.write_png("first.png", 64, 64);
+        let second = fixture.write_png_with_pixel("second.png", 64, 64, [20, 30, 40, 255]);
+
+        AssetService::import_asset_version(&fixture.project_root, &fixture.asset_id, &first, None)
+            .unwrap();
+        let version = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &second,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(version.version_number, 2);
+    }
+
+    #[test]
+    fn rejects_duplicate_content_on_same_asset() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("same.png", 64, 64);
+
+        AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap();
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::DuplicateAssetVersion));
+    }
+
+    #[test]
+    fn duplicate_rejection_leaves_no_new_filesystem_footprint() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("same.png", 64, 64);
+
+        AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap();
+
+        let assets_dir = fixture.project_root.join("assets").join(&fixture.asset_id);
+        let entries_before: Vec<_> = walk_all_files(&assets_dir);
+
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::DuplicateAssetVersion));
+        let entries_after: Vec<_> = walk_all_files(&assets_dir);
+        assert_eq!(entries_before, entries_after);
+    }
+
+    fn walk_all_files(dir: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        if !dir.exists() {
+            return out;
+        }
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(walk_all_files(&path));
+            } else {
+                out.push(path);
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn rejects_non_image_input() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.project_root.join("notes.txt");
+        std::fs::write(&source, b"not an image").unwrap();
+
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::UnsupportedImageFormat));
+    }
+
+    #[test]
+    fn rejects_parent_version_from_a_different_asset() {
+        let fixture = AssetFixture::face_asset();
+        let other_asset =
+            AssetService::create_asset(&fixture.project_root, "face_lock", "OTHER-FACE", None)
+                .unwrap();
+        let other_source = fixture.write_png("other.png", 32, 32);
+        let other_version = AssetService::import_asset_version(
+            &fixture.project_root,
+            &other_asset.id,
+            &other_source,
+            None,
+        )
+        .unwrap();
+
+        let source = fixture.write_png("mine.png", 32, 32);
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            Some(other_version.id),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::ParentVersionMismatch));
+    }
+
+    #[test]
+    fn rejects_a_parent_version_id_that_does_not_exist() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("candidate.png", 32, 32);
+
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            Some("not-a-real-version-id".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::ParentVersionMismatch));
+    }
+
+    #[test]
+    fn accepts_a_valid_parent_on_the_same_asset() {
+        let fixture = AssetFixture::face_asset();
+        let first = fixture.write_png("first.png", 32, 32);
+        let first_version = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &first,
+            None,
+        )
+        .unwrap();
+
+        let second = fixture.write_png_with_pixel("second.png", 32, 32, [90, 91, 92, 255]);
+        let second_version = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &second,
+            Some(first_version.id.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(second_version.parent_version_id, Some(first_version.id));
+    }
+
+    #[test]
+    fn importing_never_sets_a_canonical_version() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("candidate.png", 32, 32);
+
+        AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap();
+
+        let asset = repository::get_asset(
+            &db::open_connection(&fixture.project_root.join("project.db")).unwrap(),
+            &fixture.asset_id,
+        )
+        .unwrap();
+        assert!(asset.canonical_version_id.is_none());
+    }
+
+    #[test]
+    fn importing_to_an_unknown_asset_returns_not_found() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("candidate.png", 32, 32);
+
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            "not-a-real-asset-id",
+            &source,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::AssetNotFound));
     }
 }

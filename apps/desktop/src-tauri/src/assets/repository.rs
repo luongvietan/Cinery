@@ -1,6 +1,6 @@
 use crate::assets::model::{AssetRecord, AssetVersionRecord};
 use crate::error::AppError;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 
 /// Inserts a new asset row.
 pub fn insert_asset(conn: &Connection, record: &AssetRecord) -> Result<(), AppError> {
@@ -83,6 +83,88 @@ pub fn list_asset_versions(
         versions.push(row.map_err(|e| AppError::Database(e.to_string()))?);
     }
     Ok(versions)
+}
+
+/// Looks up a single asset version by its own id, regardless of which asset
+/// it belongs to. Returns `None` rather than an error when it doesn't
+/// exist, since "not found" is a valid outcome callers (e.g. parent-version
+/// validation) need to distinguish from a database failure.
+pub fn get_asset_version_by_id(
+    conn: &Connection,
+    version_id: &str,
+) -> Result<Option<AssetVersionRecord>, AppError> {
+    conn.query_row(
+        "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
+         original_filename, mime_type, byte_size, parent_version_id, created_at \
+         FROM asset_versions WHERE id = ?1",
+        params![version_id],
+        row_to_asset_version_record,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+/// Looks up the version of `asset_id` whose content hash is `sha256`, used
+/// to reject duplicate content on the same asset before any file is
+/// written. Runs inside the caller's transaction so the check and the
+/// eventual insert observe a consistent snapshot.
+pub fn find_version_by_hash(
+    tx: &Transaction<'_>,
+    asset_id: &str,
+    sha256: &str,
+) -> Result<Option<AssetVersionRecord>, AppError> {
+    tx.query_row(
+        "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
+         original_filename, mime_type, byte_size, parent_version_id, created_at \
+         FROM asset_versions WHERE asset_id = ?1 AND sha256 = ?2",
+        params![asset_id, sha256],
+        row_to_asset_version_record,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+/// Computes the next `version_number` to allocate for `asset_id` (1 if the
+/// asset has no versions yet). Must be called inside the same transaction
+/// that will insert the new version, so the allocation and the insert are
+/// atomic with respect to concurrent importers.
+pub fn next_version_number(tx: &Transaction<'_>, asset_id: &str) -> Result<i64, AppError> {
+    tx.query_row(
+        "SELECT COALESCE(MAX(version_number), 0) + 1 FROM asset_versions WHERE asset_id = ?1",
+        params![asset_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+/// Inserts a new asset version row.
+pub fn insert_asset_version(
+    tx: &Transaction<'_>,
+    record: &AssetVersionRecord,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO asset_versions \
+         (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
+          original_filename, mime_type, byte_size, parent_version_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![
+            record.id,
+            record.asset_id,
+            record.version_number,
+            record.status,
+            record.file_path,
+            record.thumbnail_path,
+            record.sha256,
+            record.original_filename,
+            record.mime_type,
+            record.byte_size,
+            record.parent_version_id,
+            record.created_at,
+        ],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+
+    Ok(())
 }
 
 fn row_to_asset_record(row: &rusqlite::Row) -> rusqlite::Result<AssetRecord> {
