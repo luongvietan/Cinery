@@ -2,7 +2,7 @@ use crate::error::{AppCommandError, AppError};
 use crate::project::model::ProjectSummary;
 use crate::project::recent::{self, RecentProject};
 use crate::project::service::{self, ProjectService};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 /// Creates a new project on disk and registers it as the most recent.
@@ -16,6 +16,7 @@ pub fn create_project(
     let root = PathBuf::from(root_path);
     let summary = ProjectService::create(&root, &name)?;
     record_recent(&app, &summary);
+    allow_asset_protocol_access(&app, &root);
     Ok(summary)
 }
 
@@ -29,7 +30,28 @@ pub fn open_project(
     let root = PathBuf::from(root_path);
     let summary = ProjectService::open(&root)?;
     record_recent(&app, &summary);
+    allow_asset_protocol_access(&app, &root);
     Ok(summary)
+}
+
+/// Extends the asset protocol's filesystem scope to cover `root`, best-effort.
+///
+/// Project roots are arbitrary user-chosen directories (picked via the native
+/// file dialog), so they can't be known ahead of time in `tauri.conf.json`'s
+/// static `security.assetProtocol.scope`. Instead the scope starts empty and
+/// each project directory the user actually opens or creates is added here at
+/// runtime, so the webview can load thumbnails from it (via `convertFileSrc`)
+/// without granting access to the rest of the filesystem.
+///
+/// Like `record_recent`, a failure here must never fail the create/open the
+/// user is waiting on: it only means thumbnails won't render for this
+/// session, not that the project itself is broken.
+fn allow_asset_protocol_access(app: &tauri::AppHandle, root: &Path) {
+    if let Err(e) = app.asset_protocol_scope().allow_directory(root, true) {
+        eprintln!(
+            "failed to extend asset protocol scope for project root (non-fatal): {e}"
+        );
+    }
 }
 
 /// Lists the global recent-projects registry, most recently opened first.
