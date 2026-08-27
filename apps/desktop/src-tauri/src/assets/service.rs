@@ -198,7 +198,14 @@ impl AssetService {
             return Err(err);
         }
 
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        if let Err(e) = tx.commit() {
+            // SQLite already rolled back the transaction on its own here,
+            // so there's no DB row -- but the media file and thumbnail this
+            // attempt wrote to disk are now orphaned (nothing references
+            // them) unless we clean them up ourselves too.
+            cleanup_failed_import(&media_absolute, &thumbnail_absolute);
+            return Err(AppError::Database(e.to_string()));
+        }
 
         Ok(record)
     }
