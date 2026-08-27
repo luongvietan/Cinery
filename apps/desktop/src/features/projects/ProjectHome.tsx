@@ -164,13 +164,21 @@ export function ProjectHome({ onProjectOpened }: ProjectHomeProps) {
           <button type="submit" disabled={pendingAction === "create"}>
             Create
           </button>
-          <button type="button" onClick={handleCreateCancel}>
+          <button
+            type="button"
+            onClick={handleCreateCancel}
+            disabled={pendingAction === "create"}
+          >
             Cancel
           </button>
         </form>
       )}
 
-      <RecentProjects projects={recentProjects} onOpen={handleOpenRecent} />
+      <RecentProjects
+        projects={recentProjects}
+        onOpen={handleOpenRecent}
+        disabled={pendingAction !== null}
+      />
     </main>
   );
 }

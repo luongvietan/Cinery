@@ -3,9 +3,14 @@ import type { RecentProject } from "@cinematic/domain";
 interface RecentProjectsProps {
   projects: RecentProject[];
   onOpen: (rootPath: string) => void;
+  disabled?: boolean;
 }
 
-export function RecentProjects({ projects, onOpen }: RecentProjectsProps) {
+export function RecentProjects({
+  projects,
+  onOpen,
+  disabled = false,
+}: RecentProjectsProps) {
   return (
     <section aria-label="Recent Projects">
       <h2>Recent Projects</h2>
@@ -15,7 +20,11 @@ export function RecentProjects({ projects, onOpen }: RecentProjectsProps) {
         <ul>
           {projects.map((project) => (
             <li key={project.projectId}>
-              <button type="button" onClick={() => onOpen(project.rootPath)}>
+              <button
+                type="button"
+                onClick={() => onOpen(project.rootPath)}
+                disabled={disabled}
+              >
                 {project.name}
               </button>
               <span>{project.rootPath}</span>

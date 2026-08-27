@@ -1,8 +1,8 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ProjectSummary } from "@cinematic/domain";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectHome } from "./ProjectHome";
 import { createProject, listRecentProjects, openProject } from "./api";
 
@@ -17,10 +17,6 @@ describe("ProjectHome", () => {
     vi.mocked(createProject).mockReset();
     vi.mocked(openProject).mockReset();
     vi.mocked(open).mockReset();
-  });
-
-  afterEach(() => {
-    cleanup();
   });
 
   it("shows create and open actions", async () => {
@@ -176,5 +172,105 @@ describe("ProjectHome", () => {
         screen.getByRole("button", { name: "Open Project" }),
       ).not.toBeDisabled();
     });
+  });
+
+  it("disables cancel once a create is submitted, so a stale resolution can't be mistaken for a cancelled create", async () => {
+    vi.mocked(open).mockResolvedValue("/projects/new-film");
+    let resolveCreate!: (value: ProjectSummary) => void;
+    vi.mocked(createProject).mockReturnValue(
+      new Promise<ProjectSummary>((resolve) => {
+        resolveCreate = resolve;
+      }),
+    );
+
+    const onProjectOpened = vi.fn();
+    const user = userEvent.setup();
+    render(<ProjectHome onProjectOpened={onProjectOpened} />);
+
+    await user.click(screen.getByRole("button", { name: "Create Project" }));
+    const nameInput = await screen.findByLabelText(/project name/i);
+    await user.type(nameInput, "New Film");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    await waitFor(() => {
+      expect(cancelButton).toBeDisabled();
+    });
+
+    // A disabled button cannot be clicked away by the user, so the in-flight
+    // create can't be silently abandoned mid-flight.
+    await user.click(cancelButton);
+    expect(onProjectOpened).not.toHaveBeenCalled();
+
+    resolveCreate({
+      id: "01JNEW",
+      rootPath: "/projects/new-film",
+      name: "New Film",
+      schemaVersion: 1,
+      createdAt: "2026-08-27T05:00:00Z",
+      updatedAt: "2026-08-27T05:00:00Z",
+    });
+
+    await waitFor(() => {
+      expect(onProjectOpened).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("disables recent-project buttons while an open is in flight, preventing a second click from racing", async () => {
+    vi.mocked(listRecentProjects).mockResolvedValue([
+      {
+        projectId: "01JA",
+        rootPath: "/projects/a",
+        name: "Project A",
+        lastOpenedAt: "2026-08-27T06:00:00Z",
+      },
+      {
+        projectId: "01JB",
+        rootPath: "/projects/b",
+        name: "Project B",
+        lastOpenedAt: "2026-08-27T05:00:00Z",
+      },
+    ]);
+
+    let resolveOpen!: (value: ProjectSummary) => void;
+    vi.mocked(openProject).mockReturnValue(
+      new Promise<ProjectSummary>((resolve) => {
+        resolveOpen = resolve;
+      }),
+    );
+
+    const onProjectOpened = vi.fn();
+    render(<ProjectHome onProjectOpened={onProjectOpened} />);
+
+    const buttonA = await screen.findByRole("button", { name: "Project A" });
+    const buttonB = screen.getByRole("button", { name: "Project B" });
+
+    await userEvent.click(buttonA);
+
+    await waitFor(() => {
+      expect(buttonA).toBeDisabled();
+      expect(buttonB).toBeDisabled();
+    });
+
+    // A second click on either row must not fire while the first is pending.
+    await userEvent.click(buttonB);
+    expect(openProject).toHaveBeenCalledTimes(1);
+    expect(openProject).toHaveBeenCalledWith({ rootPath: "/projects/a" });
+
+    resolveOpen({
+      id: "01JA",
+      rootPath: "/projects/a",
+      name: "Project A",
+      schemaVersion: 1,
+      createdAt: "2026-08-27T05:00:00Z",
+      updatedAt: "2026-08-27T05:00:00Z",
+    });
+
+    await waitFor(() => {
+      expect(onProjectOpened).toHaveBeenCalledTimes(1);
+    });
+    expect(onProjectOpened).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "01JA" }),
+    );
   });
 });
