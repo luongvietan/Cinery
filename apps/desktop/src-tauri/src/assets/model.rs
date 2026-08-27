@@ -48,3 +48,11 @@ pub struct AssetWithVersions {
     pub asset: AssetRecord,
     pub versions: Vec<AssetVersionRecord>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonicalPromotionResult {
+    pub asset: AssetRecord,
+    pub promoted_version: AssetVersionRecord,
+    pub superseded_version_id: Option<String>,
+}

@@ -1,5 +1,7 @@
 use crate::assets::import;
-use crate::assets::model::{AssetRecord, AssetVersionRecord, AssetWithVersions};
+use crate::assets::model::{
+    AssetRecord, AssetVersionRecord, AssetWithVersions, CanonicalPromotionResult,
+};
 use crate::assets::repository;
 use crate::assets::thumbnail;
 use crate::db;
@@ -96,6 +98,15 @@ impl AssetService {
         let versions = repository::list_asset_versions(&conn, asset_id)?;
 
         Ok(AssetWithVersions { asset, versions })
+    }
+
+    pub fn promote_asset_version(
+        project_root: &Path,
+        asset_version_id: &str,
+    ) -> Result<CanonicalPromotionResult, AppError> {
+        let mut conn = open_project_db(project_root)?;
+        project_repository::read_project(&conn)?;
+        repository::promote_canonical_version(&mut conn, asset_version_id)
     }
 
     /// Imports `source_path` as a brand-new, immutable version of
@@ -423,6 +434,29 @@ mod tests {
     use super::*;
     use crate::error::AppError;
     use crate::project::service::ProjectService;
+
+    fn fixture_with_two_versions() -> (AssetFixture, String, String) {
+        let fixture = AssetFixture::face_asset();
+        let first_source = fixture.write_png("first.png", 32, 32);
+        let second_source = fixture.write_png_with_pixel("second.png", 32, 32, [90, 91, 92, 255]);
+
+        let first = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &first_source,
+            None,
+        )
+        .unwrap();
+        let second = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &second_source,
+            None,
+        )
+        .unwrap();
+
+        (fixture, first.id, second.id)
+    }
 
     #[test]
     fn creates_face_lock_asset_without_canonical_version() {
@@ -780,6 +814,157 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, AppError::AssetNotFound));
+    }
+
+    #[test]
+    fn promotes_candidate_to_canonical() {
+        let (fixture, version_one_id, _) = fixture_with_two_versions();
+
+        let result =
+            AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+
+        assert_eq!(
+            result.asset.canonical_version_id.as_deref(),
+            Some(version_one_id.as_str())
+        );
+        assert_eq!(result.promoted_version.status, "canonical");
+        assert!(result.superseded_version_id.is_none());
+    }
+
+    #[test]
+    fn promoting_second_version_supersedes_first() {
+        let (fixture, version_one_id, version_two_id) = fixture_with_two_versions();
+
+        AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        let result =
+            AssetService::promote_asset_version(&fixture.project_root, &version_two_id).unwrap();
+
+        let reloaded =
+            AssetService::get_asset_with_versions(&fixture.project_root, &fixture.asset_id)
+                .unwrap();
+        let first = reloaded
+            .versions
+            .iter()
+            .find(|version| version.id == version_one_id)
+            .unwrap();
+        let second = reloaded
+            .versions
+            .iter()
+            .find(|version| version.id == version_two_id)
+            .unwrap();
+
+        assert_eq!(first.status, "superseded");
+        assert_eq!(second.status, "canonical");
+        assert_eq!(
+            result.superseded_version_id.as_deref(),
+            Some(version_one_id.as_str())
+        );
+    }
+
+    #[test]
+    fn superseded_version_can_be_promoted_again() {
+        let (fixture, version_one_id, version_two_id) = fixture_with_two_versions();
+
+        AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        AssetService::promote_asset_version(&fixture.project_root, &version_two_id).unwrap();
+        AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+
+        let reloaded =
+            AssetService::get_asset_with_versions(&fixture.project_root, &fixture.asset_id)
+                .unwrap();
+        let first = reloaded
+            .versions
+            .iter()
+            .find(|version| version.id == version_one_id)
+            .unwrap();
+        let second = reloaded
+            .versions
+            .iter()
+            .find(|version| version.id == version_two_id)
+            .unwrap();
+
+        assert_eq!(
+            reloaded.asset.canonical_version_id.as_deref(),
+            Some(version_one_id.as_str())
+        );
+        assert_eq!(first.status, "canonical");
+        assert_eq!(second.status, "superseded");
+    }
+
+    #[test]
+    fn failed_promotion_does_not_change_existing_canonical() {
+        let (fixture, version_one_id, _) = fixture_with_two_versions();
+
+        AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        let error =
+            AssetService::promote_asset_version(&fixture.project_root, "01JNONEXISTENTVERSION")
+                .unwrap_err();
+
+        assert!(matches!(error, AppError::AssetVersionNotFound));
+
+        let reloaded =
+            AssetService::get_asset_with_versions(&fixture.project_root, &fixture.asset_id)
+                .unwrap();
+        assert_eq!(
+            reloaded.asset.canonical_version_id.as_deref(),
+            Some(version_one_id.as_str())
+        );
+    }
+
+    #[test]
+    fn repromoting_current_canonical_is_a_noop() {
+        let (fixture, version_one_id, _) = fixture_with_two_versions();
+
+        let first =
+            AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        let before = AssetService::get_asset_with_versions(
+            &fixture.project_root,
+            &fixture.asset_id,
+        )
+        .unwrap();
+        let before_statuses: Vec<_> = before
+            .versions
+            .iter()
+            .map(|version| (version.id.clone(), version.status.clone()))
+            .collect();
+
+        let repeated =
+            AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        let after = AssetService::get_asset_with_versions(
+            &fixture.project_root,
+            &fixture.asset_id,
+        )
+        .unwrap();
+
+        assert!(repeated.superseded_version_id.is_none());
+        assert_eq!(repeated.promoted_version.status, "canonical");
+        assert_eq!(repeated.asset.updated_at, first.asset.updated_at);
+        assert_eq!(after.asset.updated_at, before.asset.updated_at);
+        let after_statuses: Vec<_> = after
+            .versions
+            .iter()
+            .map(|version| (version.id.clone(), version.status.clone()))
+            .collect();
+        assert_eq!(after_statuses, before_statuses);
+    }
+
+    #[test]
+    fn repromoting_current_canonical_rejects_a_broken_canonical_invariant() {
+        let (fixture, version_one_id, version_two_id) = fixture_with_two_versions();
+
+        AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
+        let conn = db::open_connection(&fixture.project_root.join("project.db")).unwrap();
+        conn.execute(
+            "UPDATE asset_versions SET status = 'canonical' WHERE id = ?1",
+            rusqlite::params![version_two_id],
+        )
+        .unwrap();
+
+        let error =
+            AssetService::promote_asset_version(&fixture.project_root, &version_one_id)
+                .unwrap_err();
+
+        assert!(matches!(error, AppError::Database(_)));
     }
 
     /// Forces a failure *after* the media file has already been copied and

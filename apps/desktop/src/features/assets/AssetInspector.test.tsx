@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AssetInspector } from "./AssetInspector";
-import { getAssetWithVersions } from "./api";
+import { getAssetWithVersions, promoteAssetVersion } from "./api";
 
 vi.mock("./api");
 vi.mock("@tauri-apps/api/core", () => ({
@@ -11,6 +12,8 @@ vi.mock("@tauri-apps/api/core", () => ({
 describe("AssetInspector", () => {
   beforeEach(() => {
     vi.mocked(getAssetWithVersions).mockReset();
+    vi.mocked(promoteAssetVersion).mockReset();
+    vi.restoreAllMocks();
   });
 
   it("renders newest version first but marks canonical explicitly", async () => {
@@ -114,5 +117,88 @@ describe("AssetInspector", () => {
     expect(thumbnail.src).toContain(
       "mock-asset://",
     );
+  });
+
+  it("promotes a candidate only after explicit user action and refreshes backend state", async () => {
+    const initial = {
+      asset: {
+        id: "asset-1",
+        projectId: "project-1",
+        type: "face_lock" as const,
+        label: "MARA-FACE",
+        ownerEntityId: null,
+        canonicalVersionId: "v1",
+        createdAt: "2026-08-27T06:00:00Z",
+        updatedAt: "2026-08-27T06:10:00Z",
+      },
+      versions: [
+        {
+          id: "v2",
+          assetId: "asset-1",
+          versionNumber: 2,
+          status: "candidate" as const,
+          filePath: "assets/asset-1/v002/v2.png",
+          thumbnailPath: "thumbnails/asset-1/v2.webp",
+          sha256: "hash2",
+          originalFilename: "second.png",
+          mimeType: "image/png" as const,
+          byteSize: 100,
+          parentVersionId: null,
+          createdAt: "2026-08-27T06:10:00Z",
+        },
+        {
+          id: "v1",
+          assetId: "asset-1",
+          versionNumber: 1,
+          status: "canonical" as const,
+          filePath: "assets/asset-1/v001/v1.png",
+          thumbnailPath: "thumbnails/asset-1/v1.webp",
+          sha256: "hash1",
+          originalFilename: "first.png",
+          mimeType: "image/png" as const,
+          byteSize: 100,
+          parentVersionId: null,
+          createdAt: "2026-08-27T06:05:00Z",
+        },
+      ],
+    };
+    const refreshed = {
+      asset: { ...initial.asset, canonicalVersionId: "v2" },
+      versions: [
+        { ...initial.versions[0], status: "canonical" as const },
+        { ...initial.versions[1], status: "superseded" as const },
+      ],
+    };
+    vi.mocked(getAssetWithVersions)
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce(refreshed);
+    vi.mocked(promoteAssetVersion).mockResolvedValue({
+      asset: refreshed.asset,
+      promotedVersion: refreshed.versions[0],
+      supersededVersionId: "v1",
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+
+    render(
+      <AssetInspector projectRootPath="/projects/red-door" assetId="asset-1" />,
+    );
+
+    const promoteButton = await screen.findByRole("button", {
+      name: "Promote V02 to Canon",
+    });
+    expect(promoteAssetVersion).not.toHaveBeenCalled();
+
+    await user.click(promoteButton);
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Make V02 the canonical version of MARA-FACE?\nThe current canonical version will be preserved and marked Superseded.",
+    );
+    expect(promoteAssetVersion).toHaveBeenCalledWith({
+      projectRootPath: "/projects/red-door",
+      assetVersionId: "v2",
+    });
+    expect(await screen.findByText("Canonical version: v2")).toBeInTheDocument();
+    expect(getAssetWithVersions).toHaveBeenCalledTimes(2);
   });
 });

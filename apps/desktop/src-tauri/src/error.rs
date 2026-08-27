@@ -40,6 +40,9 @@ pub enum AppError {
     #[error("Asset was not found")]
     AssetNotFound,
 
+    #[error("Asset version was not found")]
+    AssetVersionNotFound,
+
     #[error("Parent version does not belong to the target asset")]
     ParentVersionMismatch,
 

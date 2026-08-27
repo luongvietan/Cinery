@@ -2,8 +2,10 @@ import type {
   Asset,
   AssetVersion,
   AssetWithVersions,
+  CanonicalPromotionResult,
   CreateAssetInput,
   ImportAssetVersionInput,
+  PromoteAssetVersionInput,
 } from "@cinematic/domain";
 import { invokeCommand } from "../../lib/tauri";
 
@@ -15,6 +17,14 @@ export function importAssetVersion(
   input: ImportAssetVersionInput,
 ): Promise<AssetVersion> {
   return invokeCommand<AssetVersion>("import_asset_version", { ...input });
+}
+
+export function promoteAssetVersion(
+  input: PromoteAssetVersionInput,
+): Promise<CanonicalPromotionResult> {
+  return invokeCommand<CanonicalPromotionResult>("promote_asset_version", {
+    ...input,
+  });
 }
 
 export function listAssets(projectRootPath: string): Promise<Asset[]> {

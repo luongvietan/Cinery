@@ -1,6 +1,7 @@
-use crate::assets::model::{AssetRecord, AssetVersionRecord};
+use crate::assets::model::{AssetRecord, AssetVersionRecord, CanonicalPromotionResult};
 use crate::error::AppError;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use chrono::Utc;
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 /// Inserts a new asset row.
 pub fn insert_asset(conn: &Connection, record: &AssetRecord) -> Result<(), AppError> {
@@ -165,6 +166,81 @@ pub fn insert_asset_version(
     .map_err(|e| AppError::Database(e.to_string()))?;
 
     Ok(())
+}
+
+pub fn promote_canonical_version(
+    conn: &mut Connection,
+    target_version_id: &str,
+) -> Result<CanonicalPromotionResult, AppError> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+    let target_version =
+        get_asset_version_by_id(&tx, target_version_id)?.ok_or(AppError::AssetVersionNotFound)?;
+    let asset_id = target_version.asset_id.clone();
+    let asset = get_asset(&tx, &asset_id)?;
+
+    let superseded_version_id =
+        if asset.canonical_version_id.as_deref() == Some(target_version_id) {
+            None
+        } else {
+            let current_canonical_id = asset.canonical_version_id.clone();
+            if let Some(current_id) = &current_canonical_id {
+                tx.execute(
+                    "UPDATE asset_versions SET status = 'superseded' WHERE id = ?1",
+                    params![current_id],
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            }
+
+            tx.execute(
+                "UPDATE asset_versions SET status = 'canonical' WHERE id = ?1",
+                params![target_version_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            let now = Utc::now().to_rfc3339();
+            tx.execute(
+                "UPDATE assets SET canonical_version_id = ?1, updated_at = ?2 WHERE id = ?3",
+                params![target_version_id, now, asset_id],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+            current_canonical_id
+        };
+
+    let canonical_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM asset_versions WHERE asset_id = ?1 AND status = 'canonical'",
+            params![asset_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if canonical_count != 1 {
+        return Err(AppError::Database(format!(
+            "canonical-promotion invariant violated for asset {asset_id}: expected exactly 1 canonical version, found {canonical_count}"
+        )));
+    }
+
+    let refreshed_asset = get_asset(&tx, &asset_id)?;
+    let promoted_version =
+        get_asset_version_by_id(&tx, target_version_id)?.ok_or(AppError::AssetVersionNotFound)?;
+    if promoted_version.status != "canonical"
+        || refreshed_asset.canonical_version_id.as_deref() != Some(target_version_id)
+    {
+        return Err(AppError::Database(format!(
+            "canonical-promotion invariant violated for asset {asset_id}: canonical pointer and target status disagree"
+        )));
+    }
+
+    tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+    Ok(CanonicalPromotionResult {
+        asset: refreshed_asset,
+        promoted_version,
+        superseded_version_id,
+    })
 }
 
 fn row_to_asset_record(row: &rusqlite::Row) -> rusqlite::Result<AssetRecord> {
