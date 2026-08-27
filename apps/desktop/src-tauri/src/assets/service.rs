@@ -774,4 +774,54 @@ mod tests {
 
         assert!(matches!(error, AppError::AssetNotFound));
     }
+
+    /// Forces a failure *after* the media file has already been copied and
+    /// renamed into place, but *during* thumbnail generation, by
+    /// pre-occupying the exact filesystem path `generate_thumbnail` needs
+    /// to create as the thumbnail's parent directory with a plain file
+    /// instead. This is a realistic failure mode (some other process or a
+    /// leftover file already sits where a directory needs to go) and
+    /// requires no test-only hooks in production code -- it exercises the
+    /// same `materialize_version_files` error path a real disk failure,
+    /// permission error, or out-of-space condition would.
+    #[test]
+    fn rolls_back_and_cleans_up_when_thumbnail_generation_fails_after_media_is_copied() {
+        let fixture = AssetFixture::face_asset();
+        let source = fixture.write_png("candidate.png", 64, 64);
+
+        // `thumbnails/` itself already exists (created by `ProjectService::
+        // create`); occupy the subdirectory this import would need with a
+        // plain file so `fs::create_dir_all` fails inside
+        // `generate_thumbnail`.
+        let thumbnail_parent_path = fixture
+            .project_root
+            .join("thumbnails")
+            .join(&fixture.asset_id);
+        fs::write(&thumbnail_parent_path, b"not a directory").unwrap();
+        let source_bytes_before = fs::read(&source).unwrap();
+
+        let error = AssetService::import_asset_version(
+            &fixture.project_root,
+            &fixture.asset_id,
+            &source,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::FileSystem(_)));
+
+        // The DB transaction rolled back -- no version row exists.
+        let conn = db::open_connection(&fixture.project_root.join("project.db")).unwrap();
+        let versions = repository::list_asset_versions(&conn, &fixture.asset_id).unwrap();
+        assert!(versions.is_empty());
+
+        // The media file this attempt copied in (and its .tmp
+        // intermediate) were removed by `cleanup_failed_import`.
+        let asset_media_dir = fixture.project_root.join("assets").join(&fixture.asset_id);
+        assert!(walk_all_files(&asset_media_dir).is_empty());
+
+        // The user's original source file was never touched.
+        assert!(source.exists());
+        assert_eq!(fs::read(&source).unwrap(), source_bytes_before);
+    }
 }

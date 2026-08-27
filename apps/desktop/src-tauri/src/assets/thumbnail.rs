@@ -5,8 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Maximum bounding box (in pixels) a generated thumbnail is fit into.
-/// Aspect ratio is always preserved and images are never upscaled --
-/// `DynamicImage::thumbnail` already guarantees both.
+/// Aspect ratio is always preserved. Upscaling, however, is NOT something
+/// `DynamicImage::thumbnail` guarantees on its own -- it scales to fit
+/// whichever axis is tightest regardless of direction, so a source image
+/// smaller than this box would otherwise be scaled *up* to fill it. The
+/// explicit `exceeds_bounds` check in `generate_thumbnail` below is what
+/// actually prevents that; it is required, not redundant, and must not be
+/// removed.
 const THUMBNAIL_MAX_DIMENSION: u32 = 512;
 
 /// Decodes the image at `source`, fits it within a
