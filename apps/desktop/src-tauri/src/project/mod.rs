@@ -1,6 +1,6 @@
-pub mod commands;
+pub(crate) mod commands;
 pub mod model;
-pub mod paths;
-pub mod recent;
-pub mod repository;
+pub(crate) mod paths;
+pub(crate) mod recent;
+pub(crate) mod repository;
 pub mod service;

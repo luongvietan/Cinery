@@ -71,6 +71,14 @@ impl ProjectService {
         let manifest = paths::read_manifest(root)?;
 
         let db_path = root.join("project.db");
+        if !db_path.is_file() {
+            // `db::open_connection` would otherwise silently create a
+            // brand-new, empty database here (SQLite creates the file on
+            // open), masking a missing `project.db` as some other failure
+            // once the empty schema is queried. Treat it the same as any
+            // other missing/corrupt project marker.
+            return Err(AppError::InvalidProjectDirectory);
+        }
         let mut conn = db::open_connection(&db_path)?;
         run_migrations(&mut conn)?;
 
@@ -198,6 +206,51 @@ mod tests {
 
         assert_eq!(created.id, opened.id);
         assert_eq!(created.name, opened.name);
+    }
+
+    #[test]
+    fn rejects_open_when_project_yaml_is_missing() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        ProjectService::create(root, "Red Door").unwrap();
+        fs::remove_file(root.join("project.yaml")).unwrap();
+
+        let error = ProjectService::open(root).unwrap_err();
+
+        assert!(matches!(error, AppError::InvalidProjectDirectory));
+    }
+
+    #[test]
+    fn rejects_open_when_project_db_is_missing() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        ProjectService::create(root, "Red Door").unwrap();
+        fs::remove_file(root.join("project.db")).unwrap();
+
+        let error = ProjectService::open(root).unwrap_err();
+
+        assert!(matches!(error, AppError::InvalidProjectDirectory));
+    }
+
+    #[test]
+    fn rejects_open_when_manifest_format_is_invalid() {
+        let temp = tempdir().unwrap();
+        let root = temp.path();
+
+        ProjectService::create(root, "Red Door").unwrap();
+        // Corrupt the manifest's format field so it no longer identifies
+        // this directory as an AI Cinematic Production OS project.
+        fs::write(
+            root.join("project.yaml"),
+            "format: some-other-app\nproject_id: whatever\nschema_version: 1\n",
+        )
+        .unwrap();
+
+        let error = ProjectService::open(root).unwrap_err();
+
+        assert!(matches!(error, AppError::InvalidProjectDirectory));
     }
 
     #[test]

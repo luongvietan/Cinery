@@ -1,6 +1,6 @@
-pub mod commands;
-pub mod import;
+pub(crate) mod commands;
+pub(crate) mod import;
 pub mod model;
-pub mod repository;
+pub(crate) mod repository;
 pub mod service;
-pub mod thumbnail;
+pub(crate) mod thumbnail;

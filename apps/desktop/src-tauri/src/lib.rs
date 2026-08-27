@@ -1,7 +1,7 @@
-mod assets;
-mod db;
-mod error;
-mod project;
+pub mod assets;
+pub mod db;
+pub mod error;
+pub mod project;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
