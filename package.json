@@ -1,0 +1,12 @@
+{
+  "name": "ai-cinematic-production-os",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @cinematic/desktop tauri dev",
+    "test": "pnpm -r test",
+    "test:rust": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml"
+  },
+  "packageManager": "pnpm@9.12.3"
+}
