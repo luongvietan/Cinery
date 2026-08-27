@@ -120,6 +120,35 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             WorkflowStepDefinition::Complete { .. } => "complete",
         })
         .collect();
+    if step_types.first() != Some(&"validate_input")
+        || step_types.last() != Some(&"complete")
+        || step_types.iter().filter(|step_type| **step_type == "complete").count() != 1
+    {
+        return Err(AppError::InvalidBuiltinSkillDefinition(format!(
+            "operation {} must start with validate_input and end with one complete step",
+            operation.id
+        )));
+    }
+
+    let step_rank = |step_type: &str| match step_type {
+        "validate_input" => 0,
+        "resolve_context" => 1,
+        "compile_request" => 2,
+        "approval" => 3,
+        "execute" => 4,
+        "complete" => 5,
+        _ => unreachable!("step type comes from the closed enum"),
+    };
+    if step_types
+        .windows(2)
+        .any(|window| step_rank(window[0]) > step_rank(window[1]))
+    {
+        return Err(AppError::InvalidBuiltinSkillDefinition(format!(
+            "operation {} has out-of-order workflow steps",
+            operation.id
+        )));
+    }
+
     if operation.id == "character.create_face_lock"
         && step_types
             != [
@@ -136,6 +165,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
         ));
     }
 
+    let mut approval_artifact_ref = None;
     for step in &operation.workflow {
         let id = match step {
             WorkflowStepDefinition::ValidateInput { id }
@@ -145,6 +175,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             | WorkflowStepDefinition::Execute { id, .. }
             | WorkflowStepDefinition::Complete { id } => id,
         };
+        validate_identifier(id, "workflow step")?;
         if !step_ids.insert(id) {
             return Err(AppError::InvalidBuiltinSkillDefinition(format!(
                 "duplicate workflow step: {id}"
@@ -172,6 +203,20 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                 return Err(AppError::InvalidBuiltinSkillDefinition(
                     "only dry_run executor is available in P3".to_string(),
                 ))
+            }
+            WorkflowStepDefinition::Approval {
+                approval_artifact_ref: artifact_ref,
+                ..
+            } => {
+                approval_artifact_ref = Some(artifact_ref.as_str());
+            }
+            WorkflowStepDefinition::Execute {
+                request_artifact_ref,
+                ..
+            } if approval_artifact_ref != Some(request_artifact_ref.as_str()) => {
+                return Err(AppError::InvalidBuiltinSkillDefinition(
+                    "execute step must use the approval artifact".to_string(),
+                ));
             }
             _ => {}
         }
@@ -221,6 +266,16 @@ mod tests {
 
         let mut definition = builtin_character_builder();
         definition.id = "---".to_string();
+        assert!(validate_definition(&definition).is_err());
+
+        let mut definition = builtin_character_builder();
+        definition.operations[0].id = "other.operation".to_string();
+        definition.operations[0].workflow.pop();
+        assert!(validate_definition(&definition).is_err());
+
+        let mut definition = builtin_character_builder();
+        definition.operations[0].id = "other.operation".to_string();
+        definition.operations[0].workflow.swap(0, 1);
         assert!(validate_definition(&definition).is_err());
     }
 
