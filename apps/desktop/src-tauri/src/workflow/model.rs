@@ -142,6 +142,28 @@ pub enum WorkflowStepDefinition {
     Complete { id: String },
 }
 
+impl WorkflowStepDefinition {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::ValidateInput { id } | Self::Approval { id, .. } | Self::Complete { id } => id,
+            Self::ResolveContext { id, .. }
+            | Self::CompileRequest { id, .. }
+            | Self::Execute { id, .. } => id,
+        }
+    }
+
+    pub fn step_type(&self) -> &'static str {
+        match self {
+            Self::ValidateInput { .. } => "validate_input",
+            Self::ResolveContext { .. } => "resolve_context",
+            Self::CompileRequest { .. } => "compile_request",
+            Self::Approval { .. } => "approval",
+            Self::Execute { .. } => "execute",
+            Self::Complete { .. } => "complete",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrerequisiteCheck {
@@ -226,4 +248,55 @@ pub struct WorkflowSkillRef {
     pub skill_id: String,
     pub skill_version: String,
     pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRunRecord {
+    pub id: String,
+    pub project_id: String,
+    pub skill_id: String,
+    pub skill_version: String,
+    pub operation_id: String,
+    pub status: String,
+    pub input_json: String,
+    pub prerequisite_report_json: Option<String>,
+    pub context_snapshot_json: Option<String>,
+    pub current_step_index: i64,
+    pub failure_code: Option<String>,
+    pub failure_message: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowStepRecord {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub step_definition_id: String,
+    pub step_index: i64,
+    pub step_type: String,
+    pub status: String,
+    pub input_json: Option<String>,
+    pub output_json: Option<String>,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowEventRecord {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub sequence: i64,
+    pub event_type: String,
+    pub step_definition_id: Option<String>,
+    pub payload_json: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRunDetail {
+    pub run: WorkflowRunRecord,
+    pub steps: Vec<WorkflowStepRecord>,
+    pub events: Vec<WorkflowEventRecord>,
 }
