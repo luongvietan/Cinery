@@ -10,7 +10,11 @@ import type {
 import { invokeCommand } from "../../lib/tauri";
 
 export function createAsset(input: CreateAssetInput): Promise<Asset> {
-  return invokeCommand<Asset>("create_asset", { ...input });
+  const { type, ...args } = input;
+  return invokeCommand<Asset>("create_asset", {
+    ...args,
+    assetType: type,
+  });
 }
 
 export function importAssetVersion(

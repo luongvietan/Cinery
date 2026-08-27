@@ -35,10 +35,5 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "dialog": {
-      "all": true
-    }
   }
 }
