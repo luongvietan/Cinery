@@ -1,6 +1,8 @@
-import type { CanonEntityType } from "./canon";
+import { z } from "zod";
+import { ASSET_TYPES } from "./asset";
+import { CANON_ENTITY_TYPES, type CanonEntityType } from "./canon";
 import type { CanonTbd } from "./tbd";
-import type { Prerequisite } from "./skill";
+import { prerequisiteSchema, type Prerequisite } from "./skill";
 
 export const WORKFLOW_RUN_STATUSES = [
   "created",
@@ -87,15 +89,53 @@ export interface WorkflowContextSnapshot {
   capturedAt: string;
 }
 
-import { z } from "zod";
-
 const prerequisiteCheckSchema = z
   .object({
     id: z.string().min(1),
-    prerequisite: z.unknown(),
+    prerequisite: prerequisiteSchema,
     status: z.enum(["pass", "fail"]),
     message: z.string(),
     resolvedRef: z.string().nullable(),
+  })
+  .strict();
+
+const canonSnapshotRefSchema = z
+  .object({
+    entityId: z.string().min(1),
+    entityType: z.enum(CANON_ENTITY_TYPES),
+    sectionId: z.string().min(1),
+    sectionKey: z.string().min(1),
+    revision: z.number().int().positive(),
+    status: z.literal("locked"),
+    value: z.unknown(),
+  })
+  .strict();
+
+const assetSnapshotRefSchema = z
+  .object({
+    assetId: z.string().min(1),
+    assetVersionId: z.string().min(1),
+    assetType: z.enum(ASSET_TYPES),
+    versionNumber: z.number().int().positive(),
+    status: z.literal("canonical"),
+    path: z.string().min(1),
+  })
+  .strict();
+
+const canonTbdSnapshotSchema = z
+  .object({
+    id: z.string().min(1),
+    projectId: z.string().min(1),
+    canonEntityId: z.string().min(1).nullable(),
+    sectionKey: z.string().min(1).nullable(),
+    topic: z.string().min(1),
+    note: z.string().nullable(),
+    protected: z.boolean(),
+    status: z.enum(["open", "resolved"]),
+    resolutionText: z.string().nullable(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+    resolvedAt: z.string().nullable(),
   })
   .strict();
 
@@ -114,9 +154,9 @@ export const workflowContextSnapshotSchema = z
     prerequisiteReport: z
       .object({ passed: z.boolean(), checks: z.array(prerequisiteCheckSchema) })
       .strict(),
-    canon: z.array(z.unknown()),
-    assets: z.array(z.unknown()),
-    protectedTbds: z.array(z.unknown()),
+    canon: z.array(canonSnapshotRefSchema),
+    assets: z.array(assetSnapshotRefSchema),
+    protectedTbds: z.array(canonTbdSnapshotSchema),
     resolvedContext: z.unknown(),
     capturedAt: z.string().datetime({ offset: true }),
   })

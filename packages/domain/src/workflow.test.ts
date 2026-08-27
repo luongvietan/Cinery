@@ -32,4 +32,40 @@ describe("workflow contracts", () => {
 
     expect(snapshot.snapshotVersion).toBe(1);
   });
+
+  it("validates nested snapshot records instead of accepting arbitrary values", () => {
+    const base = {
+      snapshotVersion: 1,
+      project: { projectId: "project-1" },
+      skill: {
+        skillId: "character-builder",
+        skillVersion: "1.0.0",
+        operationId: "character.create_face_lock",
+      },
+      input: {},
+      prerequisiteReport: { passed: true, checks: [] },
+      canon: [],
+      assets: [],
+      protectedTbds: [],
+      resolvedContext: null,
+      capturedAt: "2026-08-28T00:00:00.000Z",
+    };
+
+    expect(() =>
+      workflowContextSnapshotSchema.parse({
+        ...base,
+        canon: [
+          {
+            entityId: "character-1",
+            entityType: "character",
+            sectionId: "section-1",
+            sectionKey: "role_tag",
+            revision: 1,
+            status: "draft",
+            value: { text: "Lead" },
+          },
+        ],
+      }),
+    ).toThrow();
+  });
 });

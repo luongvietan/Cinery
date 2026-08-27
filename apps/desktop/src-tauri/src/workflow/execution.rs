@@ -30,9 +30,69 @@ mod tests {
         assert!(value.get("provider").is_none());
         assert!(value.get("model").is_none());
     }
+
+    #[test]
+    fn execution_request_rejects_provider_fields_and_invalid_output_values() {
+        let with_provider = serde_json::from_value::<ExecutionRequest>(serde_json::json!({
+            "requestVersion": 1,
+            "task": "character_face_lock",
+            "mediaType": "image",
+            "prompt": "TASK",
+            "references": [],
+            "constraints": [],
+            "expectedOutput": {
+                "assetType": "face_lock",
+                "mediaType": "image",
+                "desiredStatus": "candidate",
+                "ownerEntityInputRef": "characterEntityId"
+            },
+            "provenance": {
+                "workflowRunId": "run-1",
+                "skillId": "character-builder",
+                "skillVersion": "1.0.0",
+                "operationId": "character.create_face_lock"
+            },
+            "provider": "not-allowed"
+        }));
+        assert!(with_provider.is_err());
+
+        let invalid_output = serde_json::from_value::<ExecutionRequest>(serde_json::json!({
+            "requestVersion": 1,
+            "task": "character_face_lock",
+            "mediaType": "image",
+            "prompt": "TASK",
+            "references": [],
+            "constraints": [],
+            "expectedOutput": {
+                "assetType": "not-an-asset",
+                "mediaType": "image",
+                "desiredStatus": "candidate",
+                "ownerEntityInputRef": "characterEntityId"
+            },
+            "provenance": {
+                "workflowRunId": "run-1",
+                "skillId": "character-builder",
+                "skillVersion": "1.0.0",
+                "operationId": "character.create_face_lock"
+            }
+        }));
+        assert!(invalid_output.is_err());
+    }
 }
 use crate::skills::model::ExpectedOutputDefinition;
 use serde::{Deserialize, Serialize};
+
+fn deserialize_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = bool::deserialize(deserializer)?;
+    if value {
+        Ok(true)
+    } else {
+        Err(serde::de::Error::custom("value must be true"))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,8 +111,20 @@ pub enum ExecutionReferenceType {
     CanonSnapshot,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMediaType {
+    Image,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReferenceBackground {
+    #[serde(rename = "18_percent_neutral_gray")]
+    NeutralGray,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionReference {
     #[serde(rename = "type")]
     pub reference_type: ExecutionReferenceType,
@@ -61,28 +133,28 @@ pub struct ExecutionReference {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum ExecutionConstraint {
     #[serde(rename = "flat_reference_background")]
-    FlatReferenceBackground { value: String },
+    FlatReferenceBackground { value: ReferenceBackground },
     #[serde(rename = "shadowless_lighting")]
-    ShadowlessLighting { value: bool },
+    ShadowlessLighting { #[serde(deserialize_with = "deserialize_true")] value: bool },
     #[serde(rename = "no_cast_shadow")]
-    NoCastShadow { value: bool },
+    NoCastShadow { #[serde(deserialize_with = "deserialize_true")] value: bool },
     #[serde(rename = "no_contact_shadow")]
-    NoContactShadow { value: bool },
+    NoContactShadow { #[serde(deserialize_with = "deserialize_true")] value: bool },
     #[serde(rename = "no_cinematic_dof")]
-    NoCinematicDof { value: bool },
+    NoCinematicDof { #[serde(deserialize_with = "deserialize_true")] value: bool },
     #[serde(rename = "preserve_visual_lock")]
     PreserveVisualLock { key: String, description: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionRequest {
     pub request_version: u8,
     pub task: ExecutionTask,
-    pub media_type: String,
+    pub media_type: ExecutionMediaType,
     pub prompt: String,
     pub references: Vec<ExecutionReference>,
     pub constraints: Vec<ExecutionConstraint>,
@@ -91,7 +163,7 @@ pub struct ExecutionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionProvenance {
     pub workflow_run_id: String,
     pub skill_id: String,

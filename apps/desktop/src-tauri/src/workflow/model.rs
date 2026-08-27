@@ -9,7 +9,8 @@ mod tests {
     }
 }
 use crate::canon::model::CanonTbdRecord;
-use crate::skills::model::Prerequisite;
+use crate::canon::model::CanonEntityType;
+use crate::skills::model::{AssetType, Prerequisite};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,8 +54,33 @@ pub enum WorkflowEventType {
     RunFailed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrerequisiteStatus {
+    Pass,
+    Fail,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonSnapshotStatus {
+    Locked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetSnapshotStatus {
+    Canonical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutorKind {
+    DryRun,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", deny_unknown_fields)]
 pub enum WorkflowStepDefinition {
     #[serde(rename = "validate_input")]
     ValidateInput { id: String },
@@ -82,7 +108,7 @@ pub enum WorkflowStepDefinition {
     Execute {
         id: String,
         #[serde(rename = "executorKind")]
-        executor_kind: String,
+        executor_kind: ExecutorKind,
         #[serde(rename = "requestArtifactRef")]
         request_artifact_ref: String,
     },
@@ -91,49 +117,49 @@ pub enum WorkflowStepDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrerequisiteCheck {
     pub id: String,
     pub prerequisite: Prerequisite,
-    pub status: String,
+    pub status: PrerequisiteStatus,
     pub message: String,
     pub resolved_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PrerequisiteReport {
     pub passed: bool,
     pub checks: Vec<PrerequisiteCheck>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonSnapshotRef {
     pub entity_id: String,
-    pub entity_type: String,
+    pub entity_type: CanonEntityType,
     pub section_id: String,
     pub section_key: String,
     pub revision: i64,
-    pub status: String,
+    pub status: CanonSnapshotStatus,
     pub value: serde_json::Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AssetSnapshotRef {
     pub asset_id: String,
     pub asset_version_id: String,
-    pub asset_type: String,
+    pub asset_type: AssetType,
     pub version_number: i64,
-    pub status: String,
+    pub status: AssetSnapshotStatus,
     pub path: String,
 }
 
 pub type CanonTbdSnapshot = CanonTbdRecord;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowContextSnapshot {
     pub snapshot_version: u8,
     pub project: WorkflowProjectRef,
@@ -148,13 +174,13 @@ pub struct WorkflowContextSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowProjectRef {
     pub project_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowSkillRef {
     pub skill_id: String,
     pub skill_version: String,
