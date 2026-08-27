@@ -8,7 +8,12 @@ export default function App() {
   const [project, setProject] = useState<ProjectSummary | null>(null);
 
   if (project) {
-    return <ProjectWorkspace project={project} />;
+    return (
+      <ProjectWorkspace
+        project={project}
+        onCloseProject={() => setProject(null)}
+      />
+    );
   }
 
   return <ProjectHome onProjectOpened={setProject} />;

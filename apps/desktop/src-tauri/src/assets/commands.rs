@@ -1,5 +1,5 @@
 use crate::assets::model::{
-    AssetRecord, AssetVersionRecord, AssetWithVersions, CanonicalPromotionResult,
+    AssetRecord, AssetSummaryRecord, AssetVersionRecord, AssetWithVersions, CanonicalPromotionResult,
 };
 use crate::assets::service::AssetService;
 use crate::error::AppCommandError;
@@ -21,7 +21,7 @@ pub fn create_asset(
 
 /// Lists every asset in the project rooted at `project_root_path`.
 #[tauri::command]
-pub fn list_assets(project_root_path: String) -> Result<Vec<AssetRecord>, AppCommandError> {
+pub fn list_assets(project_root_path: String) -> Result<Vec<AssetSummaryRecord>, AppCommandError> {
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
     AssetService::list_assets(&root).map_err(Into::into)

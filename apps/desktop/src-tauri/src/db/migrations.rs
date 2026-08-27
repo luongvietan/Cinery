@@ -20,6 +20,14 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 2,
         sql: include_str!("../../migrations/0002_assets.sql"),
     },
+    Migration {
+        version: 3,
+        sql: include_str!("../../migrations/0003_asset_version_dimensions.sql"),
+    },
+    Migration {
+        version: 4,
+        sql: include_str!("../../migrations/0004_canon_engine.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -110,6 +118,29 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn canon_migration_creates_required_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+
+        run_migrations(&mut conn).unwrap();
+
+        for table in [
+            "canon_entities",
+            "canon_sections",
+            "canon_section_revisions",
+            "canon_tbds",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
     }
 
     #[test]

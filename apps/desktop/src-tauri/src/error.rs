@@ -54,6 +54,51 @@ pub enum AppError {
 
     #[error("Image processing failed: {0}")]
     ImageProcessing(String),
+
+    #[error("Canon entity was not found")]
+    CanonEntityNotFound,
+
+    #[error("Canon section was not found")]
+    CanonSectionNotFound,
+
+    #[error("Canon entity name must contain 1 to 160 characters")]
+    InvalidCanonEntityName,
+
+    #[error("This canon entity type is reserved as a project singleton")]
+    CanonSingletonTypeRequired,
+
+    #[error("Unknown canon section for this entity type")]
+    UnknownCanonSection,
+
+    #[error("Canon section value does not match its schema")]
+    InvalidCanonSectionValue,
+
+    #[error("Locked canon sections must be unlocked before editing")]
+    CanonSectionLocked,
+
+    #[error("Canon section is already locked")]
+    CanonSectionAlreadyLocked,
+
+    #[error("Canon section is already unlocked")]
+    CanonSectionAlreadyUnlocked,
+
+    #[error("Canon TBD was not found")]
+    CanonTbdNotFound,
+
+    #[error("Canon TBD topic must contain 1 to 240 characters")]
+    InvalidCanonTbdTopic,
+
+    #[error("Resolution text must not be blank")]
+    InvalidCanonTbdResolution,
+
+    #[error("TBD references a canon entity from another project")]
+    CanonTbdEntityProjectMismatch,
+
+    #[error("TBD section key does not exist on the referenced canon entity")]
+    CanonTbdSectionMismatch,
+
+    #[error("Story Bible export failed: {0}")]
+    CanonExport(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

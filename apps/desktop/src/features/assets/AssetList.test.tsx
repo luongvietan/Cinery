@@ -5,6 +5,16 @@ import { AssetList } from "./AssetList";
 import { createAsset, listAssets } from "./api";
 
 vi.mock("./api");
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `mock-asset://${path}`,
+}));
+
+const summary = {
+  projectId: "project-1",
+  ownerEntityId: null,
+  createdAt: "2026-08-27T06:00:00Z",
+  updatedAt: "2026-08-27T06:10:00Z",
+};
 
 describe("AssetList", () => {
   beforeEach(() => {
@@ -15,56 +25,84 @@ describe("AssetList", () => {
   it("shows an empty asset state", async () => {
     vi.mocked(listAssets).mockResolvedValue([]);
     render(
-      <AssetList projectRootPath="/projects/red-door" onSelectAsset={vi.fn()} />,
+      <AssetList
+        projectRootPath="/projects/red-door"
+        selectedAssetId={null}
+        onSelectAsset={vi.fn()}
+      />,
     );
     expect(await screen.findByText("No assets yet")).toBeInTheDocument();
   });
 
-  it("shows canonical status without assuming newest is canonical", async () => {
+  it("shows canonical status with version label and thumbnail", async () => {
     vi.mocked(listAssets).mockResolvedValue([
       {
         id: "asset-1",
-        projectId: "project-1",
         type: "face_lock",
         label: "MARA-FACE",
-        ownerEntityId: null,
         canonicalVersionId: "version-1",
-        createdAt: "2026-08-27T06:00:00Z",
-        updatedAt: "2026-08-27T06:10:00Z",
+        versionCount: 3,
+        canonicalVersionNumber: 3,
+        previewThumbnailPath: "thumbnails/asset-1/v3.webp",
+        ...summary,
       },
     ]);
     render(
-      <AssetList projectRootPath="/projects/red-door" onSelectAsset={vi.fn()} />,
+      <AssetList
+        projectRootPath="/projects/red-door"
+        selectedAssetId={null}
+        onSelectAsset={vi.fn()}
+      />,
     );
     expect(await screen.findByText("MARA-FACE")).toBeInTheDocument();
-    expect(screen.getByText("Canonical set")).toBeInTheDocument();
+    expect(screen.getByText(/v003 Canonical/)).toBeInTheDocument();
+    expect(screen.getByRole("presentation")).toBeInTheDocument();
   });
 
-  it("shows a not-yet-canonical status for an asset with no canonical version", async () => {
+  it("shows no versions separately from no canonical version", async () => {
     vi.mocked(listAssets).mockResolvedValue([
       {
         id: "asset-2",
-        projectId: "project-1",
         type: "outfit",
         label: "MARA-OUTFIT",
-        ownerEntityId: null,
         canonicalVersionId: null,
-        createdAt: "2026-08-27T06:00:00Z",
-        updatedAt: "2026-08-27T06:10:00Z",
+        versionCount: 0,
+        canonicalVersionNumber: null,
+        previewThumbnailPath: null,
+        ...summary,
+      },
+      {
+        id: "asset-3",
+        type: "face_lock",
+        label: "MARA-FACE-DRAFT",
+        canonicalVersionId: null,
+        versionCount: 2,
+        canonicalVersionNumber: null,
+        previewThumbnailPath: "thumbnails/asset-3/v2.webp",
+        ...summary,
       },
     ]);
     render(
-      <AssetList projectRootPath="/projects/red-door" onSelectAsset={vi.fn()} />,
+      <AssetList
+        projectRootPath="/projects/red-door"
+        selectedAssetId={null}
+        onSelectAsset={vi.fn()}
+      />,
     );
     expect(await screen.findByText("MARA-OUTFIT")).toBeInTheDocument();
-    expect(screen.getByText("No canonical version")).toBeInTheDocument();
+    expect(screen.getByText(/No versions/)).toBeInTheDocument();
+    expect(screen.getByText(/No canonical version/)).toBeInTheDocument();
   });
 
   it("does not offer video or audio in the create-asset type selector", async () => {
     vi.mocked(listAssets).mockResolvedValue([]);
     const user = userEvent.setup();
     render(
-      <AssetList projectRootPath="/projects/red-door" onSelectAsset={vi.fn()} />,
+      <AssetList
+        projectRootPath="/projects/red-door"
+        selectedAssetId={null}
+        onSelectAsset={vi.fn()}
+      />,
     );
     await screen.findByText("No assets yet");
     await user.click(screen.getByRole("button", { name: "New Asset" }));
@@ -84,13 +122,13 @@ describe("AssetList", () => {
       .mockResolvedValueOnce([
         {
           id: "asset-1",
-          projectId: "project-1",
           type: "face_lock",
           label: "MARA-FACE",
-          ownerEntityId: null,
           canonicalVersionId: null,
-          createdAt: "2026-08-27T06:00:00Z",
-          updatedAt: "2026-08-27T06:00:00Z",
+          versionCount: 0,
+          canonicalVersionNumber: null,
+          previewThumbnailPath: null,
+          ...summary,
         },
       ]);
     vi.mocked(createAsset).mockResolvedValue({
@@ -109,6 +147,7 @@ describe("AssetList", () => {
     render(
       <AssetList
         projectRootPath="/projects/red-door"
+        selectedAssetId={null}
         onSelectAsset={onSelectAsset}
       />,
     );

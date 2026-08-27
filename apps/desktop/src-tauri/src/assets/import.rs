@@ -12,6 +12,8 @@ pub struct InspectedImage {
     pub mime_type: &'static str,
     pub extension: &'static str,
     pub byte_size: u64,
+    pub width: u32,
+    pub height: u32,
     pub sha256: String,
 }
 
@@ -39,7 +41,7 @@ pub fn inspect_image(source: &Path) -> Result<InspectedImage, AppError> {
 
     // A correct-looking signature is not enough on its own -- make sure the
     // content actually decodes before accepting it.
-    reader
+    let decoded = reader
         .decode()
         .map_err(|_| AppError::UnsupportedImageFormat)?;
 
@@ -49,6 +51,8 @@ pub fn inspect_image(source: &Path) -> Result<InspectedImage, AppError> {
         mime_type,
         extension,
         byte_size: bytes.len() as u64,
+        width: decoded.width(),
+        height: decoded.height(),
         sha256,
     })
 }
@@ -88,6 +92,8 @@ mod tests {
         assert_eq!(inspected.mime_type, "image/png");
         assert_eq!(inspected.extension, "png");
         assert!(inspected.byte_size > 0);
+        assert_eq!(inspected.width, 8);
+        assert_eq!(inspected.height, 8);
         assert_eq!(inspected.sha256.len(), 64);
     }
 

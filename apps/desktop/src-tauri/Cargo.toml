@@ -22,6 +22,7 @@ chrono = { version = "0.4", features = ["serde"] }
 serde_yaml = "0.9"
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
 
 [lib]
 name = "cinematic_desktop_lib"

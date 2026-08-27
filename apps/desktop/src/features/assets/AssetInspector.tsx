@@ -1,19 +1,59 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { formatVersionNumber, type AssetWithVersions } from "@cinematic/domain";
+import {
+  formatVersionNumber,
+  type AssetVersion,
+  type AssetWithVersions,
+} from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
-import { formatStatusLabel, humanizeAssetType } from "./format";
+import {
+  formatByteSize,
+  formatImageDimensions,
+  formatImageFormat,
+  formatImportedDate,
+  formatStatusLabel,
+  humanizeAssetType,
+} from "./format";
+import { ImportAssetVersionButton } from "./ImportAssetVersionButton";
 import { joinProjectRelativePath } from "./paths";
+import { BackButton } from "../../components/BackButton";
+import {
+  openAssetFolder,
+  openProjectRelativePath,
+  revealProjectRelativePath,
+} from "./shell";
 
 interface AssetInspectorProps {
   projectRootPath: string;
   assetId: string;
+  onAssetChanged?: () => void;
+  onBack?: () => void;
+}
+
+function versionThumbnailSrc(
+  projectRootPath: string,
+  version: AssetVersion,
+): string {
+  return convertFileSrc(
+    joinProjectRelativePath(projectRootPath, version.thumbnailPath),
+  );
+}
+
+function versionPreviewSrc(
+  projectRootPath: string,
+  version: AssetVersion,
+): string {
+  return convertFileSrc(
+    joinProjectRelativePath(projectRootPath, version.filePath),
+  );
 }
 
 export function AssetInspector({
   projectRootPath,
   assetId,
+  onAssetChanged,
+  onBack,
 }: AssetInspectorProps) {
   const [data, setData] = useState<AssetWithVersions | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +64,14 @@ export function AssetInspector({
   const selectionKey = `${projectRootPath}\u0000${assetId}`;
   const currentSelectionKey = useRef(selectionKey);
   currentSelectionKey.current = selectionKey;
+
+  async function refreshAsset() {
+    const result = await getAssetWithVersions(projectRootPath, assetId);
+    if (currentSelectionKey.current === selectionKey) {
+      setData(result);
+    }
+    return result;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -48,6 +96,15 @@ export function AssetInspector({
       cancelled = true;
     };
   }, [projectRootPath, assetId]);
+
+  async function handleImported() {
+    try {
+      await refreshAsset();
+      onAssetChanged?.();
+    } catch (err: unknown) {
+      setError(describeError(err));
+    }
+  }
 
   async function handlePromote(
     assetVersionId: string,
@@ -77,10 +134,8 @@ export function AssetInspector({
         projectRootPath,
         assetVersionId,
       });
-      const refreshed = await getAssetWithVersions(projectRootPath, assetId);
-      if (currentSelectionKey.current === requestSelectionKey) {
-        setData(refreshed);
-      }
+      await refreshAsset();
+      onAssetChanged?.();
     } catch (err: unknown) {
       if (currentSelectionKey.current === requestSelectionKey) {
         setPromotionError(describeError(err));
@@ -101,72 +156,181 @@ export function AssetInspector({
   }
 
   const { asset, versions } = data;
-
-  // The backend already returns versions ordered `version_number DESC`
-  // (see `assets/repository.rs::list_asset_versions`), but we sort
-  // defensively here so the newest-first guarantee doesn't silently depend
-  // on that implementation detail.
   const sortedVersions = [...versions].sort(
     (a, b) => b.versionNumber - a.versionNumber,
   );
+  const canonicalVersion =
+    sortedVersions.find((version) => version.id === asset.canonicalVersionId) ??
+    null;
+  const canonicalLabel = canonicalVersion
+    ? formatVersionNumber(canonicalVersion.versionNumber)
+    : versions.length > 0
+      ? "No canonical version"
+      : "No versions";
 
   return (
     <section aria-label={`Asset ${asset.label}`}>
-      <header>
-        <h2>{asset.label}</h2>
-        <p>{humanizeAssetType(asset.type)}</p>
-        <p>
-          {asset.canonicalVersionId
-            ? `Canonical version: ${asset.canonicalVersionId}`
-            : "No canonical version"}
-        </p>
+      {onBack ? (
+        <BackButton label="← Assets" onClick={onBack} />
+      ) : null}
+      <header className="asset-inspector-header">
+        <div className="asset-inspector-title">
+          <h2>{asset.label}</h2>
+          <p>{humanizeAssetType(asset.type)}</p>
+          <p className="asset-inspector-canonical-line">
+            Canonical: {canonicalLabel}
+          </p>
+        </div>
+        <div className="asset-inspector-actions">
+          <ImportAssetVersionButton
+            projectRootPath={projectRootPath}
+            assetId={assetId}
+            onImported={() => {
+              void handleImported();
+            }}
+            className="asset-import-action"
+          />
+          <button
+            type="button"
+            className="asset-secondary-button"
+            onClick={() => {
+              void openAssetFolder(projectRootPath, assetId);
+            }}
+          >
+            Open Folder
+          </button>
+        </div>
       </header>
+
       {promotionError ? <p role="alert">{promotionError}</p> : null}
-      <ul>
-        {sortedVersions.map((version) => (
-          <li key={version.id} data-testid="asset-version">
+
+      {canonicalVersion ? (
+        <section
+          aria-label="Canonical Version"
+          className="asset-canonical-panel"
+        >
+          <h3>Canonical Version</h3>
+          <article className="asset-canonical-card">
             <img
-              src={convertFileSrc(
-                joinProjectRelativePath(projectRootPath, version.thumbnailPath),
-              )}
-              alt={`${asset.label} ${formatVersionNumber(version.versionNumber)} thumbnail`}
+              className="asset-canonical-preview"
+              src={versionPreviewSrc(projectRootPath, canonicalVersion)}
+              alt={`${asset.label} ${formatVersionNumber(canonicalVersion.versionNumber)} preview`}
             />
-            <dl>
-              <dt>Version</dt>
-              <dd>{formatVersionNumber(version.versionNumber)}</dd>
-              <dt>Status</dt>
-              <dd>{formatStatusLabel(version.status)}</dd>
-              <dt>Original filename</dt>
-              <dd>{version.originalFilename}</dd>
-              <dt>MIME type</dt>
-              <dd>{version.mimeType}</dd>
-              <dt>Size</dt>
-              <dd>{version.byteSize} bytes</dd>
-              <dt>SHA-256</dt>
-              <dd>{version.sha256}</dd>
-              <dt>File path</dt>
-              <dd>{version.filePath}</dd>
-              <dt>Imported</dt>
-              <dd>
-                <time dateTime={version.createdAt}>{version.createdAt}</time>
-              </dd>
-            </dl>
-            {version.status !== "canonical" ? (
-              <button
-                type="button"
-                disabled={promotingVersionId !== null}
-                onClick={() => {
-                  void handlePromote(version.id, version.versionNumber);
-                }}
-              >
-                {promotingVersionId === version.id
-                  ? `Promoting ${formatVersionNumber(version.versionNumber)}...`
-                  : `Promote ${formatVersionNumber(version.versionNumber)} to Canon`}
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
+            <div className="asset-canonical-meta">
+              <p className="asset-version-label">
+                {formatVersionNumber(canonicalVersion.versionNumber)}
+              </p>
+              <p className="asset-version-badge asset-version-badge--canonical">
+                Canonical
+              </p>
+              <p>
+                Imported: {formatImportedDate(canonicalVersion.createdAt)}
+              </p>
+              <p>
+                {formatImageDimensions(
+                  canonicalVersion.width,
+                  canonicalVersion.height,
+                )}{" "}
+                · {formatImageFormat(canonicalVersion.mimeType)}
+              </p>
+              <p>{formatByteSize(canonicalVersion.byteSize)}</p>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      <section aria-label="Versions" className="asset-versions-panel">
+        <h3>Versions</h3>
+        {sortedVersions.length === 0 ? (
+          <p className="asset-empty-state">
+            No versions yet. Import an image to create the first version.
+          </p>
+        ) : (
+          <ul className="asset-version-list">
+            {sortedVersions.map((version) => {
+              const isCanonical = version.id === asset.canonicalVersionId;
+              return (
+                <li
+                  key={version.id}
+                  data-testid="asset-version"
+                  className={
+                    isCanonical
+                      ? "asset-version-card asset-version-card--canonical"
+                      : "asset-version-card"
+                  }
+                >
+                  <div className="asset-version-card-header">
+                    <span className="asset-version-label">
+                      {formatVersionNumber(version.versionNumber)}
+                    </span>
+                    {isCanonical ? (
+                      <span className="asset-version-badge asset-version-badge--canonical">
+                        Canonical
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="asset-version-card-body">
+                    <img
+                      src={versionThumbnailSrc(projectRootPath, version)}
+                      alt={`${asset.label} ${formatVersionNumber(version.versionNumber)} thumbnail`}
+                    />
+                    <div className="asset-version-details">
+                      <p>{formatStatusLabel(version.status)}</p>
+                      <p>{version.originalFilename}</p>
+                      <p>
+                        {formatImageDimensions(version.width, version.height)} ·{" "}
+                        {formatImageFormat(version.mimeType)} ·{" "}
+                        {formatByteSize(version.byteSize)}
+                      </p>
+                      <p>Imported: {formatImportedDate(version.createdAt)}</p>
+                    </div>
+                  </div>
+                  <div className="asset-version-actions">
+                    {!isCanonical ? (
+                      <button
+                        type="button"
+                        className="asset-secondary-button"
+                        disabled={promotingVersionId !== null}
+                        onClick={() => {
+                          void handlePromote(version.id, version.versionNumber);
+                        }}
+                      >
+                        {promotingVersionId === version.id
+                          ? "Setting canonical…"
+                          : "Set Canonical"}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="asset-secondary-button"
+                      onClick={() => {
+                        void openProjectRelativePath(
+                          projectRootPath,
+                          version.filePath,
+                        );
+                      }}
+                    >
+                      Open
+                    </button>
+                    <button
+                      type="button"
+                      className="asset-secondary-button"
+                      onClick={() => {
+                        void revealProjectRelativePath(
+                          projectRootPath,
+                          version.filePath,
+                        );
+                      }}
+                    >
+                      Reveal
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
     </section>
   );
 }
