@@ -43,7 +43,17 @@ mod tests {
             "name": "Character Builder",
             "version": "1.0.0",
             "description": "Build character production assets.",
-            "operations": [],
+            "operations": [{
+                "id": "character.create_face_lock",
+                "name": "Create Face Lock",
+                "description": "Create a face-lock request.",
+                "intentExamples": [],
+                "inputSchemaId": "create_face_lock",
+                "prerequisites": [],
+                "tbdGuards": [],
+                "workflow": [{"id": "validate-input", "type": "validate_input"}],
+                "expectedOutput": null
+            }],
             "provider": "not-allowed"
         }));
         assert!(unknown.is_err());

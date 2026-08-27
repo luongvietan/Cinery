@@ -7,8 +7,27 @@ mod tests {
         assert_eq!(serde_json::to_value(WorkflowRunStatus::WaitingForApproval).unwrap(), "waiting_for_approval");
         assert_eq!(serde_json::to_value(WorkflowStepStatus::Waiting).unwrap(), "waiting");
     }
+
+    #[test]
+    fn workflow_tbd_snapshot_rejects_invalid_status() {
+        let result = serde_json::from_value::<CanonTbdSnapshot>(serde_json::json!({
+            "id": "tbd-1",
+            "projectId": "project-1",
+            "canonEntityId": null,
+            "sectionKey": null,
+            "topic": "Unknown",
+            "note": null,
+            "protected": true,
+            "status": "pending",
+            "resolutionText": null,
+            "createdAt": "2026-08-28T00:00:00.000Z",
+            "updatedAt": "2026-08-28T00:00:00.000Z",
+            "resolvedAt": null
+        }));
+
+        assert!(result.is_err());
+    }
 }
-use crate::canon::model::CanonTbdRecord;
 use crate::canon::model::CanonEntityType;
 use crate::skills::model::{AssetType, Prerequisite};
 use serde::{Deserialize, Serialize};
@@ -77,6 +96,13 @@ pub enum AssetSnapshotStatus {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutorKind {
     DryRun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CanonTbdStatus {
+    Open,
+    Resolved,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,7 +182,22 @@ pub struct AssetSnapshotRef {
     pub path: String,
 }
 
-pub type CanonTbdSnapshot = CanonTbdRecord;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CanonTbdSnapshot {
+    pub id: String,
+    pub project_id: String,
+    pub canon_entity_id: Option<String>,
+    pub section_key: Option<String>,
+    pub topic: String,
+    pub note: Option<String>,
+    pub protected: bool,
+    pub status: CanonTbdStatus,
+    pub resolution_text: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub resolved_at: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

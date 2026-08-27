@@ -67,5 +67,66 @@ describe("workflow contracts", () => {
         ],
       }),
     ).toThrow();
+
+    expect(() =>
+      workflowContextSnapshotSchema.parse({
+        ...base,
+        prerequisiteReport: {
+          passed: true,
+          checks: [
+            {
+              id: "check-1",
+              prerequisite: {
+                type: "canon_entity_exists",
+                entityType: "character",
+                inputRef: "characterEntityId",
+                unexpected: true,
+              },
+              status: "pass",
+              message: "ok",
+              resolvedRef: "character-1",
+            },
+          ],
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      workflowContextSnapshotSchema.parse({
+        ...base,
+        assets: [
+          {
+            assetId: "asset-1",
+            assetVersionId: "version-1",
+            assetType: "face_lock",
+            versionNumber: 1,
+            status: "candidate",
+            path: "assets/face-lock.png",
+          },
+        ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      workflowContextSnapshotSchema.parse({
+        ...base,
+        protectedTbds: [
+          {
+            id: "tbd-1",
+            projectId: "project-1",
+            canonEntityId: null,
+            sectionKey: null,
+            topic: "Unknown",
+            note: null,
+            protected: true,
+            status: "pending",
+            resolutionText: null,
+            createdAt: "2026-08-28T00:00:00.000Z",
+            updatedAt: "2026-08-28T00:00:00.000Z",
+            resolvedAt: null,
+          },
+        ],
+      }),
+    ).toThrow();
   });
 });
