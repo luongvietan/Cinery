@@ -82,7 +82,7 @@ pub struct CanonSectionRevisionRecord {
 
 /// Row shape stored in a project's `canon_tbds` table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CanonTbdRecord {
     pub id: String,
     pub project_id: String,
