@@ -27,6 +27,18 @@ pub enum AppError {
 
     #[error("Database operation failed: {0}")]
     Database(String),
+
+    #[error("Asset label must contain 1 to 160 characters")]
+    InvalidAssetLabel,
+
+    #[error("This asset type is not supported in Sprint 1")]
+    UnsupportedAssetTypeForSprint,
+
+    #[error("Unknown asset type")]
+    InvalidAssetType,
+
+    #[error("Asset was not found")]
+    AssetNotFound,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

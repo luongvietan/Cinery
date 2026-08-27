@@ -11,10 +11,16 @@ pub struct Migration {
 /// The full, ordered list of migrations that bring a fresh database up to
 /// the current schema. Append new migrations here; never edit an existing
 /// entry once it has shipped.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("../../migrations/0001_project_kernel.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("../../migrations/0001_project_kernel.sql"),
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("../../migrations/0002_assets.sql"),
+    },
+];
 
 /// Applies every migration that has not yet been recorded in
 /// `schema_migrations`, each inside its own transaction. If a migration's
@@ -87,12 +93,20 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(recorded, 1);
+        assert_eq!(recorded, MIGRATIONS.len() as i64);
 
         // The projects table from migration 0001 should now exist and be usable.
         conn.execute(
             "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
              VALUES ('01', 'Red Door', 'a', 'b', 1)",
+            [],
+        )
+        .unwrap();
+
+        // The assets table from migration 0002 should now exist and be usable.
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) \
+             VALUES ('a1', '01', 'face_lock', 'MARA-FACE', 'a', 'b')",
             [],
         )
         .unwrap();
@@ -110,6 +124,6 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(recorded, 1);
+        assert_eq!(recorded, MIGRATIONS.len() as i64);
     }
 }
