@@ -1,7 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import type { Asset, AssetType } from "@cinematic/domain";
+import { describeError } from "../../lib/errors";
 import { createAsset, listAssets } from "./api";
-import { describeCommandError } from "./errors";
 import { humanizeAssetType, SPRINT_ONE_ASSET_TYPES } from "./format";
 
 interface AssetListProps {
@@ -32,7 +32,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(describeCommandError(err));
+          setError(describeError(err));
         }
       })
       .finally(() => {
@@ -76,7 +76,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
       setLabel("");
       onSelectAsset(created.id);
     } catch (err) {
-      setError(describeCommandError(err));
+      setError(describeError(err));
     } finally {
       setCreating(false);
     }
@@ -130,7 +130,7 @@ export function AssetList({ projectRootPath, onSelectAsset }: AssetListProps) {
         </form>
       )}
 
-      {loaded && assets.length === 0 ? (
+      {loaded && !error && assets.length === 0 ? (
         <p>No assets yet</p>
       ) : (
         <ul>

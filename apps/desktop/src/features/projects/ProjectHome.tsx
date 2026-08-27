@@ -1,10 +1,7 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import type {
-  AppCommandError,
-  ProjectSummary,
-  RecentProject,
-} from "@cinematic/domain";
+import type { ProjectSummary, RecentProject } from "@cinematic/domain";
+import { describeError } from "../../lib/errors";
 import { createProject, listRecentProjects, openProject } from "./api";
 import { RecentProjects } from "./RecentProjects";
 
@@ -13,25 +10,6 @@ interface ProjectHomeProps {
 }
 
 type PendingAction = "create" | "open" | null;
-
-function isAppCommandError(value: unknown): value is AppCommandError {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "message" in value &&
-    typeof (value as { message: unknown }).message === "string"
-  );
-}
-
-function describeError(error: unknown): string {
-  if (isAppCommandError(error)) {
-    return error.message;
-  }
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return "Something went wrong. Please try again.";
-}
 
 export function ProjectHome({ onProjectOpened }: ProjectHomeProps) {
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);

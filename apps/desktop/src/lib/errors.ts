@@ -11,10 +11,11 @@ function isAppCommandError(value: unknown): value is AppCommandError {
 
 /**
  * Formats a caught error (Tauri `AppCommandError`, native `Error`, or
- * anything else) into a user-facing message, mirroring the pattern
- * established by `features/projects/ProjectHome.tsx`.
+ * anything else) into a user-facing message. Shared by every feature that
+ * calls a Tauri command via `invokeCommand`, so there is exactly one place
+ * that knows how to unwrap an `AppCommandError`.
  */
-export function describeCommandError(error: unknown): string {
+export function describeError(error: unknown): string {
   if (isAppCommandError(error)) {
     return error.message;
   }

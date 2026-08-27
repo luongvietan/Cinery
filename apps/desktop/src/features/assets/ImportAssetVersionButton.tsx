@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { describeError } from "../../lib/errors";
 import { importAssetVersion } from "./api";
-import { describeCommandError } from "./errors";
 
 interface ImportAssetVersionButtonProps {
   projectRootPath: string;
@@ -39,7 +39,7 @@ export function ImportAssetVersionButton({
       await importAssetVersion({ projectRootPath, assetId, sourcePath });
       onImported();
     } catch (err) {
-      setError(describeCommandError(err));
+      setError(describeError(err));
     } finally {
       setImporting(false);
     }

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { formatVersionNumber, type AssetWithVersions } from "@cinematic/domain";
+import { describeError } from "../../lib/errors";
 import { getAssetWithVersions } from "./api";
-import { describeCommandError } from "./errors";
 import { formatStatusLabel, humanizeAssetType } from "./format";
 import { joinProjectRelativePath } from "./paths";
 
@@ -31,7 +31,7 @@ export function AssetInspector({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          setError(describeCommandError(err));
+          setError(describeError(err));
         }
       });
 

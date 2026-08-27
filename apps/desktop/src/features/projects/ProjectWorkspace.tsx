@@ -40,7 +40,15 @@ export function ProjectWorkspace({ project }: ProjectWorkspaceProps) {
                   projectRootPath={project.rootPath}
                   assetId={selectedAssetId}
                 />
+                {/*
+                  Keyed on `selectedAssetId` alone (not `importGeneration`,
+                  unlike the inspector above) so it remounts - and its
+                  in-flight `importing`/`error` state resets - on every asset
+                  switch, but not on every import completion for the
+                  currently-selected asset.
+                */}
                 <ImportAssetVersionButton
+                  key={selectedAssetId}
                   projectRootPath={project.rootPath}
                   assetId={selectedAssetId}
                   onImported={() =>
