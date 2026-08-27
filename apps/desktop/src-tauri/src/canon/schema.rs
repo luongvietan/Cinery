@@ -16,6 +16,7 @@ struct ThesisValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct TimelineEntry {
     id: String,
     label: String,
@@ -49,6 +50,7 @@ struct RelationshipsValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct StructuralEngine {
     id: String,
     title: String,
@@ -75,6 +77,7 @@ struct TextValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct VisualLock {
     id: String,
     key: String,
@@ -91,6 +94,7 @@ struct VisualLocksValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct CharacterSubBeat {
     id: String,
     title: String,
@@ -117,6 +121,7 @@ struct LocationRulesValue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct ProductionRule {
     id: String,
     title: String,
@@ -141,9 +146,8 @@ fn validate_unique_ids(values: &[String], field_name: &str) -> Result<(), AppErr
     let mut seen = std::collections::HashSet::new();
     for value in values {
         if !seen.insert(value.clone()) {
-            return Err(AppError::InvalidCanonSectionValue(format!(
-                "{field_name} must be unique"
-            )));
+            let _ = field_name;
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
     Ok(())
@@ -152,29 +156,25 @@ fn validate_unique_ids(values: &[String], field_name: &str) -> Result<(), AppErr
 fn validate_visual_locks(value: VisualLocksValue) -> Result<(), AppError> {
     for lock in &value.locks {
         if trim(&lock.id).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Visual lock id must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
         if trim(&lock.key).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Visual lock key must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
         if trim(&lock.description).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Visual lock description must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
         if lock.severity != "required" && lock.severity != "important" {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Visual lock severity must be required or important".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
 
     validate_unique_ids(
-        &value.locks.iter().map(|lock| trim(&lock.key)).collect(),
+        &value
+            .locks
+            .iter()
+            .map(|lock| trim(&lock.key))
+            .collect::<Vec<_>>(),
         "Visual lock keys",
     )
 }
@@ -182,14 +182,16 @@ fn validate_visual_locks(value: VisualLocksValue) -> Result<(), AppError> {
 fn validate_timeline(value: TimelineValue) -> Result<(), AppError> {
     for entry in &value.entries {
         if trim(&entry.id).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Timeline entry id must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
 
     validate_unique_ids(
-        &value.entries.iter().map(|entry| trim(&entry.id)).collect(),
+        &value
+            .entries
+            .iter()
+            .map(|entry| trim(&entry.id))
+            .collect::<Vec<_>>(),
         "Timeline entry IDs",
     )
 }
@@ -197,9 +199,7 @@ fn validate_timeline(value: TimelineValue) -> Result<(), AppError> {
 fn validate_structural_engines(value: StructuralEnginesValue) -> Result<(), AppError> {
     for engine in &value.engines {
         if trim(&engine.id).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Structural engine id must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
 
@@ -208,7 +208,7 @@ fn validate_structural_engines(value: StructuralEnginesValue) -> Result<(), AppE
             .engines
             .iter()
             .map(|engine| trim(&engine.id))
-            .collect(),
+            .collect::<Vec<_>>(),
         "Structural engine IDs",
     )
 }
@@ -216,14 +216,16 @@ fn validate_structural_engines(value: StructuralEnginesValue) -> Result<(), AppE
 fn validate_sub_beats(value: SubBeatsValue) -> Result<(), AppError> {
     for beat in &value.beats {
         if trim(&beat.id).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Sub-beat id must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
 
     validate_unique_ids(
-        &value.beats.iter().map(|beat| trim(&beat.id)).collect(),
+        &value
+            .beats
+            .iter()
+            .map(|beat| trim(&beat.id))
+            .collect::<Vec<_>>(),
         "Sub-beat IDs",
     )
 }
@@ -231,14 +233,16 @@ fn validate_sub_beats(value: SubBeatsValue) -> Result<(), AppError> {
 fn validate_production_rules(value: ProductionRulesValue) -> Result<(), AppError> {
     for rule in &value.rules {
         if trim(&rule.id).is_empty() {
-            return Err(AppError::InvalidCanonSectionValue(
-                "Production rule id must not be blank".to_string(),
-            ));
+            return Err(AppError::InvalidCanonSectionValue);
         }
     }
 
     validate_unique_ids(
-        &value.rules.iter().map(|rule| trim(&rule.id)).collect(),
+        &value
+            .rules
+            .iter()
+            .map(|rule| trim(&rule.id))
+            .collect::<Vec<_>>(),
         "Production rule IDs",
     )
 }
@@ -247,8 +251,7 @@ fn deserialize_and_validate<T>(value: &serde_json::Value) -> Result<T, AppError>
 where
     T: for<'de> Deserialize<'de>,
 {
-    serde_json::from_value(value.clone())
-        .map_err(|_| AppError::InvalidCanonSectionValue("Payload does not match schema".to_string()))
+    serde_json::from_value(value.clone()).map_err(|_| AppError::InvalidCanonSectionValue)
 }
 
 fn validate_story_section(section_key: &str, value: &serde_json::Value) -> Result<(), AppError> {
@@ -397,6 +400,41 @@ pub fn validate_section_value(
     }
 }
 
+pub fn section_keys(entity_type: CanonEntityType) -> &'static [&'static str] {
+    match entity_type {
+        CanonEntityType::Story => &[
+            "premise",
+            "thesis",
+            "timeline",
+            "aesthetic",
+            "relationships",
+            "structural_engines",
+            "active_skill_rules",
+        ],
+        CanonEntityType::Character => &[
+            "role_tag",
+            "visual_summary",
+            "function",
+            "backstory",
+            "psychology",
+            "speech",
+            "movement",
+            "stillness",
+            "visual_locks",
+            "sub_beats",
+        ],
+        CanonEntityType::Location => &["description", "visual_tags", "geography", "rules"],
+        CanonEntityType::Faction => &[
+            "description",
+            "visual_signature",
+            "public_face",
+            "actual_behavior",
+        ],
+        CanonEntityType::WorldRule => &["rule", "notes"],
+        CanonEntityType::ProductionRules => &["rules"],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,12 +451,7 @@ mod tests {
             }]
         });
 
-        validate_section_value(
-            CanonEntityType::Character,
-            "visual_locks",
-            &value,
-        )
-        .unwrap();
+        validate_section_value(CanonEntityType::Character, "visual_locks", &value).unwrap();
     }
 
     #[test]
@@ -445,14 +478,10 @@ mod tests {
             }]
         });
 
-        let error = validate_section_value(
-            CanonEntityType::Character,
-            "visual_locks",
-            &value,
-        )
-        .unwrap_err();
+        let error =
+            validate_section_value(CanonEntityType::Character, "visual_locks", &value).unwrap_err();
 
-        assert!(matches!(error, AppError::InvalidCanonSectionValue(_)));
+        assert!(matches!(error, AppError::InvalidCanonSectionValue));
     }
 
     #[test]
@@ -476,13 +505,9 @@ mod tests {
             ]
         });
 
-        let error = validate_section_value(
-            CanonEntityType::Character,
-            "visual_locks",
-            &value,
-        )
-        .unwrap_err();
+        let error =
+            validate_section_value(CanonEntityType::Character, "visual_locks", &value).unwrap_err();
 
-        assert!(matches!(error, AppError::InvalidCanonSectionValue(_)));
+        assert!(matches!(error, AppError::InvalidCanonSectionValue));
     }
 }

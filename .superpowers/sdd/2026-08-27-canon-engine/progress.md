@@ -30,3 +30,16 @@
 
 ## Task progress
 
+- Blocked before Task 1 dispatch: two fresh implementer attempts (`gpt-5.4`, then `gpt-5.6-luna`) were rejected by the host-wide Codex usage limit before execution. No task implementation or review was performed.
+- Direct-implementation ruling: user explicitly requested local implementation without sub-agents after the host-wide sub-agent limit blocked dispatch; no sub-agent was used for the implementation.
+- Snapshot ruling: the dirty starting checkout was preserved in snapshot commit `c6a056e1997a312ca7a5830243c9d28440229608` on isolated branch `codex/canon-engine-sdd`.
+- Task 1 completed: domain DTOs/Zod schemas, Rust schema validation, migration `0004_canon_engine.sql`, error contract, and module exports.
+- Task 2 completed: entity repository/service/commands/API, idempotent singleton bootstrap, stable slug allocation, and retrieval tests.
+- Task 3 completed: section CRUD, lock/unlock transitions, append-only contiguous revisions, history API, and locked-edit tests.
+- Task 4 completed: Story Canon workspace, section editors, lock/history UI, project navigation, and frontend tests.
+- Task 5 completed: Character Canon editor, structured visual locks, sub-beats, locked visual-lock query, and frontend coverage.
+- Task 6 completed: Location, Faction, World Rule, and Production Rule editors using generic Canon persistence and lock semantics.
+- Task 7 completed: protected/open/resolved TBD persistence, scope validation, query, resolve/reopen commands, and UI.
+- Task 8 completed: deterministic Story Bible Markdown export with stable ordering, status/TBD markers, open TBDs, and temp-file sync/rename flow.
+- Task 9 completed: restart/lock/revision/query/export acceptance test, verification guide, README update, and debug MSI/NSIS bundle build.
+- Fresh verification: `pnpm test` passed 36 tests; `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` passed 76 unit tests plus both integration acceptance tests; `git diff --check` passed.

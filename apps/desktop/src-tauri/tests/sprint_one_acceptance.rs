@@ -25,10 +25,8 @@ fn sprint_one_project_and_asset_state_survives_reopen() {
     let first_source = test_image(root, "first.png", [10, 20, 30, 255]);
     let second_source = test_image(root, "second.png", [40, 50, 60, 255]);
 
-    let first =
-        AssetService::import_asset_version(root, &asset.id, &first_source, None).unwrap();
-    let second =
-        AssetService::import_asset_version(root, &asset.id, &second_source, None).unwrap();
+    let first = AssetService::import_asset_version(root, &asset.id, &first_source, None).unwrap();
+    let second = AssetService::import_asset_version(root, &asset.id, &second_source, None).unwrap();
 
     AssetService::promote_asset_version(root, &first.id).unwrap();
     AssetService::promote_asset_version(root, &second.id).unwrap();
@@ -47,7 +45,11 @@ fn sprint_one_project_and_asset_state_survives_reopen() {
     );
 
     let v1 = reloaded.versions.iter().find(|v| v.id == first.id).unwrap();
-    let v2 = reloaded.versions.iter().find(|v| v.id == second.id).unwrap();
+    let v2 = reloaded
+        .versions
+        .iter()
+        .find(|v| v.id == second.id)
+        .unwrap();
 
     assert_eq!(v1.status, "superseded");
     assert_eq!(v2.status, "canonical");

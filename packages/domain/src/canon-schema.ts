@@ -253,8 +253,9 @@ export function parseCanonSectionValue(
   value: unknown,
 ): unknown {
   const entitySchemas = CANON_SECTION_SCHEMAS[entityType];
-  const schema =
-    entitySchemas[sectionKey as keyof typeof entitySchemas];
+  const schema = (entitySchemas as Record<string, z.ZodType<unknown>>)[
+    sectionKey
+  ];
   if (!schema) {
     throw new Error(`Unknown canon section for entity type: ${sectionKey}`);
   }

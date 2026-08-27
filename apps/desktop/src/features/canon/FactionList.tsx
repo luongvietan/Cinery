@@ -1,0 +1,2 @@
+import { EntityCategoryEditor } from "./EntityCategoryEditor";
+export function FactionList({ projectRootPath }: { projectRootPath: string }) { return <EntityCategoryEditor projectRootPath={projectRootPath} config={{ type: "faction", label: "Factions", sections: [{ key: "description", title: "Description", kind: "text" }, { key: "visual_signature", title: "Visual Signature", kind: "text" }, { key: "public_face", title: "Public Face", kind: "text" }, { key: "actual_behavior", title: "Actual Behavior", kind: "text" }] }} />; }

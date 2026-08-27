@@ -3,13 +3,14 @@ import type { ProjectSummary } from "@cinematic/domain";
 import { BackButton } from "../../components/BackButton";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
+import { CanonWorkspace } from "../canon/CanonWorkspace";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets";
+type PanelView = "none" | "assets" | "canon";
 
 export function ProjectWorkspace({
   project,
@@ -45,6 +46,13 @@ export function ProjectWorkspace({
         >
           Assets
         </button>
+        <button
+          type="button"
+          className={panelView === "canon" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => { setPanelView("canon"); setSelectedAssetId(null); }}
+        >
+          Canon
+        </button>
       </nav>
       <section aria-label="Project workspace">
         {panelView === "assets" ? (
@@ -67,6 +75,7 @@ export function ProjectWorkspace({
             ) : null}
           </>
         ) : null}
+        {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} /> : null}
       </section>
     </>
   );

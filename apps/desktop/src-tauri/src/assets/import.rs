@@ -76,9 +76,7 @@ mod tests {
         // Encode explicitly as PNG regardless of the file's extension --
         // some of these tests intentionally use a non-`.png` name to prove
         // that `inspect_image` identifies format by content, not name.
-        image
-            .save_with_format(&path, ImageFormat::Png)
-            .unwrap();
+        image.save_with_format(&path, ImageFormat::Png).unwrap();
         path
     }
 

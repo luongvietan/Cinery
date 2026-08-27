@@ -97,3 +97,10 @@ pub struct CanonTbdRecord {
     pub updated_at: String,
     pub resolved_at: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonSingletonsDto {
+    pub story: CanonEntityRecord,
+    pub production_rules: CanonEntityRecord,
+}

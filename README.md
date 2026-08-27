@@ -44,13 +44,29 @@ An automated Rust acceptance test proving the same state machine, including
 restart persistence, lives at
 [`apps/desktop/src-tauri/tests/sprint_one_acceptance.rs`](apps/desktop/src-tauri/tests/sprint_one_acceptance.rs).
 
+## Canon Engine (P2)
+
+Canon is structured, typed data stored in each project’s SQLite database.
+Locked sections are canonical; draft sections are working state. The Story
+Bible Markdown file is a deterministic export, never the machine source of
+truth. Protected open TBDs are explicit future-workflow firewall entries.
+
+The Canon Engine includes section-level locking and append-only revision
+history for Story, Character, Location, Faction, World Rule, and Production
+Rules entities, plus restart-safe export and query boundaries for locked
+visual locks, world rules, production rules, and protected TBDs.
+
+The manual walkthrough is documented at
+[`docs/superpowers/plans/canon-engine-verification.md`](docs/superpowers/plans/canon-engine-verification.md).
+The automated acceptance test lives at
+[`apps/desktop/src-tauri/tests/canon_engine_acceptance.rs`](apps/desktop/src-tauri/tests/canon_engine_acceptance.rs).
+
 ### Sprint 1 non-goals
 
 The following are explicitly out of scope for Sprint 1:
 
 - no AI providers
 - no generation
-- no Canon Engine
 - no Skill Runtime
 - no QA
 - no scene/video workflow

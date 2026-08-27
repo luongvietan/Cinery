@@ -48,9 +48,7 @@ pub fn open_project(
 /// session, not that the project itself is broken.
 fn allow_asset_protocol_access(app: &tauri::AppHandle, root: &Path) {
     if let Err(e) = app.asset_protocol_scope().allow_directory(root, true) {
-        eprintln!(
-            "failed to extend asset protocol scope for project root (non-fatal): {e}"
-        );
+        eprintln!("failed to extend asset protocol scope for project root (non-fatal): {e}");
     }
 }
 
