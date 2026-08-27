@@ -63,6 +63,7 @@ fn validate_identifier(value: &str, kind: &str) -> Result<(), AppError> {
         || !value
             .chars()
             .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || "-_.".contains(character))
+        || !value.chars().any(|character| character.is_ascii_alphanumeric())
     {
         return Err(AppError::InvalidBuiltinSkillDefinition(format!(
             "{kind} has invalid identifier: {value}"
@@ -107,6 +108,34 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
     }
 
     let mut step_ids = std::collections::HashSet::new();
+    let step_types: Vec<&str> = operation
+        .workflow
+        .iter()
+        .map(|step| match step {
+            WorkflowStepDefinition::ValidateInput { .. } => "validate_input",
+            WorkflowStepDefinition::ResolveContext { .. } => "resolve_context",
+            WorkflowStepDefinition::CompileRequest { .. } => "compile_request",
+            WorkflowStepDefinition::Approval { .. } => "approval",
+            WorkflowStepDefinition::Execute { .. } => "execute",
+            WorkflowStepDefinition::Complete { .. } => "complete",
+        })
+        .collect();
+    if operation.id == "character.create_face_lock"
+        && step_types
+            != [
+                "validate_input",
+                "resolve_context",
+                "compile_request",
+                "approval",
+                "execute",
+                "complete",
+            ]
+    {
+        return Err(AppError::InvalidBuiltinSkillDefinition(
+            "character.create_face_lock has an invalid step topology".to_string(),
+        ));
+    }
+
     for step in &operation.workflow {
         let id = match step {
             WorkflowStepDefinition::ValidateInput { id }
@@ -185,16 +214,59 @@ mod tests {
     }
 
     #[test]
+    fn registry_rejects_invalid_face_lock_step_topology_and_identifiers() {
+        let mut definition = builtin_character_builder();
+        definition.operations[0].workflow.swap(0, 1);
+        assert!(validate_definition(&definition).is_err());
+
+        let mut definition = builtin_character_builder();
+        definition.id = "---".to_string();
+        assert!(validate_definition(&definition).is_err());
+    }
+
+    #[test]
     fn serialized_builtin_definition_is_stable_and_provider_free() {
         let registry = SkillRegistry::builtin().unwrap();
-        let serialized = serde_json::to_string(registry.list()[0]).unwrap();
+        let snapshot = serde_json::to_value(registry.list()[0]).unwrap();
 
-        assert!(serialized.contains("character.create_face_lock"));
-        assert!(serialized.contains("character_face_lock_context"));
-        assert!(serialized.contains("character_face_lock_v1"));
-        let value: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        let object = value.as_object().unwrap();
-        assert!(!object.contains_key("provider"));
-        assert!(!object.contains_key("model"));
+        assert_eq!(snapshot, serde_json::json!({
+            "id": "character-builder",
+            "name": "Character Builder",
+            "version": "1.0.0",
+            "description": "Build character production assets from locked Canon.",
+            "operations": [{
+                "id": "character.create_face_lock",
+                "name": "Create Face Lock",
+                "description": "Compile a provider-neutral face-lock request.",
+                "intentExamples": [
+                    "Create a face lock for this character",
+                    "Lock the character's face"
+                ],
+                "inputSchemaId": "create_face_lock",
+                "prerequisites": [{
+                    "type": "canon_entity_exists",
+                    "entityType": "character",
+                    "inputRef": "characterEntityId"
+                }],
+                "tbdGuards": [],
+                "workflow": [
+                    {"type": "validate_input", "id": "validate-input"},
+                    {"type": "resolve_context", "id": "resolve-context", "resolverId": "character_face_lock_context"},
+                    {"type": "compile_request", "id": "compile-request", "compilerId": "character_face_lock_v1"},
+                    {"type": "approval", "id": "approve-request", "title": "Approve Face Lock Request", "description": "Review canonical context and compiled generation request before execution.", "approvalArtifactRef": "compiled_request"},
+                    {"type": "execute", "id": "execute", "executorKind": "dry_run", "requestArtifactRef": "compiled_request"},
+                    {"type": "complete", "id": "complete"}
+                ],
+                "expectedOutput": {
+                    "assetType": "face_lock",
+                    "mediaType": "image",
+                    "desiredStatus": "candidate",
+                    "ownerEntityInputRef": "characterEntityId"
+                }
+            }]
+        }));
+
+        assert!(snapshot.get("provider").is_none());
+        assert!(snapshot.get("model").is_none());
     }
 }
