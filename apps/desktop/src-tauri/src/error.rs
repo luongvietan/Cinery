@@ -54,6 +54,111 @@ pub enum AppError {
 
     #[error("Image processing failed: {0}")]
     ImageProcessing(String),
+
+    #[error("Canon entity was not found")]
+    CanonEntityNotFound,
+
+    #[error("Canon section was not found")]
+    CanonSectionNotFound,
+
+    #[error("Canon entity name must contain 1 to 160 characters")]
+    InvalidCanonEntityName,
+
+    #[error("This canon entity type is reserved as a project singleton")]
+    CanonSingletonTypeRequired,
+
+    #[error("Unknown canon section for this entity type")]
+    UnknownCanonSection,
+
+    #[error("Canon section value does not match its schema: {0}")]
+    InvalidCanonSectionValue(String),
+
+    #[error("Locked canon sections must be unlocked before editing")]
+    CanonSectionLocked,
+
+    #[error("Canon section is already locked")]
+    CanonSectionAlreadyLocked,
+
+    #[error("Canon section is already unlocked")]
+    CanonSectionAlreadyUnlocked,
+
+    #[error("Canon TBD was not found")]
+    CanonTbdNotFound,
+
+    #[error("Canon TBD topic must contain 1 to 240 characters")]
+    InvalidCanonTbdTopic,
+
+    #[error("Resolution text must not be blank")]
+    InvalidCanonTbdResolution,
+
+    #[error("TBD references a canon entity from another project")]
+    CanonTbdEntityProjectMismatch,
+
+    #[error("TBD section key does not exist on the referenced canon entity")]
+    CanonTbdSectionMismatch,
+
+    #[error("Story Bible export failed: {0}")]
+    CanonExport(String),
+
+    #[error("Skill was not found: {0}")]
+    SkillNotFound(String),
+
+    #[error("Skill version was not found: {0}")]
+    SkillVersionNotFound(String),
+
+    #[error("Skill operation was not found: {0}")]
+    SkillOperationNotFound(String),
+
+    #[error("Builtin skill definition is invalid: {0}")]
+    InvalidBuiltinSkillDefinition(String),
+
+    #[error("Workflow input is invalid: {0}")]
+    WorkflowInputInvalid(String),
+
+    #[error("Workflow prerequisite failed: {0}")]
+    WorkflowPrerequisiteFailed(String),
+
+    #[error("Workflow is blocked by protected TBD: {0}")]
+    WorkflowBlockedByProtectedTbd(String),
+
+    #[error("Workflow run was not found: {0}")]
+    WorkflowRunNotFound(String),
+
+    #[error("Workflow step was not found: {0}")]
+    WorkflowStepNotFound(String),
+
+    #[error("Workflow transition is invalid: {0}")]
+    WorkflowInvalidTransition(String),
+
+    #[error("Workflow approval is required")]
+    WorkflowApprovalRequired,
+
+    #[error("Workflow approval has already been decided: {0}")]
+    WorkflowApprovalAlreadyDecided(String),
+
+    #[error("Workflow run is terminal")]
+    WorkflowRunTerminal,
+
+    #[error("Workflow run is inconsistent: {0}")]
+    WorkflowRunInconsistent(String),
+
+    #[error("Workflow compiler was not found: {0}")]
+    WorkflowCompilerNotFound(String),
+
+    #[error("Workflow resolver was not found: {0}")]
+    WorkflowResolverNotFound(String),
+
+    #[error("Workflow executor was not found: {0}")]
+    WorkflowExecutorNotFound(String),
+
+    #[error("Workflow artifact could not be written: {0}")]
+    WorkflowArtifactWriteFailed(String),
+
+    #[error("Workflow artifact could not be read: {0}")]
+    WorkflowArtifactReadFailed(String),
+
+    #[error("Workflow step was interrupted: {0}")]
+    InterruptedDuringStep(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.
