@@ -306,9 +306,16 @@ fn to_forward_slash(path: &Path) -> String {
 
 /// Opens the project's database and ensures it is fully migrated, the same
 /// way `ProjectService::open` does.
+///
+/// Uses `db::open_existing_connection` rather than `db::open_connection`
+/// directly: a `project.db` that has gone missing (e.g. the directory was
+/// corrupted or partially deleted) must surface as
+/// `AppError::InvalidProjectDirectory`, not silently recreate an empty
+/// database file and then fail later with a confusing generic error once
+/// the (now-empty) `projects` table is queried.
 fn open_project_db(project_root: &Path) -> Result<rusqlite::Connection, AppError> {
     let db_path = project_root.join("project.db");
-    let mut conn = db::open_connection(&db_path)?;
+    let mut conn = db::open_existing_connection(&db_path)?;
     run_migrations(&mut conn)?;
     Ok(conn)
 }
@@ -580,6 +587,18 @@ mod tests {
 
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].id, created.id);
+    }
+
+    #[test]
+    fn rejects_asset_call_when_project_db_is_missing() {
+        let fixture = ProjectFixture::new();
+        AssetService::create_asset(&fixture.root, "face_lock", "MARA-FACE", None).unwrap();
+
+        std::fs::remove_file(fixture.root.join("project.db")).unwrap();
+
+        let error = AssetService::list_assets(&fixture.root).unwrap_err();
+
+        assert!(matches!(error, AppError::InvalidProjectDirectory));
     }
 
     #[test]

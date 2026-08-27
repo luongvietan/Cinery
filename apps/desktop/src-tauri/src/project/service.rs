@@ -71,15 +71,7 @@ impl ProjectService {
         let manifest = paths::read_manifest(root)?;
 
         let db_path = root.join("project.db");
-        if !db_path.is_file() {
-            // `db::open_connection` would otherwise silently create a
-            // brand-new, empty database here (SQLite creates the file on
-            // open), masking a missing `project.db` as some other failure
-            // once the empty schema is queried. Treat it the same as any
-            // other missing/corrupt project marker.
-            return Err(AppError::InvalidProjectDirectory);
-        }
-        let mut conn = db::open_connection(&db_path)?;
+        let mut conn = db::open_existing_connection(&db_path)?;
         run_migrations(&mut conn)?;
 
         let record = repository::read_project(&conn)?;

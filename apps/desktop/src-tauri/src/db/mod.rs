@@ -18,6 +18,26 @@ pub fn open_connection(path: &Path) -> Result<Connection, AppError> {
     Ok(conn)
 }
 
+/// Opens a database that is expected to already exist at `path` --
+/// i.e. any project-local `project.db` a service is re-opening rather than
+/// creating for the first time.
+///
+/// `Connection::open` (and therefore [`open_connection`]) silently creates
+/// an empty SQLite file when `path` doesn't exist, which turns a missing
+/// `project.db` into a confusing downstream failure (an empty schema, or a
+/// "no such table"/"query returned no rows" error) instead of the
+/// actionable [`AppError::InvalidProjectDirectory`] a missing/corrupt
+/// project marker should produce. Every caller that opens a project's
+/// database from a bare project root -- as opposed to bootstrapping a
+/// brand-new one -- should use this instead of [`open_connection`]
+/// directly, so this exact bug class can't reappear a third time.
+pub fn open_existing_connection(path: &Path) -> Result<Connection, AppError> {
+    if !path.is_file() {
+        return Err(AppError::InvalidProjectDirectory);
+    }
+    open_connection(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
