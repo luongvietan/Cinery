@@ -40,6 +40,11 @@ export interface ProjectHealthIssue {
   remediation: string | null;
 }
 
+export type ProvenanceKind = "asset_version" | "workflow_run" | "generation" | "qa_run" | "repair_version" | "scene" | "shot" | "cinema_compile";
+export interface ProvenanceNode { id: string; kind: ProvenanceKind; label: string; timestamp: string | null; }
+export interface ProvenanceEdge { from: string; to: string; relation: string; }
+export interface ProvenanceGraph { targetId: string; nodes: ProvenanceNode[]; edges: ProvenanceEdge[]; }
+
 export interface ActivityItem {
   id: string;
   kind: string;
