@@ -216,3 +216,39 @@ fn failed_provider_execution_creates_no_phantom_child() {
     assert_eq!(target.versions.len(), 1);
     assert_eq!(target.versions[0].id, "target-v1");
 }
+
+#[test]
+fn remaining_child_qa_failure_stops_without_another_automatic_repair() {
+    let fixture = Fixture::new();
+    let mut input = fixture.input("mock");
+    input["qaMockResponse"]["checks"][2]["status"] = Value::String("fail".into());
+    input["qaMockResponse"]["checks"][2]["repairHint"] =
+        Value::String("The scar remains on the wrong side.".into());
+    let created = WorkflowRuntime::create_run(
+        &fixture.root,
+        "visual-qa",
+        "1.0.0",
+        "asset.repair_failed_qa",
+        input,
+    )
+    .unwrap();
+    WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
+    WorkflowRuntime::approve_run_step(&fixture.root, &created.run.id, "approve-repair", None)
+        .unwrap();
+    WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
+
+    let target = AssetService::get_asset_with_versions(&fixture.root, "target").unwrap();
+    assert_eq!(target.versions.len(), 2, "post-repair QA must not create a second child");
+    let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+    let (repair_count, failed_qa_count): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM qa_repairs),
+                (SELECT COUNT(*) FROM qa_runs WHERE asset_version_id != 'target-v1' AND overall_status = 'fail')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(repair_count, 1);
+    assert_eq!(failed_qa_count, 1);
+}
