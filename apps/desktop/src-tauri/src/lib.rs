@@ -67,6 +67,7 @@ pub fn run() {
       qa::commands::get_qa_run,
       qa::commands::review_qa_check,
       integration::commands::get_project_overview,
+      integration::commands::get_project_health,
       cinema::commands::create_scene,
       cinema::commands::stage_scene,
       cinema::commands::list_scenes,

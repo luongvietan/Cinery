@@ -4,8 +4,10 @@ import type { ProjectOverview as ProjectOverviewData } from "@cinematic/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectOverview } from "./ProjectOverview";
 import { getProjectOverview } from "./api";
+import { getProjectHealth } from "./healthApi";
 
 vi.mock("./api", () => ({ getProjectOverview: vi.fn() }));
+vi.mock("./healthApi", () => ({ getProjectHealth: vi.fn() }));
 
 const overview: ProjectOverviewData = {
   readiness: {
@@ -25,6 +27,7 @@ const overview: ProjectOverviewData = {
 describe("ProjectOverview", () => {
   beforeEach(() => {
     vi.mocked(getProjectOverview).mockReset().mockResolvedValue(overview);
+    vi.mocked(getProjectHealth).mockReset().mockResolvedValue([]);
   });
 
   it("shows backend-derived progress and takes the next action to its existing workspace", async () => {

@@ -30,6 +30,16 @@ export interface ProjectHealthSummary {
   activeJobCount: number;
 }
 
+export type HealthSeverity = "info" | "warning" | "error" | "fatal";
+export interface ProjectHealthIssue {
+  code: string;
+  severity: HealthSeverity;
+  entityType: string;
+  entityId: string | null;
+  message: string;
+  remediation: string | null;
+}
+
 export interface ActivityItem {
   id: string;
   kind: string;
