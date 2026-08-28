@@ -29,4 +29,3 @@ CREATE TABLE qa_repairs (
 
 CREATE INDEX idx_qa_repairs_source_version
   ON qa_repairs(source_asset_version_id, created_at DESC);
-
