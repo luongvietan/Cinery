@@ -49,6 +49,24 @@ struct NodeKey {
     id: String,
 }
 
+/// Constructs a backwards + forwards provenance graph rooted at a target node.
+///
+/// Uses breadth-first search (BFS) to traverse both dependencies and dependents:
+/// - **Backwards (INPUT_TO, OUTPUT_OF, DERIVED_FROM, etc.):** traces inputs, sources, and parent versions
+/// - **Forwards (KEYFRAME_FOR, COMPILED_FROM, etc.):** traces outputs and dependent nodes
+///
+/// The resulting graph is immutable — current state changes do not mutate historical edges.
+/// Superseded versions remain traversable. Graph is bounded by target scope; does not fetch
+/// the entire project, avoiding O(n) query complexity.
+///
+/// # Arguments
+/// * `root` - Project root path
+/// * `target_kind` - Node type: "asset_version", "workflow_run", "generation", "qa_run",
+///   "repair_version", "scene", "shot", "cinema_compile"
+/// * `target_id` - Specific node ID to start traversal from
+///
+/// # Returns
+/// Complete `ProvenanceGraph` with all reachable nodes and edges, or AppError if invalid.
 pub fn get_provenance_graph(
     root: &Path,
     target_kind: &str,
@@ -111,6 +129,8 @@ pub fn get_provenance_graph(
     })
 }
 
+/// Parses a string into a ProvenanceKind enum.
+/// Returns InvalidProjectDirectory error for unknown kinds.
 fn parse_kind(kind_str: &str) -> Result<ProvenanceKind, AppError> {
     match kind_str {
         "asset_version" => Ok(ProvenanceKind::AssetVersion),
@@ -125,6 +145,19 @@ fn parse_kind(kind_str: &str) -> Result<ProvenanceKind, AppError> {
     }
 }
 
+/// Constructs a ProvenanceNode by querying database metadata for a given kind and id.
+///
+/// Fetches node metadata (label, timestamp) using kind-specific queries:
+/// - **AssetVersion:** asset label + creation time
+/// - **WorkflowRun:** workflow definition ID + run creation time
+/// - **Generation:** generated artifact creation time (label: "Generated artifact")
+/// - **QaRun:** asset version ID + QA run time
+/// - **RepairVersion:** parent QA run ID + repair time
+/// - **Scene:** scene intent/label + creation time
+/// - **Shot:** shot intent/label + creation time
+/// - **CinemaCompile:** scene ID + compilation time
+///
+/// Returns error if the node does not exist in the database (should not occur in valid graph).
 fn build_node(
     conn: &Connection,
     kind_str: &str,
@@ -214,6 +247,19 @@ fn build_node(
     })
 }
 
+/// Traverses backwards from a node, following input dependencies.
+///
+/// For each node kind, queries its sources and predecessors:
+/// - **AssetVersion:** generations (OUTPUT_OF), repairs (REPAIRS from parent), QA runs (QA_OF)
+/// - **Generation:** workflow run (INPUT_TO)
+/// - **WorkflowRun:** canon revision (USES_IDENTITY) if applicable
+/// - **QaRun:** asset version being tested (QA_OF)
+/// - **RepairVersion:** parent QA run (DERIVED_FROM), parent asset (REPAIRS)
+/// - **Scene:** character looks (USES_LOOK), world version (USES_WORLD), props (USES_PROP)
+/// - **Shot:** parent scene (KEYFRAME_FOR)
+/// - **CinemaCompile:** source scene (COMPILED_FROM)
+///
+/// Discovered nodes are added to the work queue for further traversal.
 fn traverse_backwards(
     conn: &Connection,
     kind_str: &str,
@@ -470,6 +516,13 @@ fn traverse_backwards(
     Ok(())
 }
 
+/// Traverses forwards from a node, following output dependents.
+///
+/// For each node kind, queries what depends on it:
+/// - **Scene:** shots (KEYFRAME_FOR), cinema compilations (COMPILED_FROM)
+/// - Other kinds: typically have no forward traversal (their outputs are handled by backwards traversal of dependents)
+///
+/// Discovered nodes are added to the work queue for further traversal.
 fn traverse_forwards(
     conn: &Connection,
     kind_str: &str,
@@ -520,6 +573,8 @@ fn traverse_forwards(
     Ok(())
 }
 
+/// Adds a node to the graph if not already present, and enqueues it for further traversal.
+/// Deduplicates nodes to prevent redundant database queries.
 fn add_node_if_missing(
     conn: &Connection,
     kind_str: &str,

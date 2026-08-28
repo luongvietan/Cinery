@@ -1,5 +1,5 @@
 import { type ProvenanceGraph, type ProvenanceNode } from "@cinematic/domain";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getProvenanceGraph } from "./api";
 
 interface ProvPanelProps {
@@ -43,6 +43,35 @@ export function ProvenancePanel({
     load();
   }, [projectRootPath, targetKind, targetId]);
 
+  // Build adjacency maps (memoized to prevent recalculation on every render)
+  // Must be called before early returns to comply with React hooks rules
+  const nodeById = useMemo(
+    () => new Map((graph?.nodes || []).map((n) => [n.id, n])),
+    [graph?.nodes]
+  );
+
+  const edgesByFrom = useMemo(() => {
+    const map = new Map<string, string[]>();
+    (graph?.edges || []).forEach((edge) => {
+      if (!map.has(edge.from)) {
+        map.set(edge.from, []);
+      }
+      map.get(edge.from)!.push(edge.to);
+    });
+    return map;
+  }, [graph?.edges]);
+
+  const edgesByTo = useMemo(() => {
+    const map = new Map<string, Array<{ from: string; relation: string }>>();
+    (graph?.edges || []).forEach((edge) => {
+      if (!map.has(edge.to)) {
+        map.set(edge.to, []);
+      }
+      map.get(edge.to)!.push({ from: edge.from, relation: edge.relation });
+    });
+    return map;
+  }, [graph?.edges]);
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center p-8">
@@ -67,23 +96,6 @@ export function ProvenancePanel({
       </div>
     );
   }
-
-  // Build adjacency for rendering
-  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
-  const edgesByFrom = new Map<string, string[]>();
-  const edgesByTo = new Map<string, Array<{ from: string; relation: string }>>();
-
-  graph.edges.forEach((edge) => {
-    if (!edgesByFrom.has(edge.from)) {
-      edgesByFrom.set(edge.from, []);
-    }
-    edgesByFrom.get(edge.from)!.push(edge.to);
-
-    if (!edgesByTo.has(edge.to)) {
-      edgesByTo.set(edge.to, []);
-    }
-    edgesByTo.get(edge.to)!.push({ from: edge.from, relation: edge.relation });
-  });
 
   const renderNode = (nodeId: string, depth: number = 0): JSX.Element => {
     const node = nodeById.get(nodeId);
