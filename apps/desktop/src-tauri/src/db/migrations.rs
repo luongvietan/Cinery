@@ -56,6 +56,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 11,
         sql: include_str!("../../migrations/0011_visual_qa_repairs.sql"),
     },
+    Migration {
+        version: 12,
+        sql: include_str!("../../migrations/0012_cinema_compiler.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -117,6 +121,100 @@ fn read_applied_versions(conn: &Connection) -> Result<Vec<i64>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cinema_migration_creates_required_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        for table in [
+            "scenes",
+            "scene_characters",
+            "scene_props",
+            "shots",
+            "cinema_compilations",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn cinema_migration_enforces_foreign_keys_and_uniqueness() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        // FK: scenes must reference a real project.
+        assert!(conn
+            .execute(
+                "INSERT INTO scenes (id, project_id, title, created_at, updated_at) \
+                 VALUES ('scene-1', 'missing-project', 'Scene 001', 'now', 'now')",
+                [],
+            )
+            .is_err());
+
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+             VALUES ('project-1', 'Red Door', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scenes (id, project_id, title, created_at, updated_at) \
+             VALUES ('scene-1', 'project-1', 'Scene 001', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        // Check constraint: blank titles are rejected.
+        assert!(conn
+            .execute(
+                "INSERT INTO scenes (id, project_id, title, created_at, updated_at) \
+                 VALUES ('scene-2', 'project-1', '   ', 'now', 'now')",
+                [],
+            )
+            .is_err());
+
+        // Check constraint: durations must be positive and bounded.
+        assert!(conn
+            .execute(
+                "INSERT INTO shots (id, scene_id, ordering, duration_seconds, intent, \
+                 created_at, updated_at) \
+                 VALUES ('shot-1', 'scene-1', 0, 0, 'Establish', 'now', 'now')",
+                [],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO shots (id, scene_id, ordering, duration_seconds, intent, \
+                 created_at, updated_at) \
+                 VALUES ('shot-1', 'scene-1', 0, 45, 'Establish', 'now', 'now')",
+                [],
+            )
+            .is_err());
+
+        // Unique: duplicate (scene_id, ordering) shots are rejected.
+        conn.execute(
+            "INSERT INTO shots (id, scene_id, ordering, duration_seconds, intent, \
+             created_at, updated_at) \
+             VALUES ('shot-1', 'scene-1', 0, 4, 'Establish', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO shots (id, scene_id, ordering, duration_seconds, intent, \
+                 created_at, updated_at) \
+                 VALUES ('shot-2', 'scene-1', 0, 4, 'Close', 'now', 'now')",
+                [],
+            )
+            .is_err());
+    }
 
     #[test]
     fn applies_pending_migrations_and_records_versions() {
