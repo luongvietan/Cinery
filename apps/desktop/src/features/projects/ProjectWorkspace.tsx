@@ -41,6 +41,7 @@ export function ProjectWorkspace({
       <nav>
         <button
           type="button"
+          aria-pressed={panelView === "assets"}
           className={panelView === "assets" ? "nav-button nav-button--active" : "nav-button"}
           onClick={() => setPanelView("assets")}
         >
@@ -48,6 +49,7 @@ export function ProjectWorkspace({
         </button>
         <button
           type="button"
+          aria-pressed={panelView === "workflows"}
           className={panelView === "workflows" ? "nav-button nav-button--active" : "nav-button"}
           onClick={() => {
             setPanelView("workflows");

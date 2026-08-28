@@ -33,7 +33,7 @@ export function CreateFaceLockForm({ projectRootPath, characters, pending, onCan
       </header>
       <form className="workflow-form" onSubmit={handleSubmit}>
         <label htmlFor="workflow-character-id">Character</label>
-        <select id="workflow-character-id" value={characterEntityId} onChange={(event) => setCharacterEntityId(event.target.value)} required aria-describedby="workflow-character-help">
+        <select autoFocus id="workflow-character-id" value={characterEntityId} onChange={(event) => setCharacterEntityId(event.target.value)} required aria-describedby="workflow-character-help">
           {characters.length === 0 ? <option value="">No Character Canon entities available</option> : characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}
         </select>
         <span id="workflow-character-help" className="workflow-field-help">Only Character entities from this project are available.</span>

@@ -1,15 +1,15 @@
 use crate::db;
 use crate::error::AppError;
-use crate::workflow::repository::WorkflowRepository;
+use crate::workflow::repository::append_event_in_transaction;
 use chrono::Utc;
-use rusqlite::params;
+use rusqlite::{params, TransactionBehavior};
 use std::path::Path;
 
 pub fn recover_interrupted_runs(project_root: &Path) -> Result<usize, AppError> {
     let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
     let run_ids = {
         let mut statement = conn
-            .prepare("SELECT id FROM workflow_runs WHERE status = 'running' ORDER BY id")
+            .prepare("SELECT id FROM workflow_runs WHERE status = 'running' OR EXISTS (SELECT 1 FROM workflow_steps WHERE workflow_run_id = workflow_runs.id AND status = 'running') ORDER BY id")
             .map_err(db_error)?;
         let result = statement
             .query_map([], |row| row.get::<_, String>(0))
@@ -21,23 +21,22 @@ pub fn recover_interrupted_runs(project_root: &Path) -> Result<usize, AppError> 
 
     for run_id in &run_ids {
         let now = Utc::now().to_rfc3339();
-        conn.execute(
+        let payload = serde_json::json!({"code":"INTERRUPTED_DURING_STEP"}).to_string();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        tx.execute(
             "UPDATE workflow_steps SET status = 'failed', completed_at = ?1 WHERE workflow_run_id = ?2 AND status = 'running'",
             params![now, run_id],
         )
         .map_err(db_error)?;
-        conn.execute(
+        tx.execute(
             "UPDATE workflow_runs SET status = 'failed', failure_code = 'INTERRUPTED_DURING_STEP', failure_message = 'Workflow step was interrupted by application shutdown', completed_at = ?1, updated_at = ?1 WHERE id = ?2",
             params![now, run_id],
         )
         .map_err(db_error)?;
-        WorkflowRepository::append_event(
-            &mut conn,
-            run_id,
-            "run_failed",
-            None,
-            Some(serde_json::json!({"code":"INTERRUPTED_DURING_STEP"})),
-        )?;
+        append_event_in_transaction(&tx, run_id, "run_failed", None, Some(&payload), &now)?;
+        tx.commit().map_err(db_error)?;
     }
     Ok(run_ids.len())
 }

@@ -702,6 +702,13 @@ section[aria-label^="Asset "] li[data-testid="asset-version"] > button {
   flex-shrink: 0;
 }
 
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-ember);
+  outline-offset: 2px;
+  border-color: var(--color-ink-soft);
+}
+
 /* Workflow production workspace */
 .workflow-workspace {
   display: flex;
@@ -803,6 +810,11 @@ section[aria-label^="Asset "] li[data-testid="asset-version"] > button {
   background: var(--surface-canvas);
 }
 
+.workflow-loading {
+  padding: var(--space-16);
+  font-size: 13px;
+}
+
 .workflow-recent li > button > span:last-child {
   grid-column: 1 / -1;
   color: var(--color-mid-gray);
@@ -856,11 +868,26 @@ section[aria-label^="Asset "] li[data-testid="asset-version"] > button {
 }
 
 .workflow-form-actions,
-.workflow-approval > div {
+.workflow-approval > div,
+.workflow-cancel-confirm {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-8);
   margin-top: var(--space-8);
+}
+
+.workflow-cancel-confirm {
+  align-items: center;
+  margin: 0 var(--space-20) var(--space-20);
+  padding: var(--space-12) var(--space-16);
+  border-left: 3px solid var(--color-danger);
+  background: var(--surface-sidebar);
+}
+
+.workflow-secondary-inline {
+  color: var(--color-ink);
+  background: var(--surface-card);
+  border-color: var(--color-hairline);
 }
 
 .workflow-run {
@@ -982,6 +1009,16 @@ section[aria-label^="Asset "] li[data-testid="asset-version"] > button {
   .workflow-form-grid { grid-template-columns: 1fr; }
   .workflow-events li { grid-template-columns: 28px minmax(0, 1fr); }
   .workflow-events time { grid-column: 2; }
+  .workflow-step-list {
+    display: flex;
+    flex-direction: column;
+    overflow-x: visible;
+  }
+  .workflow-step-list li {
+    min-height: 56px;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-hairline);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkflowRunDetail, WorkflowRunStatus } from "@cinematic/domain";
 import { WorkflowRunView } from "./WorkflowRunView";
-import { advanceWorkflowRun, approveWorkflowStep } from "./api";
+import { advanceWorkflowRun, approveWorkflowStep, rejectWorkflowStep } from "./api";
 
 vi.mock("./api");
 
@@ -51,5 +51,17 @@ describe("WorkflowRunView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Execute Dry Run" }));
 
     expect(advanceWorkflowRun).toHaveBeenCalledWith("C:/projects/red-door", "run-1");
+  });
+
+  it("requires an explicit confirmation before rejection", async () => {
+    const waiting = detail("waiting_for_approval");
+    vi.mocked(rejectWorkflowStep).mockResolvedValue(detail("rejected"));
+
+    render(<WorkflowRunView projectRootPath="C:/projects/red-door" detail={waiting} onChange={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "Reject request" }));
+    expect(rejectWorkflowStep).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Confirm rejection" }));
+    expect(rejectWorkflowStep).toHaveBeenCalledWith("C:/projects/red-door", "run-1", "approve-request", null);
   });
 });

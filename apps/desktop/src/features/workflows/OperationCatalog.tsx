@@ -2,7 +2,7 @@ import type { SkillOperation } from "@cinematic/domain";
 
 interface OperationCatalogProps {
   operations: SkillOperation[];
-  onSelect: (operation: SkillOperation) => void;
+  onSelect: (operation: SkillOperation, trigger: HTMLButtonElement) => void;
 }
 
 export function OperationCatalog({ operations, onSelect }: OperationCatalogProps) {
@@ -22,7 +22,7 @@ export function OperationCatalog({ operations, onSelect }: OperationCatalogProps
               <h3>{operation.name}</h3>
               <p>{operation.description}</p>
             </div>
-            <button type="button" onClick={() => onSelect(operation)}>
+            <button type="button" onClick={(event) => onSelect(operation, event.currentTarget)}>
               Create Face Lock
             </button>
           </li>

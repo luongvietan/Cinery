@@ -97,12 +97,44 @@ fn face_lock_waits_for_approval_then_requires_explicit_dry_run() {
         .as_str()
         .unwrap()
         .contains("right_eyebrow_scar"));
+    for section in ["POSE / EXPRESSION", "BIOLOGICAL REALISM"] {
+        assert!(request["prompt"].as_str().unwrap().contains(section));
+    }
     assert!(request["constraints"]
         .as_array()
         .unwrap()
         .iter()
         .any(|constraint| constraint["type"] == "preserve_visual_lock"
             && constraint["key"] == "right_eyebrow_scar"));
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.execute(
+        "UPDATE canon_sections SET value_json = '{\"text\":\"Mutated after launch.\"}', revision = 99 WHERE id = 'summary'",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    ProjectService::open(&root).unwrap();
+    assert_eq!(
+        WorkflowRuntime::get_run(&root, &created.run.id)
+            .unwrap()
+            .run
+            .context_snapshot_json,
+        waiting.run.context_snapshot_json
+    );
+
+    assert!(matches!(
+        WorkflowRuntime::approve_run_step(&root, &created.run.id, "validate-input", None)
+            .unwrap_err(),
+        AppError::WorkflowStepNotFound(_)
+    ));
+    assert_eq!(
+        WorkflowRuntime::get_run(&root, &created.run.id)
+            .unwrap()
+            .run
+            .status,
+        "waiting_for_approval"
+    );
 
     let ready =
         WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
@@ -112,6 +144,14 @@ fn face_lock_waits_for_approval_then_requires_explicit_dry_run() {
         .join(&created.run.id)
         .join("dry-run-result.json")
         .exists());
+    assert_eq!(
+        WorkflowRuntime::get_run(&root, &created.run.id)
+            .unwrap()
+            .run
+            .status,
+        "ready_for_execution"
+    );
+    ProjectService::open(&root).unwrap();
     assert_eq!(
         WorkflowRuntime::get_run(&root, &created.run.id)
             .unwrap()
@@ -314,4 +354,67 @@ fn recovery_fails_interrupted_running_work_without_replaying_it() {
     );
     assert_eq!(recovered.steps[0].status, "failed");
     assert_eq!(recovered.events.last().unwrap().event_type, "run_failed");
+}
+
+#[test]
+fn recovery_fails_ready_run_with_an_interrupted_execute_step() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.0.0",
+        "character.create_face_lock",
+        face_lock_input(&root),
+    )
+    .unwrap();
+    WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+    WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.execute(
+        "UPDATE workflow_steps SET status = 'running' WHERE workflow_run_id = ?1 AND step_definition_id = 'execute'",
+        [&created.run.id],
+    )
+    .unwrap();
+    drop(conn);
+
+    ProjectService::open(&root).unwrap();
+
+    let recovered = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
+    assert_eq!(recovered.run.status, "failed");
+    assert_eq!(
+        recovered.run.failure_code.as_deref(),
+        Some("INTERRUPTED_DURING_STEP")
+    );
+}
+
+#[test]
+fn execution_failure_transitions_run_to_failed_with_an_audit_event() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.0.0",
+        "character.create_face_lock",
+        face_lock_input(&root),
+    )
+    .unwrap();
+    WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+    WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.execute(
+        "UPDATE workflow_steps SET output_json = 'not-json' WHERE workflow_run_id = ?1 AND step_type = 'compile_request'",
+        [&created.run.id],
+    )
+    .unwrap();
+    drop(conn);
+
+    assert!(WorkflowRuntime::advance_run(&root, &created.run.id).is_err());
+
+    let failed = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
+    assert_eq!(failed.run.status, "failed");
+    assert_eq!(
+        failed.run.failure_code.as_deref(),
+        Some("WORKFLOW_STEP_FAILED")
+    );
+    assert_eq!(failed.events.last().unwrap().event_type, "run_failed");
 }

@@ -51,7 +51,11 @@ describe("WorkflowWorkspace", () => {
     expect(await screen.findByText("Waiting for approval")).toBeInTheDocument();
     expect(advanceWorkflowRun).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Create Face Lock" }));
+    const launchButton = screen.getByRole("button", { name: "Create Face Lock" });
+    await userEvent.click(launchButton);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Character" })).toHaveValue("mara"));
+    expect(screen.getByRole("combobox", { name: "Character" })).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(launchButton).toHaveFocus());
   });
 });

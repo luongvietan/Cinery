@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::workflow::model::{
-    WorkflowEventRecord, WorkflowRunDetail, WorkflowRunRecord, WorkflowStepDefinition,
-    WorkflowStepRecord,
+    PrerequisiteReport, WorkflowEventRecord, WorkflowRunDetail, WorkflowRunRecord,
+    WorkflowStepDefinition, WorkflowStepRecord,
 };
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -18,6 +18,7 @@ impl WorkflowRepository {
         skill_version: &str,
         operation_id: &str,
         input: Value,
+        prerequisite_report: &PrerequisiteReport,
         steps: &[WorkflowStepDefinition],
     ) -> Result<String, AppError> {
         let transaction = conn
@@ -25,15 +26,17 @@ impl WorkflowRepository {
             .map_err(|error| AppError::Database(error.to_string()))?;
         let run_id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
-        let input_json = serde_json::to_string(&input)
+        let input_json =
+            serde_json::to_string(&input).map_err(|error| AppError::Database(error.to_string()))?;
+        let prerequisite_report_json = serde_json::to_string(prerequisite_report)
             .map_err(|error| AppError::Database(error.to_string()))?;
 
         transaction
             .execute(
                 "INSERT INTO workflow_runs
                     (id, project_id, skill_id, skill_version, operation_id, status,
-                     input_json, current_step_index, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 'created', ?6, 0, ?7, ?7)",
+                     input_json, prerequisite_report_json, current_step_index, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'created', ?6, ?7, 0, ?8, ?8)",
                 params![
                     run_id,
                     project_id,
@@ -41,6 +44,7 @@ impl WorkflowRepository {
                     skill_version,
                     operation_id,
                     input_json,
+                    prerequisite_report_json,
                     now,
                 ],
             )
@@ -184,7 +188,7 @@ impl WorkflowRepository {
     }
 }
 
-fn append_event_in_transaction(
+pub(crate) fn append_event_in_transaction(
     transaction: &Transaction<'_>,
     run_id: &str,
     event_type: &str,
@@ -306,6 +310,13 @@ mod tests {
         ]
     }
 
+    fn report() -> PrerequisiteReport {
+        PrerequisiteReport {
+            passed: true,
+            checks: vec![],
+        }
+    }
+
     #[test]
     fn creates_run_steps_and_first_event_transactionally() {
         let mut conn = connection_with_projects();
@@ -316,6 +327,7 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             serde_json::json!({"characterEntityId": "character-1"}),
+            &report(),
             &steps(),
         )
         .unwrap();
@@ -339,6 +351,7 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             serde_json::json!({}),
+            &report(),
             &steps(),
         )
         .unwrap();
@@ -375,6 +388,7 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             serde_json::json!({}),
+            &report(),
             &steps(),
         )
         .unwrap();
@@ -386,7 +400,8 @@ mod tests {
     #[test]
     fn appending_to_missing_run_returns_stable_not_found_error() {
         let mut conn = connection_with_projects();
-        let result = WorkflowRepository::append_event(&mut conn, "missing-run", "run_started", None, None);
+        let result =
+            WorkflowRepository::append_event(&mut conn, "missing-run", "run_started", None, None);
 
         assert!(matches!(result, Err(AppError::WorkflowRunNotFound(id)) if id == "missing-run"));
         let event_count: i64 = conn
@@ -405,6 +420,7 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             serde_json::json!({}),
+            &report(),
             &steps(),
         )
         .unwrap();
@@ -415,6 +431,7 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             serde_json::json!({}),
+            &report(),
             &steps(),
         )
         .unwrap();

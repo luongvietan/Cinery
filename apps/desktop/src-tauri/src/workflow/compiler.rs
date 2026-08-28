@@ -31,25 +31,32 @@ impl RequestCompiler for CharacterFaceLockCompiler {
         operation: &SkillOperation,
         context: &WorkflowContextSnapshot,
     ) -> Result<ExecutionRequest, AppError> {
-        let character = context
-            .resolved_context
-            .get("character")
-            .cloned()
-            .unwrap_or_default();
-        let visual_spec = context
-            .resolved_context
-            .get("detailedVisualSpec")
-            .cloned()
-            .unwrap_or_default();
+        let character = required_context(&context.resolved_context, "character")?;
+        let visual_spec = required_context(&context.resolved_context, "detailedVisualSpec")?;
         let wardrobe = context
             .resolved_context
             .get("baselineWardrobe")
             .and_then(|value| value.as_str())
-            .unwrap_or("");
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent("baselineWardrobe is missing from context".into())
+            })?;
         let locks = character
             .get("permanentVisualLocks")
             .cloned()
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "permanentVisualLocks is missing from context".into(),
+                )
+            })?;
+        let expression = visual_spec
+            .get("expression")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "visualSpec.expression is missing from context".into(),
+                )
+            })?;
         let mut prompt = String::new();
         prompt.push_str("TASK\nCreate a neutral character face-lock reference plate.\n\n");
         prompt.push_str("VISUAL SPEC\n");
@@ -63,7 +70,10 @@ impl RequestCompiler for CharacterFaceLockCompiler {
         prompt.push_str(&serde_json::to_string_pretty(&locks).map_err(db_error)?);
         prompt.push_str("\n\nBASELINE WARDROBE\n");
         prompt.push_str(wardrobe);
+        prompt.push_str("\n\nPOSE / EXPRESSION\nFront-facing neutral reference pose; expression: ");
+        prompt.push_str(expression);
         prompt.push_str("\n\nREFERENCE PLATE RULES\nflat 18% neutral gray field; flat shadowless neutral illumination; no cast shadow; no contact shadow; no cinematic depth of field; biological realism.\n\nFORBIDDEN STYLIZATION\nNo stylized rendering, beauty lighting, or cinematic depth of field.\n\nOUTPUT INTENT\nface_lock image candidate.\n");
+        prompt = prompt.replace("\n\nFORBIDDEN STYLIZATION", "\n\nBIOLOGICAL REALISM\nNatural anatomy, skin texture, and physically plausible proportions.\n\nFORBIDDEN STYLIZATION");
 
         let mut references = context
             .canon
@@ -134,6 +144,13 @@ fn json_without_story_name(character: &serde_json::Value) -> serde_json::Value {
     value
 }
 
+fn required_context(context: &serde_json::Value, key: &str) -> Result<serde_json::Value, AppError> {
+    context
+        .get(key)
+        .cloned()
+        .ok_or_else(|| AppError::WorkflowRunInconsistent(format!("{key} is missing from context")))
+}
+
 fn db_error(error: serde_json::Error) -> AppError {
     AppError::WorkflowRunInconsistent(error.to_string())
 }
@@ -160,7 +177,7 @@ mod tests {
             "protectedTbds": [],
             "resolvedContext": {
                 "character": { "entityId": "mara", "storyName": "Mara", "roleTag": "Protagonist", "visualSummary": "Angular face.", "permanentVisualLocks": [] },
-                "detailedVisualSpec": { "eyes": "brown" },
+                "detailedVisualSpec": { "eyes": "brown", "expression": "neutral" },
                 "baselineWardrobe": "charcoal crew neck",
                 "referencePlateRules": {}
             },
