@@ -36,7 +36,7 @@ export const ErrorPanel: React.FC<ErrorPanelProps> = ({
               <div key={check.id} className={`${styles.check} ${styles[`check-${check.status}`]}`}>
                 <span className={styles.checkStatus}>{check.status.toUpperCase()}</span>
                 <span className={styles.checkLabel}>{check.label}</span>
-                <span className={styles.checkType}>({check.check_type})</span>
+                <span className={styles.checkType}>({check.type})</span>
               </div>
             ))}
           </div>
@@ -61,6 +61,16 @@ function formatUserAction(action: string, jobType: string): string {
       return "Inspect the failed QA checks and start a repair workflow if needed.";
     case "complete_repair":
       return "Continue or complete the in-progress repair.";
+    case "nothing_required":
+      return "No action required. Review the details above.";
+    case "resume_local":
+      return "You can resume this local operation.";
+    case "await_user_retry":
+      return "You can retry this operation explicitly.";
+    case "inspect_remote_result":
+      return "Check the remote service state before retrying.";
+    case "manual_resolution_required":
+      return "Manual intervention required. See details above.";
     default:
       return "Check the project state and decide on next steps.";
   }
