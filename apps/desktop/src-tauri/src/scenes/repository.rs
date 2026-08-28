@@ -486,3 +486,122 @@ pub fn list_reference_events(
     }
     Ok(out)
 }
+
+// ---------------------------------------------------------------------------
+// Scene Keyframe Asset
+// ---------------------------------------------------------------------------
+
+pub fn update_scene_keyframe_asset(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    keyframe_asset_id: Option<&str>,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scenes SET keyframe_asset_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![keyframe_asset_id, updated_at, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Scene TBD Bindings
+// ---------------------------------------------------------------------------
+
+fn row_to_tbd_binding(row: &rusqlite::Row) -> rusqlite::Result<crate::scenes::model::SceneTbdBinding> {
+    let decision_str: String = row.get(5)?;
+    Ok(crate::scenes::model::SceneTbdBinding {
+        id: row.get(0)?,
+        scene_id: row.get(1)?,
+        canon_tbd_id: row.get(2)?,
+        topic_snapshot: row.get(3)?,
+        note_snapshot: row.get(4)?,
+        decision: decision_str.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                5,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            )
+        })?,
+        justification: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+pub fn list_scene_tbd_bindings(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<crate::scenes::model::SceneTbdBinding>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scene_id, canon_tbd_id, topic_snapshot, note_snapshot, decision, justification, created_at, updated_at FROM scene_tbd_bindings WHERE scene_id = ?1 ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], row_to_tbd_binding)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+    }
+    Ok(out)
+}
+
+pub fn get_scene_tbd_binding(
+    conn: &Connection,
+    scene_id: &str,
+    canon_tbd_id: &str,
+) -> Result<Option<crate::scenes::model::SceneTbdBinding>, AppError> {
+    conn.query_row(
+        "SELECT id, scene_id, canon_tbd_id, topic_snapshot, note_snapshot, decision, justification, created_at, updated_at FROM scene_tbd_bindings WHERE scene_id = ?1 AND canon_tbd_id = ?2",
+        params![scene_id, canon_tbd_id],
+        row_to_tbd_binding,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+pub fn upsert_scene_tbd_binding(
+    tx: &Transaction<'_>,
+    binding: &crate::scenes::model::SceneTbdBinding,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO scene_tbd_bindings (id, scene_id, canon_tbd_id, topic_snapshot, note_snapshot, decision, justification, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) ON CONFLICT(scene_id, canon_tbd_id) DO UPDATE SET topic_snapshot = excluded.topic_snapshot, note_snapshot = excluded.note_snapshot, decision = excluded.decision, justification = excluded.justification, updated_at = excluded.updated_at",
+        params![
+            binding.id,
+            binding.scene_id,
+            binding.canon_tbd_id,
+            binding.topic_snapshot,
+            binding.note_snapshot,
+            binding.decision.as_str(),
+            binding.justification,
+            binding.created_at,
+            binding.updated_at,
+        ],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+pub fn delete_scene_tbd_binding(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    canon_tbd_id: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "DELETE FROM scene_tbd_bindings WHERE scene_id = ?1 AND canon_tbd_id = ?2",
+            params![scene_id, canon_tbd_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::CanonTbdNotFound);
+    }
+    Ok(())
+}

@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::skills::builtin::character_builder::builtin_character_builder;
+use crate::skills::builtin::scene_builder::builtin_scene_builder;
 use crate::skills::builtin::visual_qa::builtin_visual_qa;
 use crate::skills::builtin::world_builder::builtin_world_builder;
 use crate::skills::model::{SkillDefinition, SkillOperation};
@@ -17,6 +18,7 @@ impl SkillRegistry {
             builtin_character_builder(),
             builtin_visual_qa(),
             builtin_world_builder(),
+            builtin_scene_builder(),
         ];
         let mut skills = HashMap::new();
         for definition in definitions {
@@ -157,9 +159,12 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
 
     if matches!(
         operation.id.as_str(),
-        "character.create_face_lock" | "asset.run_visual_qa" | "world.create_plate"
-    )
-        && step_types
+        "character.create_face_lock"
+            | "asset.run_visual_qa"
+            | "asset.repair_failed_qa"
+            | "world.create_plate"
+            | "scene.create_keyframe"
+    ) && step_types
             != [
                 "validate_input",
                 "resolve_context",
@@ -199,6 +204,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "visual_qa_context"
                         | "visual_qa_repair_context"
                         | "world_plate_context"
+                        | "scene_keyframe_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -212,6 +218,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "visual_qa_v1"
                         | "visual_qa_repair_v1"
                         | "world_plate_v1"
+                        | "scene_keyframe_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -265,7 +272,7 @@ mod tests {
         assert_eq!(skill.id, "character-builder");
         assert_eq!(skill.version, "1.0.0");
         assert_eq!(operation.id, "character.create_face_lock");
-        assert_eq!(registry.list().len(), 3);
+        assert_eq!(registry.list().len(), 4);
     }
 
     #[test]
@@ -304,9 +311,27 @@ mod tests {
         assert_eq!(operation.id, "world.create_plate");
         assert_eq!(operation.input_schema_id, "create_world_plate");
         assert_eq!(operation.expected_output.as_ref().unwrap().asset_type, crate::skills::model::AssetType::WorldPlate);
-        assert_eq!(registry.list().len(), 3);
+        assert_eq!(registry.list().len(), 4);
         let snapshot = serde_json::to_value(skill).unwrap();
         assert!(snapshot.to_string().contains("world_plate"));
+        assert!(snapshot.get("provider").is_none());
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_scene_keyframe_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("scene-builder", "1.0.0", "scene.create_keyframe")
+            .unwrap();
+
+        assert_eq!(skill.id, "scene-builder");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(operation.id, "scene.create_keyframe");
+        assert_eq!(operation.input_schema_id, "create_scene_keyframe");
+        assert_eq!(operation.expected_output.as_ref().unwrap().asset_type, crate::skills::model::AssetType::ShotKeyframe);
+        assert_eq!(registry.list().len(), 4);
+        let snapshot = serde_json::to_value(skill).unwrap();
+        assert!(snapshot.to_string().contains("shot_keyframe"));
         assert!(snapshot.get("provider").is_none());
     }
 

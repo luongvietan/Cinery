@@ -267,6 +267,12 @@ pub enum AppError {
 
     #[error("Scene reference is broken: {0}")]
     SceneReferenceBroken(String),
+
+    #[error("Scene is not ready for keyframe generation: {0}")]
+    SceneNotReady(String),
+
+    #[error("Provider capability is not satisfied: {0}")]
+    ProviderCapabilityUnsatisfied(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

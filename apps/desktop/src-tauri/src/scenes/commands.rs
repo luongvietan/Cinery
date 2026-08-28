@@ -1,8 +1,9 @@
 use crate::error::AppCommandError;
 use crate::project::service as project_service;
+use crate::assets::model::AssetRecord;
 use crate::scenes::model::{
     ResolvedSceneReference, ResolvedSceneReferences, Scene, SceneCharacterAssignment,
-    ScenePropAssignment,
+    ScenePropAssignment, SceneReadiness, SceneTbdBinding, TbdDecisionKind,
 };
 use crate::scenes::service::SceneService;
 use std::path::PathBuf;
@@ -205,4 +206,64 @@ pub fn upgrade_scene_prop_reference(
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
     SceneService::upgrade_scene_prop_reference(&root, &scene_id, &assignment_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn get_scene_readiness(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<SceneReadiness, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::get_scene_readiness(&root, &scene_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn ensure_scene_keyframe_asset(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<AssetRecord, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::ensure_scene_keyframe_asset(&root, &scene_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn set_scene_tbd_binding(
+    project_root_path: String,
+    scene_id: String,
+    tbd_id: String,
+    decision: String,
+    justification: Option<String>,
+) -> Result<SceneTbdBinding, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    let kind: TbdDecisionKind = decision.parse().map_err(|e: String| {
+        AppCommandError {
+            code: "INVALID_TBD_DECISION".into(),
+            message: e,
+        }
+    })?;
+    SceneService::set_scene_tbd_binding(&root, &scene_id, &tbd_id, kind, justification).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn remove_scene_tbd_binding(
+    project_root_path: String,
+    scene_id: String,
+    tbd_id: String,
+) -> Result<(), AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::remove_scene_tbd_binding(&root, &scene_id, &tbd_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn list_scene_tbd_bindings(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<Vec<SceneTbdBinding>, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::list_scene_tbd_bindings(&root, &scene_id).map_err(Into::into)
 }

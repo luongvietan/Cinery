@@ -116,6 +116,7 @@ impl GenerationProvider for OpenAiImageProvider {
             supports_progress: false,
             supported_aspect_ratios: vec!["square".into()],
             supported_models: vec!["gpt-image-1".into()],
+            max_reference_images: Some(1),
         }
     }
     fn submit(&self, request: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {

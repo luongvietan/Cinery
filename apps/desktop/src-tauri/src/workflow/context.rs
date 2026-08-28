@@ -6,7 +6,7 @@ use crate::workflow::model::{
     WorkflowContextSnapshot, WorkflowProjectRef, WorkflowSkillRef,
 };
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -494,6 +494,450 @@ pub fn resolve_world_plate_context(
         canon,
         assets: Vec::new(),
         protected_tbds,
+        resolved_context,
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
+pub fn resolve_scene_keyframe_context(
+    conn: &Connection,
+    project_id: &str,
+    skill_id: &str,
+    skill_version: &str,
+    operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let scene_id = input
+        .get("sceneId")
+        .or_else(|| input.get("scene_id"))
+        .and_then(Value::as_str)
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| AppError::WorkflowInputInvalid("sceneId must be a non-empty string".into()))?;
+
+    // Load scene
+    let scene_row: (String, String, i64, String, String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT id, project_id, ordinal, title, summary, world_id, world_asset_version_id FROM scenes WHERE id = ?1 AND project_id = ?2",
+            params![scene_id, project_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => AppError::SceneNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    let (scene_db_id, scene_project_id, scene_ordinal, scene_title, scene_summary, scene_world_id, scene_world_version_id) = scene_row;
+    if scene_project_id != project_id {
+        return Err(AppError::SceneNotFound);
+    }
+
+    // Readiness validation (derived, not stored)
+    if scene_title.trim().is_empty() {
+        return Err(AppError::SceneNotReady("title is empty".into()));
+    }
+    if scene_summary.trim().is_empty() {
+        return Err(AppError::SceneNotReady("summary is empty".into()));
+    }
+    let world_id = scene_world_id.clone().ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
+    let world_version_id = scene_world_version_id.clone().ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
+
+    // Validate world reference is not broken (allow historical/superseded)
+    let world_version: (String, String, i64, String, String) = conn
+        .query_row(
+            "SELECT av.id, av.asset_id, av.version_number, av.status, av.file_path FROM asset_versions av WHERE av.id = ?1",
+            params![world_version_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        )
+        .map_err(|_| AppError::SceneReferenceBroken(format!("world version {} not found", world_version_id)))?;
+    let world_asset: (String, String, String, Option<String>) = conn
+        .query_row(
+            "SELECT id, project_id, type, owner_entity_id FROM assets WHERE id = ?1",
+            params![world_version.1],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|_| AppError::SceneReferenceBroken(format!("world asset {} not found", world_version.1)))?;
+    if world_asset.1 != project_id {
+        return Err(AppError::SceneReferenceBroken("world asset project mismatch".into()));
+    }
+    if world_asset.2 != "world_plate" {
+        return Err(AppError::SceneReferenceBroken("world asset type mismatch".into()));
+    }
+    // Verify world exists and owns asset
+    let world_location_check: String = conn
+        .query_row(
+            "SELECT canon_location_entity_id FROM worlds WHERE id = ?1 AND project_id = ?2",
+            params![world_id, project_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| AppError::SceneReferenceBroken("world not found".into()))?;
+    if world_asset.3.as_deref() != Some(world_id.as_str()) {
+        return Err(AppError::SceneReferenceBroken("world asset owner mismatch".into()));
+    }
+    let _ = world_location_check;
+    // Check that world asset still exists, but canonical may have changed; that's okay for historical
+    // No failure for historical: we already have exact version, so it's valid even if superseded
+
+    // Validate character references not broken
+    let mut char_stmt = conn
+        .prepare("SELECT id, character_entity_id, look_asset_version_id, sheet_asset_version_id FROM scene_characters WHERE scene_id = ?1")
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let char_rows = char_stmt
+        .query_map(params![scene_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut characters: Vec<Value> = Vec::new();
+    let mut entity_ids_for_tbd: Vec<String> = Vec::new();
+    // world location entity id for TBD
+    let world_loc_entity: String = conn
+        .query_row(
+            "SELECT canon_location_entity_id FROM worlds WHERE id = ?1",
+            params![world_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    entity_ids_for_tbd.push(world_loc_entity.clone());
+
+    let mut asset_snapshots: Vec<crate::workflow::model::AssetSnapshotRef> = Vec::new();
+
+    // Helper to create asset snapshot
+    let load_asset_snapshot = |version_id: &str| -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
+        let (asset_id, asset_type_str, version_number, _status, file_path): (String, String, i64, String, String) = conn
+            .query_row(
+                "SELECT av.asset_id, a.type, av.version_number, av.status, av.file_path FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
+                params![version_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .map_err(|_| AppError::SceneReferenceBroken(format!("asset version {} not found", version_id)))?;
+        let asset_type = match asset_type_str.as_str() {
+            "face_lock" => AssetType::FaceLock,
+            "outfit" => AssetType::Outfit,
+            "character_sheet" => AssetType::CharacterSheet,
+            "world_plate" => AssetType::WorldPlate,
+            "shot_keyframe" => AssetType::ShotKeyframe,
+            "prop_plate" => AssetType::PropPlate,
+            "image" => AssetType::Image,
+            "video" => AssetType::Video,
+            "audio" => AssetType::Audio,
+            _ => return Err(AppError::SceneReferenceBroken(format!("unknown asset type {}", asset_type_str))),
+        };
+        // For historical, status may be superseded but we store as Canonical for snapshot compatibility
+        Ok(crate::workflow::model::AssetSnapshotRef {
+            asset_id,
+            asset_version_id: version_id.to_string(),
+            asset_type,
+            version_number,
+            status: crate::workflow::model::AssetSnapshotStatus::Canonical,
+            path: file_path,
+        })
+    };
+
+    // World asset snapshot (exact pinned)
+    let world_asset_snapshot = load_asset_snapshot(&world_version_id)?;
+    let world_asset_id = world_asset_snapshot.asset_id.clone();
+    asset_snapshots.push(world_asset_snapshot);
+
+    let mut canon_revision_refs: Vec<Value> = Vec::new();
+
+    for row in char_rows {
+        let (assignment_id, char_entity_id, look_version_id, sheet_version_id) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        entity_ids_for_tbd.push(char_entity_id.clone());
+
+        // Validate look version
+        let look_version: (String, String, String) = conn
+            .query_row(
+                "SELECT av.asset_id, a.type, a.owner_entity_id FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
+                params![look_version_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<String>>(2)?.unwrap_or_default())),
+            )
+            .map_err(|_| AppError::SceneReferenceBroken(format!("look version {} not found", look_version_id)))?;
+        if look_version.1 == "world_plate" || look_version.1 == "prop_plate" || look_version.1 == "shot_keyframe" {
+            return Err(AppError::SceneReferenceBroken("look asset type invalid".into()));
+        }
+        if look_version.2 != char_entity_id {
+            return Err(AppError::SceneReferenceBroken("look owner mismatch".into()));
+        }
+        // Validate character entity exists
+        let char_type: String = conn
+            .query_row(
+                "SELECT type FROM canon_entities WHERE id = ?1 AND project_id = ?2",
+                params![char_entity_id, project_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::SceneReferenceBroken(format!("character {} not found", char_entity_id)))?;
+        if char_type != "character" {
+            return Err(AppError::SceneReferenceBroken("character type mismatch".into()));
+        }
+
+        let look_asset_id = look_version.0.clone();
+        let look_snapshot = load_asset_snapshot(&look_version_id)?;
+        asset_snapshots.push(look_snapshot);
+
+        let mut char_entry = json!({
+            "characterEntityId": char_entity_id,
+            "look": {
+                "assetId": look_asset_id,
+                "assetVersionId": look_version_id
+            }
+        });
+
+        if let Some(sheet_id) = sheet_version_id {
+            let sheet_version: (String, String, String) = conn
+                .query_row(
+                    "SELECT av.asset_id, a.type, a.owner_entity_id FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
+                    params![sheet_id],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<String>>(2)?.unwrap_or_default())),
+                )
+                .map_err(|_| AppError::SceneReferenceBroken(format!("sheet version {} not found", sheet_id)))?;
+            if sheet_version.1 != "character_sheet" && sheet_version.1 != "outfit" {
+                return Err(AppError::SceneReferenceBroken("sheet asset type invalid".into()));
+            }
+            if sheet_version.2 != char_entity_id {
+                return Err(AppError::SceneReferenceBroken("sheet owner mismatch".into()));
+            }
+            let sheet_asset_id = sheet_version.0.clone();
+            let sheet_snapshot = load_asset_snapshot(&sheet_id)?;
+            asset_snapshots.push(sheet_snapshot);
+            char_entry["sheet"] = json!({
+                "assetId": sheet_asset_id,
+                "assetVersionId": sheet_id
+            });
+        }
+        char_entry["assignmentId"] = Value::String(assignment_id);
+        characters.push(char_entry);
+    }
+
+    // Props
+    let mut prop_stmt = conn
+        .prepare("SELECT id, prop_asset_version_id FROM scene_props WHERE scene_id = ?1")
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let prop_rows = prop_stmt
+        .query_map(params![scene_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut props: Vec<Value> = Vec::new();
+    for row in prop_rows {
+        let (assignment_id, prop_version_id) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        let prop_asset: (String, String) = conn
+            .query_row(
+                "SELECT av.asset_id, a.type FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
+                params![prop_version_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| AppError::SceneReferenceBroken(format!("prop version {} not found", prop_version_id)))?;
+        if prop_asset.1 != "prop_plate" {
+            return Err(AppError::SceneReferenceBroken("prop asset type invalid".into()));
+        }
+        let prop_asset_id = prop_asset.0.clone();
+        let prop_snapshot = load_asset_snapshot(&prop_version_id)?;
+        asset_snapshots.push(prop_snapshot);
+        props.push(json!({
+            "assignmentId": assignment_id,
+            "assetId": prop_asset_id,
+            "assetVersionId": prop_version_id
+        }));
+    }
+
+    // TBD handling: load applicable protected open TBDs and require bindings
+    let applicable = crate::workflow::tbd_policy::load_applicable_tbds(conn, project_id, &entity_ids_for_tbd)?;
+    // Load scene bindings
+    let mut tbd_decisions: Vec<Value> = Vec::new();
+    let mut protected_tbds_for_snapshot: Vec<CanonTbdSnapshot> = Vec::new();
+    for tbd in &applicable {
+        if !tbd.protected || tbd.status != "open" {
+            continue;
+        }
+        // Find binding
+        let binding: Option<(String, Option<String>, String, Option<String>)> = conn
+            .query_row(
+                "SELECT topic_snapshot, note_snapshot, decision, justification FROM scene_tbd_bindings WHERE scene_id = ?1 AND canon_tbd_id = ?2",
+                params![scene_id, tbd.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let (topic_snapshot, note_snapshot, decision_str, justification) = binding.ok_or_else(|| {
+            AppError::TbdDecisionRequired(format!(
+                "TBD {} requires explicit handling decision for scene {}",
+                tbd.id, scene_id
+            ))
+        })?;
+        // Validate decision via policy
+        let decision_kind = match decision_str.as_str() {
+            "preserve_unknown" => crate::workflow::tbd_policy::TbdDecisionKind::PreserveUnknown,
+            "not_applicable" => crate::workflow::tbd_policy::TbdDecisionKind::NotApplicable,
+            _ => return Err(AppError::TbdDecisionRequired(format!("TBD {} has invalid decision", tbd.id))),
+        };
+        let tbd_record = crate::canon::model::CanonTbdRecord {
+            id: tbd.id.clone(),
+            project_id: tbd.project_id.clone(),
+            canon_entity_id: tbd.canon_entity_id.clone(),
+            section_key: tbd.section_key.clone(),
+            topic: tbd.topic.clone(),
+            note: tbd.note.clone(),
+            protected: tbd.protected,
+            status: tbd.status.clone(),
+            resolution_text: tbd.resolution_text.clone(),
+            created_at: tbd.created_at.clone(),
+            updated_at: tbd.updated_at.clone(),
+            resolved_at: tbd.resolved_at.clone(),
+        };
+        let temp_decision = crate::workflow::tbd_policy::TbdDecision {
+            tbd_id: tbd.id.clone(),
+            topic_snapshot: topic_snapshot.clone(),
+            note_snapshot: note_snapshot.clone(),
+            decision: decision_kind,
+            justification: justification.clone(),
+        };
+        crate::workflow::tbd_policy::validate_tbd_decisions(&[tbd_record], &[temp_decision])
+            .map_err(|e| AppError::TbdDecisionRequired(e.to_string()))?;
+
+        tbd_decisions.push(json!({
+            "tbdId": tbd.id,
+            "topicSnapshot": topic_snapshot,
+            "noteSnapshot": note_snapshot,
+            "decision": decision_str,
+            "justification": justification
+        }));
+        protected_tbds_for_snapshot.push(CanonTbdSnapshot {
+            id: tbd.id.clone(),
+            project_id: tbd.project_id.clone(),
+            canon_entity_id: tbd.canon_entity_id.clone(),
+            section_key: tbd.section_key.clone(),
+            topic: tbd.topic.clone(),
+            note: tbd.note.clone(),
+            protected: tbd.protected,
+            status: crate::workflow::model::CanonTbdStatus::Open,
+            resolution_text: tbd.resolution_text.clone(),
+            created_at: tbd.created_at.clone(),
+            updated_at: tbd.updated_at.clone(),
+            resolved_at: tbd.resolved_at.clone(),
+        });
+        canon_revision_refs.push(json!({
+            "tbdId": tbd.id,
+            "topicSnapshot": topic_snapshot,
+            "decision": decision_str
+        }));
+    }
+
+    // Load locked Production Rules
+    let mut production_rules: Vec<Value> = Vec::new();
+    let mut canon_snapshots: Vec<CanonSnapshotRef> = Vec::new();
+    if let Ok(prod_entity_id) = conn.query_row(
+        "SELECT id FROM canon_entities WHERE project_id = ?1 AND type = 'production_rules' LIMIT 1",
+        params![project_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, value_json, revision FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'rules' AND status = 'locked' LIMIT 1",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if let Ok((section_id, value_json, revision)) = stmt.query_row(params![prod_entity_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        }) {
+            let value: Value = serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(rules) = value.get("rules").and_then(Value::as_array) {
+                for rule in rules {
+                    production_rules.push(rule.clone());
+                }
+            }
+            canon_snapshots.push(CanonSnapshotRef {
+                entity_id: prod_entity_id.clone(),
+                entity_type: CanonEntityType::ProductionRules,
+                section_id: section_id.clone(),
+                section_key: "rules".to_string(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value: value.clone(),
+            });
+            canon_revision_refs.push(json!({
+                "sectionId": section_id,
+                "sectionKey": "rules",
+                "revision": revision
+            }));
+        }
+    }
+
+    // Also collect world location revision refs (description, geography)
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, section_key, value_json, revision FROM canon_sections WHERE canon_entity_id = ?1 AND status = 'locked' AND section_key IN ('description','geography','visual_tags','rules') ORDER BY section_key",
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![world_loc_entity], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for row in rows {
+            let (section_id, section_key, value_json, revision) = row.map_err(|e| AppError::Database(e.to_string()))?;
+            let value: Value = serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
+            canon_snapshots.push(CanonSnapshotRef {
+                entity_id: world_loc_entity.clone(),
+                entity_type: CanonEntityType::Location,
+                section_id: section_id.clone(),
+                section_key: section_key.clone(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value,
+            });
+            canon_revision_refs.push(json!({
+                "sectionId": section_id,
+                "sectionKey": section_key,
+                "revision": revision
+            }));
+        }
+    }
+
+    let resolved_context = json!({
+        "scene": {
+            "id": scene_db_id,
+            "ordinal": scene_ordinal,
+            "title": scene_title,
+            "summary": scene_summary
+        },
+        "world": {
+            "worldId": world_id,
+            "assetId": world_asset_id,
+            "assetVersionId": world_version_id
+        },
+        "characters": characters,
+        "props": props,
+        "tbdDecisions": tbd_decisions,
+        "productionRules": production_rules,
+        "canonRevisionRefs": canon_revision_refs
+    });
+
+    // Ensure protected_tbds contains the relevant ones
+    // Use the collected protected_tbds_for_snapshot
+    // If none, load via tbd_policy for snapshot? Already have
+
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: skill_id.to_string(),
+            skill_version: skill_version.to_string(),
+            operation_id: operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report: prerequisite_report,
+        canon: canon_snapshots,
+        assets: asset_snapshots,
+        protected_tbds: protected_tbds_for_snapshot,
         resolved_context,
         captured_at: Utc::now().to_rfc3339(),
     })

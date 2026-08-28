@@ -88,6 +88,11 @@ pub fn run() {
       scenes::commands::upgrade_scene_character_look_reference,
       scenes::commands::upgrade_scene_character_sheet_reference,
       scenes::commands::upgrade_scene_prop_reference,
+      scenes::commands::get_scene_readiness,
+      scenes::commands::ensure_scene_keyframe_asset,
+      scenes::commands::set_scene_tbd_binding,
+      scenes::commands::remove_scene_tbd_binding,
+      scenes::commands::list_scene_tbd_bindings,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

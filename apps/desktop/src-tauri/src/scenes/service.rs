@@ -3,10 +3,13 @@ use crate::canon::repository as canon_repository;
 use crate::db;
 use crate::error::AppError;
 use crate::project::service::ProjectService;
+use crate::assets::model::AssetRecord;
 use crate::scenes::model::{
     ResolvedCharacterReference, ResolvedPropReference, ResolvedSceneReference,
     ResolvedSceneReferences, Scene, SceneCharacterAssignment, ScenePropAssignment,
-    SceneReferenceAction, SceneReferenceEvent, SceneReferenceHealth, SceneReferenceKind,
+    SceneReadiness, SceneReadinessBlocker, SceneReadinessBlockerKind, SceneReadinessWarning,
+    SceneReadinessWarningKind, SceneReferenceAction, SceneReferenceEvent, SceneReferenceHealth,
+    SceneReferenceKind, SceneTbdBinding, TbdDecisionKind,
 };
 use crate::scenes::repository as scenes_repository;
 use crate::worlds::repository as worlds_repository;
@@ -1559,6 +1562,403 @@ impl SceneService {
         let scene2 = scenes_repository::get_scene(&conn2, scene_id)?;
         Self::resolve_prop_ref(&conn2, project_root, &updated.prop_asset_version_id, &scene2)
     }
+
+    // -----------------------------------------------------------------------
+    // Scene TBD Bindings
+    // -----------------------------------------------------------------------
+
+    pub fn set_scene_tbd_binding(
+        project_root: &Path,
+        scene_id: &str,
+        tbd_id: &str,
+        decision: TbdDecisionKind,
+        justification: Option<String>,
+    ) -> Result<SceneTbdBinding, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        // Load canon TBD
+        let tbd = crate::canon::repository::get_tbd(&conn, tbd_id)?;
+        if tbd.project_id != project.id {
+            return Err(AppError::CanonTbdNotFound);
+        }
+        if tbd.status != "open" || !tbd.protected {
+            // Only protected open TBDs should be bound; but allow anyway? Validate later.
+        }
+        // Validate decision per TBD policy
+        let is_project_scoped = tbd.canon_entity_id.is_none();
+        match decision {
+            TbdDecisionKind::PreserveUnknown => {}
+            TbdDecisionKind::NotApplicable => {
+                if !is_project_scoped {
+                    return Err(AppError::ProtectedTbdMustBePreserved(format!(
+                        "TBD {} is entity/section scoped and must be preserve_unknown",
+                        tbd.id
+                    )));
+                }
+                let has_reason = justification
+                    .as_ref()
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+                if !has_reason {
+                    return Err(AppError::TbdNotApplicableReasonRequired(format!(
+                        "TBD {} not_applicable requires justification",
+                        tbd.id
+                    )));
+                }
+            }
+        }
+
+        let now = Utc::now().to_rfc3339();
+        let existing = scenes_repository::get_scene_tbd_binding(&conn, scene_id, tbd_id)?;
+        let binding = SceneTbdBinding {
+            id: existing
+                .as_ref()
+                .map(|b| b.id.clone())
+                .unwrap_or_else(|| Ulid::new().to_string()),
+            scene_id: scene_id.to_string(),
+            canon_tbd_id: tbd_id.to_string(),
+            topic_snapshot: tbd.topic.clone(),
+            note_snapshot: tbd.note.clone(),
+            decision,
+            justification: justification
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            created_at: existing
+                .as_ref()
+                .map(|b| b.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
+            updated_at: now.clone(),
+        };
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        scenes_repository::upsert_scene_tbd_binding(&tx, &binding)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(binding)
+    }
+
+    pub fn remove_scene_tbd_binding(
+        project_root: &Path,
+        scene_id: &str,
+        tbd_id: &str,
+    ) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        scenes_repository::delete_scene_tbd_binding(&tx, scene_id, tbd_id)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn list_scene_tbd_bindings(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<Vec<SceneTbdBinding>, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        scenes_repository::list_scene_tbd_bindings(&conn, scene_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // Scene Readiness (derived, never stored)
+    // -----------------------------------------------------------------------
+
+    pub fn get_scene_readiness(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<SceneReadiness, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+
+        let resolved = Self::resolve_scene_references(project_root, scene_id)?;
+
+        let mut blockers: Vec<SceneReadinessBlocker> = Vec::new();
+        let mut warnings: Vec<SceneReadinessWarning> = Vec::new();
+
+        if scene.title.trim().is_empty() {
+            blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::TitleMissing,
+                message: "Scene title is required".into(),
+                context: None,
+            });
+        }
+        if scene.summary.trim().is_empty() {
+            blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::SummaryMissing,
+                message: "Scene summary is required".into(),
+                context: None,
+            });
+        }
+
+        // World reference
+        match &resolved.world {
+            None => {
+                blockers.push(SceneReadinessBlocker {
+                    kind: SceneReadinessBlockerKind::WorldReferenceMissing,
+                    message: "World reference is required".into(),
+                    context: None,
+                });
+            }
+            Some(world_ref) => match world_ref.health {
+                SceneReferenceHealth::Broken => {
+                    blockers.push(SceneReadinessBlocker {
+                        kind: SceneReadinessBlockerKind::WorldReferenceBroken,
+                        message: "World reference is broken".into(),
+                        context: Some(world_ref.pinned_version_id.clone()),
+                    });
+                }
+                SceneReferenceHealth::UpgradeAvailable => {
+                    warnings.push(SceneReadinessWarning {
+                        kind: SceneReadinessWarningKind::UpgradeAvailable,
+                        message: "World reference has upgrade available".into(),
+                        context: Some(world_ref.pinned_version_id.clone()),
+                    });
+                }
+                SceneReferenceHealth::Historical => {
+                    warnings.push(SceneReadinessWarning {
+                        kind: SceneReadinessWarningKind::HistoricalReference,
+                        message: "World reference is historical".into(),
+                        context: Some(world_ref.pinned_version_id.clone()),
+                    });
+                }
+                SceneReferenceHealth::Current => {}
+            },
+        }
+
+        // Character refs
+        let mut char_broken = false;
+        let mut char_upgrade = false;
+        let mut char_historical = false;
+        for ch in &resolved.characters {
+            match ch.look.health {
+                SceneReferenceHealth::Broken => char_broken = true,
+                SceneReferenceHealth::UpgradeAvailable => char_upgrade = true,
+                SceneReferenceHealth::Historical => char_historical = true,
+                SceneReferenceHealth::Current => {}
+            }
+            if let Some(sheet) = &ch.sheet {
+                match sheet.health {
+                    SceneReferenceHealth::Broken => char_broken = true,
+                    SceneReferenceHealth::UpgradeAvailable => char_upgrade = true,
+                    SceneReferenceHealth::Historical => char_historical = true,
+                    SceneReferenceHealth::Current => {}
+                }
+            }
+        }
+        if char_broken {
+            blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::CharacterReferenceBroken,
+                message: "Character reference is broken".into(),
+                context: None,
+            });
+        }
+        if char_upgrade {
+            warnings.push(SceneReadinessWarning {
+                kind: SceneReadinessWarningKind::UpgradeAvailable,
+                message: "Character reference has upgrade available".into(),
+                context: None,
+            });
+        }
+        if char_historical {
+            warnings.push(SceneReadinessWarning {
+                kind: SceneReadinessWarningKind::HistoricalReference,
+                message: "Character reference is historical".into(),
+                context: None,
+            });
+        }
+
+        // Prop refs
+        let mut prop_broken = false;
+        let mut prop_upgrade = false;
+        let mut prop_historical = false;
+        for p in &resolved.props {
+            match p.reference.health {
+                SceneReferenceHealth::Broken => prop_broken = true,
+                SceneReferenceHealth::UpgradeAvailable => prop_upgrade = true,
+                SceneReferenceHealth::Historical => prop_historical = true,
+                SceneReferenceHealth::Current => {}
+            }
+        }
+        if prop_broken {
+            blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::PropReferenceBroken,
+                message: "Prop reference is broken".into(),
+                context: None,
+            });
+        }
+        if prop_upgrade {
+            warnings.push(SceneReadinessWarning {
+                kind: SceneReadinessWarningKind::UpgradeAvailable,
+                message: "Prop reference has upgrade available".into(),
+                context: None,
+            });
+        }
+        if prop_historical {
+            warnings.push(SceneReadinessWarning {
+                kind: SceneReadinessWarningKind::HistoricalReference,
+                message: "Prop reference is historical".into(),
+                context: None,
+            });
+        }
+
+        // TBD decisions
+        // Collect entity ids for applicable TBD loading
+        let mut entity_ids: Vec<String> = Vec::new();
+        if let Some(world_id) = &scene.world_id {
+            if let Ok(world) = worlds_repository::get_world(&conn, world_id) {
+                entity_ids.push(world.canon_location_entity_id.clone());
+            }
+        }
+        let char_assignments = scenes_repository::list_scene_characters(&conn, scene_id)?;
+        for ca in char_assignments {
+            entity_ids.push(ca.character_entity_id);
+        }
+        // Use TBD policy to load applicable
+        let applicable = crate::workflow::tbd_policy::load_applicable_tbds(
+            &conn,
+            &project.id,
+            &entity_ids,
+        )?;
+        let bindings = scenes_repository::list_scene_tbd_bindings(&conn, scene_id)?;
+        let binding_map: std::collections::HashMap<&str, &SceneTbdBinding> = bindings
+            .iter()
+            .map(|b| (b.canon_tbd_id.as_str(), b))
+            .collect();
+        let mut tbd_missing = false;
+        for tbd in &applicable {
+            if !tbd.protected || tbd.status != "open" {
+                continue;
+            }
+            if !binding_map.contains_key(tbd.id.as_str()) {
+                tbd_missing = true;
+                break;
+            }
+            // Also validate decision kind matches policy (e.g., entity-scoped must be preserve_unknown)
+            // Convert binding to TbdDecision for validation
+            // We can just check via policy: build decisions vec and validate
+        }
+        // Full policy validation: if bindings exist but invalid, also block
+        if !tbd_missing && !applicable.is_empty() {
+            let decisions: Vec<crate::workflow::tbd_policy::TbdDecision> = bindings
+                .iter()
+                .map(|b| crate::workflow::tbd_policy::TbdDecision {
+                    tbd_id: b.canon_tbd_id.clone(),
+                    topic_snapshot: b.topic_snapshot.clone(),
+                    note_snapshot: b.note_snapshot.clone(),
+                    decision: match b.decision {
+                        TbdDecisionKind::PreserveUnknown => {
+                            crate::workflow::tbd_policy::TbdDecisionKind::PreserveUnknown
+                        }
+                        TbdDecisionKind::NotApplicable => {
+                            crate::workflow::tbd_policy::TbdDecisionKind::NotApplicable
+                        }
+                    },
+                    justification: b.justification.clone(),
+                })
+                .collect();
+            if crate::workflow::tbd_policy::validate_tbd_decisions(&applicable, &decisions).is_err() {
+                tbd_missing = true;
+            }
+        }
+        if tbd_missing {
+            blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::TbdDecisionRequired,
+                message: "TBD decision required for relevant protected TBDs".into(),
+                context: None,
+            });
+        }
+
+        let ready_for_keyframe = blockers.is_empty();
+        Ok(SceneReadiness {
+            ready_for_keyframe,
+            blockers,
+            warnings,
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Ensure Scene Keyframe Asset (idempotent)
+    // -----------------------------------------------------------------------
+
+    pub fn ensure_scene_keyframe_asset(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<AssetRecord, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+
+        // If existing valid keyframe_asset_id exists, return it
+        if let Some(existing_id) = &scene.keyframe_asset_id {
+            if let Ok(asset) = asset_repository::get_asset(&conn, existing_id) {
+                if asset.project_id == project.id && asset.asset_type == "shot_keyframe" {
+                    return Ok(asset);
+                }
+            }
+        }
+
+        // Need to create shot_keyframe Asset and update Scene transactionally
+        let now = Utc::now().to_rfc3339();
+        let label = format!("SCENE-{:03}-KEYFRAME", scene.ordinal);
+        let asset_id = Ulid::new().to_string();
+        let record = AssetRecord {
+            id: asset_id.clone(),
+            project_id: project.id.clone(),
+            asset_type: "shot_keyframe".to_string(),
+            label: label.clone(),
+            owner_entity_id: Some(scene_id.to_string()),
+            canonical_version_id: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        // Re-check inside transaction for idempotency against concurrent call
+        let current_scene = scenes_repository::get_scene(&tx, scene_id)?;
+        if let Some(existing_id) = &current_scene.keyframe_asset_id {
+            if let Ok(asset) = asset_repository::get_asset(&tx, existing_id) {
+                if asset.project_id == project.id && asset.asset_type == "shot_keyframe" {
+                    // Another call already created it; abort our insert
+                    drop(tx); // rollback implicit by drop without commit? Need to rollback explicitly
+                    // tx is not committed, dropping will rollback
+                    return Ok(asset);
+                }
+            }
+        }
+        // Insert asset and update scene
+        asset_repository::insert_asset(&tx, &record)?;
+        scenes_repository::update_scene_keyframe_asset(&tx, scene_id, Some(&asset_id), &now)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(record)
+    }
 }
 
 #[cfg(test)]
@@ -2523,5 +2923,274 @@ mod tests {
         SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap();
         let after = SceneService::get_scene(&f.root, &scene.id).unwrap();
         assert_eq!(after.world_asset_version_id.as_deref(), Some(v2.id.as_str()));
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 9: SceneReadiness, ensure_scene_keyframe_asset
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn readiness_blocks_no_world() {
+        let f = Fixture::new();
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        // No world assigned
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::WorldReferenceMissing));
+    }
+
+    #[test]
+    fn readiness_blocks_broken_world() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Corrupt world reference to nonexistent version
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "UPDATE scenes SET world_asset_version_id = 'broken-id' WHERE id = ?1",
+                rusqlite::params![scene.id],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::WorldReferenceBroken));
+        assert_eq!(readiness.blockers.iter().find(|b| b.kind == SceneReadinessBlockerKind::WorldReferenceBroken).unwrap().context.as_deref(), Some("broken-id"));
+        let _ = v1;
+    }
+
+    #[test]
+    fn readiness_blocks_broken_character_reference() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let character = f.create_character("Mara");
+        let (_asset_id, look_v1) = f.create_look_canonical(&character.id, "MARA-LOOK", [1, 2, 3, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        SceneService::add_scene_character(&f.root, &scene.id, &character.id, &look_v1, None, None).unwrap();
+        // Break look reference
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            let assignment_id: String = conn
+                .query_row(
+                    "SELECT id FROM scene_characters WHERE scene_id = ?1",
+                    rusqlite::params![scene.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "UPDATE scene_characters SET look_asset_version_id = 'broken-look-id' WHERE id = ?1",
+                rusqlite::params![assignment_id],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::CharacterReferenceBroken));
+    }
+
+    #[test]
+    fn readiness_blocks_broken_prop() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let (_asset_id, prop_v1) = f.create_prop_canonical("PROP-A", [1, 1, 1, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        SceneService::add_scene_prop(&f.root, &scene.id, &prop_v1, None, None).unwrap();
+        // Break prop
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            let assignment_id: String = conn
+                .query_row(
+                    "SELECT id FROM scene_props WHERE scene_id = ?1",
+                    rusqlite::params![scene.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "UPDATE scene_props SET prop_asset_version_id = 'broken-prop-id' WHERE id = ?1",
+                rusqlite::params![assignment_id],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::PropReferenceBroken));
+    }
+
+    #[test]
+    fn readiness_blocks_unclassified_protected_tbd() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        // Create protected TBD for location
+        let loc_id = {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            let loc: String = conn
+                .query_row(
+                    "SELECT canon_location_entity_id FROM worlds WHERE id = ?1",
+                    rusqlite::params![world.id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            loc
+        };
+        // Need a section for TBD to be valid - ensure location has description locked section
+        {
+            let loc_entity = crate::canon::service::CanonService::get_entity(&f.root, &loc_id).unwrap();
+            let _ = loc_entity;
+            // Create a protected TBD
+            crate::canon::tbd::create(&f.root, Some(&loc_id), None, "What is behind the red door?", Some("Do not reveal".into()), true).unwrap();
+        }
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // No binding yet -> should block
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::TbdDecisionRequired));
+        // Now add binding preserve_unknown
+        {
+            let tbd_id: String = {
+                let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+                conn.query_row(
+                    "SELECT id FROM canon_tbds WHERE canon_entity_id = ?1",
+                    rusqlite::params![loc_id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+            };
+            SceneService::set_scene_tbd_binding(&f.root, &scene.id, &tbd_id, TbdDecisionKind::PreserveUnknown, None).unwrap();
+        }
+        let readiness2 = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(readiness2.ready_for_keyframe, "should be ready after TBD classified");
+    }
+
+    #[test]
+    fn readiness_blocks_empty_summary() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(!readiness.ready_for_keyframe);
+        assert!(readiness.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::SummaryMissing));
+        // Empty title also blocks
+        let scene2 = SceneService::create_scene(&f.root, "Temp", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene2.id, &world.id).unwrap();
+        SceneService::update_scene_details(&f.root, &scene2.id, "   ", "Summary").unwrap_err(); // title validation prevents empty, but we can directly DB corrupt for test
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "UPDATE scenes SET title = '' WHERE id = ?1",
+                rusqlite::params![scene2.id],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+        let readiness3 = SceneService::get_scene_readiness(&f.root, &scene2.id).unwrap();
+        assert!(!readiness3.ready_for_keyframe);
+        assert!(readiness3.blockers.iter().any(|b| b.kind == SceneReadinessBlockerKind::TitleMissing));
+    }
+
+    #[test]
+    fn readiness_allows_historical_world() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Make world historical: clear canonical
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute(
+                "UPDATE assets SET canonical_version_id = NULL WHERE id = ?1",
+                rusqlite::params![world.world_plate_asset_id],
+            )
+            .unwrap();
+        }
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(readiness.ready_for_keyframe, "historical world should still be ready");
+        assert!(readiness.blockers.is_empty());
+        assert!(readiness.warnings.iter().any(|w| w.kind == SceneReadinessWarningKind::HistoricalReference));
+        let _ = v1;
+    }
+
+    #[test]
+    fn readiness_allows_historical_look() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let character = f.create_character("Mara");
+        let (asset_id, look_v1) = f.create_look_canonical(&character.id, "MARA-LOOK", [1, 2, 3, 255]);
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        SceneService::add_scene_character(&f.root, &scene.id, &character.id, &look_v1, None, None).unwrap();
+        // Make look historical
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute(
+                "UPDATE assets SET canonical_version_id = NULL WHERE id = ?1",
+                rusqlite::params![asset_id],
+            )
+            .unwrap();
+        }
+        let readiness = SceneService::get_scene_readiness(&f.root, &scene.id).unwrap();
+        assert!(readiness.ready_for_keyframe, "historical look should still be ready");
+        assert!(readiness.blockers.is_empty());
+        assert!(readiness.warnings.iter().any(|w| w.kind == SceneReadinessWarningKind::HistoricalReference));
+    }
+
+    #[test]
+    fn ensure_scene_keyframe_asset_is_idempotent() {
+        let f = Fixture::new();
+        let scene = SceneService::create_scene(&f.root, "Title", "Summary").unwrap();
+        assert!(scene.keyframe_asset_id.is_none());
+        let first = SceneService::ensure_scene_keyframe_asset(&f.root, &scene.id).unwrap();
+        assert_eq!(first.asset_type, "shot_keyframe");
+        assert_eq!(first.owner_entity_id.as_deref(), Some(scene.id.as_str()));
+        assert!(first.label.contains("SCENE-"));
+        let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(fetched.keyframe_asset_id.as_deref(), Some(first.id.as_str()));
+        // Second call returns same asset id, no duplicate
+        let second = SceneService::ensure_scene_keyframe_asset(&f.root, &scene.id).unwrap();
+        assert_eq!(first.id, second.id);
+        let count: i64 = {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM assets WHERE type = 'shot_keyframe' AND owner_entity_id = ?1",
+                rusqlite::params![scene.id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(count, 1, "no duplicate asset on repeated calls");
+        // No generated media version created
+        let versions: i64 = {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM asset_versions WHERE asset_id = ?1",
+                rusqlite::params![first.id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(versions, 0, "no generated media version at ensure time");
+        // Ensure existing valid asset returned even after restart
+        crate::project::service::ProjectService::open(&f.root).unwrap();
+        let third = SceneService::ensure_scene_keyframe_asset(&f.root, &scene.id).unwrap();
+        assert_eq!(first.id, third.id);
     }
 }
