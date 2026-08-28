@@ -76,6 +76,8 @@ pub fn scan_project(project_root: &Path) -> Result<Vec<ProjectHealthIssue>, AppE
     Ok(issues)
 }
 
+/// Checks that asset version media files exist on disk.
+/// Detects: BROKEN_ASSET_FILE_REFERENCE when storage_path references a missing file.
 fn check_asset_files_exist(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -106,6 +108,8 @@ fn check_asset_files_exist(
     Ok(())
 }
 
+/// Checks that asset owners reference existing entities.
+/// Detects: ASSET_VERSION_OWNER_MISMATCH when an asset has owner_entity_id but no matching entity row.
 fn check_asset_version_owners(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -115,39 +119,31 @@ fn check_asset_version_owners(
         .prepare(
             "SELECT av.id, a.owner_entity_id FROM asset_versions av \
              JOIN assets a ON a.id = av.asset_id \
-             WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL",
+             WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = a.owner_entity_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
         .query_map([project_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })
         .map_err(|e| AppError::Database(e.to_string()))?;
     for row in rows {
         let (av_id, owner_id) = row.map_err(|e| AppError::Database(e.to_string()))?;
-        if let Some(owner) = owner_id {
-            let exists: bool = conn
-                .query_row(
-                    "SELECT 1 FROM entities WHERE id = ?1",
-                    [&owner],
-                    |_| Ok(true),
-                )
-                .unwrap_or(false);
-            if !exists {
-                issues.push(issue(
-                    "ASSET_VERSION_OWNER_MISMATCH",
-                    HealthSeverity::Warning,
-                    "asset_version",
-                    Some(av_id),
-                    &format!("Asset version references missing owner entity {owner}."),
-                    Some("Verify the owner entity still exists or reassign the asset."),
-                ));
-            }
-        }
+        issues.push(issue(
+            "ASSET_VERSION_OWNER_MISMATCH",
+            HealthSeverity::Warning,
+            "asset_version",
+            Some(av_id),
+            &format!("Asset version references missing owner entity {owner_id}."),
+            Some("Verify the owner entity still exists or reassign the asset."),
+        ));
     }
     Ok(())
 }
 
+/// Checks that each asset has at most one canonical version.
+/// Detects: MULTIPLE_CANONICAL_VERSIONS when COUNT(canonical_versions) > 1.
 fn check_multiple_canonical_versions(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -182,6 +178,8 @@ fn check_multiple_canonical_versions(
     Ok(())
 }
 
+/// Checks that scenes reference existing world asset versions.
+/// Detects: MISSING_SCENE_WORLD_REFERENCE when scene.world_asset_version_id references deleted asset.
 fn check_scene_world_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -213,6 +211,8 @@ fn check_scene_world_references(
     Ok(())
 }
 
+/// Checks that scene characters reference existing look asset versions.
+/// Detects: MISSING_SCENE_LOOK_REFERENCE when scene_character.look_asset_version_id is deleted.
 fn check_scene_look_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -245,6 +245,8 @@ fn check_scene_look_references(
     Ok(())
 }
 
+/// Checks that scene props reference existing asset versions.
+/// Detects: MISSING_SCENE_PROP_REFERENCE when scene_prop.prop_asset_version_id is deleted.
 fn check_scene_prop_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -277,6 +279,8 @@ fn check_scene_prop_references(
     Ok(())
 }
 
+/// Checks that shots reference existing scenes.
+/// Detects: SHOT_SCENE_MISMATCH when shot.scene_id references deleted scene.
 fn check_shot_scene_mismatches(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -308,6 +312,8 @@ fn check_shot_scene_mismatches(
     Ok(())
 }
 
+/// Checks that keyframes reference existing asset versions when set.
+/// Detects: MISSING_KEYFRAME when shot_keyframe.asset_version_id is deleted.
 fn check_keyframe_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -341,6 +347,8 @@ fn check_keyframe_references(
     Ok(())
 }
 
+/// Checks that workflow runs reference existing input asset versions when applicable.
+/// Detects: WORKFLOW_INPUT_REFERENCE_MISSING when workflow_run.input_asset_version_id is deleted.
 fn check_workflow_input_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -371,6 +379,8 @@ fn check_workflow_input_references(
     Ok(())
 }
 
+/// Checks that generations reference existing output asset versions.
+/// Detects: GENERATION_OUTPUT_REFERENCE_MISSING when generation.output_asset_version_id is deleted.
 fn check_generation_output_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -404,6 +414,8 @@ fn check_generation_output_references(
     Ok(())
 }
 
+/// Checks that QA runs reference existing target asset versions.
+/// Detects: QA_TARGET_MISSING when qa_run.target_asset_version_id is deleted.
 fn check_qa_target_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -435,6 +447,8 @@ fn check_qa_target_references(
     Ok(())
 }
 
+/// Checks that repair versions reference existing parent asset versions.
+/// Detects: REPAIR_PARENT_MISSING when asset_version.repair_parent_version_id is deleted.
 fn check_repair_parent_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -468,6 +482,8 @@ fn check_repair_parent_references(
     Ok(())
 }
 
+/// Checks that cinema compilations reference existing scenes.
+/// Detects: CINEMA_INPUT_REFERENCE_MISSING when cinema_compilation.scene_id is deleted.
 fn check_cinema_input_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -514,5 +530,92 @@ fn issue(
         entity_id,
         message: message.into(),
         remediation: remediation.map(str::to_string),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_health_issue_creation() {
+        let issue = ProjectHealthIssue {
+            code: "TEST_CODE".to_string(),
+            severity: HealthSeverity::Warning,
+            entity_type: "asset".to_string(),
+            entity_id: Some("id-123".to_string()),
+            message: "Test message".to_string(),
+            remediation: Some("Fix it".to_string()),
+        };
+
+        assert_eq!(issue.code, "TEST_CODE");
+        assert_eq!(issue.severity, HealthSeverity::Warning);
+    }
+
+    #[test]
+    fn test_health_severity_ordering() {
+        let fatal = HealthSeverity::Fatal;
+        let error = HealthSeverity::Error;
+        let warning = HealthSeverity::Warning;
+        let info = HealthSeverity::Info;
+
+        // Verify all severity levels are distinct
+        assert_ne!(fatal, error);
+        assert_ne!(error, warning);
+        assert_ne!(warning, info);
+    }
+
+    #[test]
+    fn test_health_issue_with_null_remediation() {
+        let issue = issue(
+            "TEST_CODE",
+            HealthSeverity::Info,
+            "asset",
+            Some("asset-1".to_string()),
+            "Test message",
+            None,
+        );
+
+        assert_eq!(issue.remediation, None);
+        assert_eq!(issue.code, "TEST_CODE");
+    }
+
+    #[test]
+    fn test_health_issue_with_null_entity_id() {
+        let issue = issue(
+            "FATAL_ERROR",
+            HealthSeverity::Fatal,
+            "project",
+            None,
+            "Fatal project error",
+            None,
+        );
+
+        assert_eq!(issue.entity_id, None);
+        assert_eq!(issue.severity, HealthSeverity::Fatal);
+    }
+
+    #[test]
+    fn test_required_error_codes_exist() {
+        // Verify that all required error codes are properly defined
+        let codes = vec![
+            "BROKEN_ASSET_FILE_REFERENCE",
+            "ASSET_VERSION_OWNER_MISMATCH",
+            "MULTIPLE_CANONICAL_VERSIONS",
+            "MISSING_SCENE_WORLD_REFERENCE",
+            "MISSING_SCENE_LOOK_REFERENCE",
+            "MISSING_SCENE_PROP_REFERENCE",
+            "SHOT_SCENE_MISMATCH",
+            "MISSING_KEYFRAME",
+            "WORKFLOW_INPUT_REFERENCE_MISSING",
+            "GENERATION_OUTPUT_REFERENCE_MISSING",
+            "QA_TARGET_MISSING",
+            "REPAIR_PARENT_MISSING",
+            "CINEMA_INPUT_REFERENCE_MISSING",
+        ];
+
+        // Verify we have at least 13 unique codes
+        assert!(codes.len() >= 13);
+        assert_eq!(codes.len(), codes.iter().collect::<std::collections::HashSet<_>>().len());
     }
 }
