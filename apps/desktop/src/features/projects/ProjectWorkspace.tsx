@@ -6,6 +6,7 @@ import { AssetList } from "../assets/AssetList";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { ProductionWorkspace } from "../production/ProductionWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
+import { WorldWorkspace } from "../worlds/WorldWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
 
 interface ProjectWorkspaceProps {
@@ -13,7 +14,7 @@ interface ProjectWorkspaceProps {
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets" | "workflows" | "production" | "canon" | "providers";
+type PanelView = "none" | "assets" | "workflows" | "production" | "canon" | "worlds" | "providers";
 
 export function ProjectWorkspace({
   project,
@@ -85,6 +86,17 @@ export function ProjectWorkspace({
         </button>
         <button
           type="button"
+          aria-pressed={panelView === "worlds"}
+          className={panelView === "worlds" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => {
+            setPanelView("worlds");
+            setSelectedAssetId(null);
+          }}
+        >
+          Worlds
+        </button>
+        <button
+          type="button"
           aria-pressed={panelView === "providers"}
           className={panelView === "providers" ? "nav-button nav-button--active" : "nav-button"}
           onClick={() => { setPanelView("providers"); setSelectedAssetId(null); }}
@@ -120,6 +132,7 @@ export function ProjectWorkspace({
           <ProductionWorkspace projectRootPath={project.rootPath} />
         ) : null}
         {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} /> : null}
+        {panelView === "worlds" ? <WorldWorkspace projectRootPath={project.rootPath} /> : null}
         {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
       </section>
     </>
