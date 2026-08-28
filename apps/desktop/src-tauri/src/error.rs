@@ -207,6 +207,15 @@ pub enum AppError {
 
     #[error("World plate asset is invalid: {0}")]
     WorldPlateAssetInvalid(String),
+
+    #[error("TBD decision is required: {0}")]
+    TbdDecisionRequired(String),
+
+    #[error("Protected TBD must be preserved: {0}")]
+    ProtectedTbdMustBePreserved(String),
+
+    #[error("TBD not applicable reason is required: {0}")]
+    TbdNotApplicableReasonRequired(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.
