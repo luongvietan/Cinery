@@ -181,6 +181,324 @@ fn load_protected_tbds(
     result
 }
 
+pub fn resolve_world_plate_context(
+    conn: &Connection,
+    project_id: &str,
+    skill_id: &str,
+    skill_version: &str,
+    operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let world_id = input
+        .get("worldId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| AppError::WorkflowInputInvalid("worldId must be a non-empty string".into()))?;
+    let world_row: (String, String, String, String) = conn
+        .query_row(
+            "SELECT id, project_id, canon_location_entity_id, world_plate_asset_id FROM worlds WHERE id = ?1 AND project_id = ?2",
+            params![world_id, project_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::WorldNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    let location_entity_id = world_row.2.clone();
+    let world_plate_asset_id = world_row.3.clone();
+    let (location_name, location_type): (String, String) = conn
+        .query_row(
+            "SELECT name, type FROM canon_entities WHERE project_id = ?1 AND id = ?2",
+            params![project_id, location_entity_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::CanonEntityNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if location_type != CanonEntityType::Location.as_str() {
+        return Err(AppError::WorldLocationInvalidType);
+    }
+    // Load all locked sections for location
+    let mut canon = Vec::new();
+    let mut description_text: Option<String> = None;
+    let mut geography_text: Option<String> = None;
+    let mut visual_tags: Option<Vec<String>> = None;
+    let mut location_rules: Option<Vec<String>> = None;
+    let mut location_revision_refs: Vec<Value> = Vec::new();
+    {
+        let mut statement = conn
+            .prepare(
+                "SELECT id, section_key, value_json, revision, status FROM canon_sections WHERE canon_entity_id = ?1 AND status = 'locked' ORDER BY section_key",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([&location_entity_id], |row| {
+                let value_json: String = row.get(2)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    value_json,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(db_error)?;
+        for row in rows {
+            let (section_id, section_key, value_json, revision, status) = row.map_err(db_error)?;
+            let value: Value = serde_json::from_str(&value_json)
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            // Only include relevant location keys: description, geography, visual_tags, rules
+            if !matches!(section_key.as_str(), "description" | "geography" | "visual_tags" | "rules") {
+                continue;
+            }
+            canon.push(CanonSnapshotRef {
+                entity_id: location_entity_id.clone(),
+                entity_type: CanonEntityType::Location,
+                section_id: section_id.clone(),
+                section_key: section_key.clone(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value: value.clone(),
+            });
+            location_revision_refs.push(json!({
+                "sectionId": section_id,
+                "sectionKey": section_key,
+                "revision": revision
+            }));
+            match section_key.as_str() {
+                "description" => {
+                    description_text = value.get("text").and_then(Value::as_str).map(str::to_string);
+                }
+                "geography" => {
+                    geography_text = value.get("text").and_then(Value::as_str).map(str::to_string);
+                }
+                "visual_tags" => {
+                    if let Some(tags) = value.get("tags").and_then(Value::as_array) {
+                        visual_tags = Some(
+                            tags.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect(),
+                        );
+                    }
+                }
+                "rules" => {
+                    if let Some(rules) = value.get("rules").and_then(Value::as_array) {
+                        location_rules = Some(
+                            rules.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+            let _ = status;
+        }
+    }
+    if description_text.is_none() {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "Location description is not locked".into(),
+        ));
+    }
+    if geography_text.is_none() {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "Location geography is not locked".into(),
+        ));
+    }
+    // Load locked Story Aesthetic if available
+    let mut aesthetic_value: Option<Value> = None;
+    let mut aesthetic_revision: Option<Value> = None;
+    if let Ok(story_entity_id) = conn.query_row(
+        "SELECT id FROM canon_entities WHERE project_id = ?1 AND type = 'story' LIMIT 1",
+        params![project_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, value_json, revision FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'aesthetic' AND status = 'locked' LIMIT 1",
+            )
+            .map_err(db_error)?;
+        if let Ok((section_id, value_json, revision)) = stmt.query_row([&story_entity_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        }) {
+            let value: Value = serde_json::from_str(&value_json)
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            aesthetic_value = Some(value.clone());
+            aesthetic_revision = Some(json!({
+                "sectionId": section_id,
+                "sectionKey": "aesthetic",
+                "revision": revision
+            }));
+            canon.push(CanonSnapshotRef {
+                entity_id: story_entity_id.clone(),
+                entity_type: CanonEntityType::Story,
+                section_id: section_id.clone(),
+                section_key: "aesthetic".to_string(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value: value.clone(),
+            });
+        }
+    }
+    // Load locked World Rules
+    let mut world_rules: Vec<Value> = Vec::new();
+    {
+        let mut stmt = conn
+            .prepare(
+                "SELECT e.id, e.name, s.id, s.value_json, s.revision FROM canon_entities e JOIN canon_sections s ON s.canon_entity_id = e.id WHERE e.project_id = ?1 AND e.type = 'world_rule' AND s.section_key = 'rule' AND s.status = 'locked' ORDER BY e.id",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(params![project_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            })
+            .map_err(db_error)?;
+        for row in rows {
+            let (entity_id, name, section_id, value_json, revision) = row.map_err(db_error)?;
+            let value: Value = serde_json::from_str(&value_json)
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            let rule_text = value.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            canon.push(CanonSnapshotRef {
+                entity_id: entity_id.clone(),
+                entity_type: CanonEntityType::WorldRule,
+                section_id: section_id.clone(),
+                section_key: "rule".to_string(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value: value.clone(),
+            });
+            world_rules.push(json!({
+                "entityId": entity_id,
+                "name": name,
+                "rule": rule_text,
+                "revision": revision,
+                "sectionId": section_id
+            }));
+        }
+    }
+    // Load locked Production Rules
+    let mut production_rules: Vec<Value> = Vec::new();
+    if let Ok(prod_entity_id) = conn.query_row(
+        "SELECT id FROM canon_entities WHERE project_id = ?1 AND type = 'production_rules' LIMIT 1",
+        params![project_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, value_json, revision FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'rules' AND status = 'locked' LIMIT 1",
+            )
+            .map_err(db_error)?;
+        if let Ok((section_id, value_json, revision)) = stmt.query_row([&prod_entity_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+        }) {
+            let value: Value = serde_json::from_str(&value_json)
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            if let Some(rules) = value.get("rules").and_then(Value::as_array) {
+                for rule in rules {
+                    production_rules.push(rule.clone());
+                }
+            }
+            canon.push(CanonSnapshotRef {
+                entity_id: prod_entity_id.clone(),
+                entity_type: CanonEntityType::ProductionRules,
+                section_id: section_id.clone(),
+                section_key: "rules".to_string(),
+                revision,
+                status: CanonSnapshotStatus::Locked,
+                value: value.clone(),
+            });
+        }
+    }
+    // Parse TBD decisions from input
+    let tbd_decisions: Vec<crate::workflow::tbd_policy::TbdDecision> = input
+        .get("tbdDecisions")
+        .or_else(|| input.get("tbd_decisions"))
+        .map(|value| serde_json::from_value(value.clone()).unwrap_or_default())
+        .unwrap_or_default();
+    // Validate TBD firewall (ensures decisions cover applicable TBDs)
+    crate::workflow::tbd_policy::validate_world_tbd_firewall(
+        conn,
+        project_id,
+        &location_entity_id,
+        &tbd_decisions,
+    )?;
+    // Load protected TBD snapshots for inclusion (applicable)
+    let applicable_tbds = crate::workflow::tbd_policy::load_applicable_tbds(
+        conn,
+        project_id,
+        &[location_entity_id.clone()],
+    )?;
+    let protected_tbds: Vec<CanonTbdSnapshot> = applicable_tbds
+        .iter()
+        .filter(|tbd| tbd.protected && tbd.status == "open")
+        .map(|tbd| CanonTbdSnapshot {
+            id: tbd.id.clone(),
+            project_id: tbd.project_id.clone(),
+            canon_entity_id: tbd.canon_entity_id.clone(),
+            section_key: tbd.section_key.clone(),
+            topic: tbd.topic.clone(),
+            note: tbd.note.clone(),
+            protected: tbd.protected,
+            status: crate::workflow::model::CanonTbdStatus::Open,
+            resolution_text: tbd.resolution_text.clone(),
+            created_at: tbd.created_at.clone(),
+            updated_at: tbd.updated_at.clone(),
+            resolved_at: tbd.resolved_at.clone(),
+        })
+        .collect();
+    let resolved_context = json!({
+        "world": {
+            "id": world_id,
+            "plateAssetId": world_plate_asset_id,
+            "locationEntityId": location_entity_id,
+            "locationName": location_name
+        },
+        "worldId": world_id,
+        "location": {
+            "entityId": location_entity_id,
+            "name": location_name,
+            "description": description_text.clone().unwrap_or_default(),
+            "geography": geography_text.clone().unwrap_or_default(),
+            "visualTags": visual_tags,
+            "rules": location_rules,
+            "canonRevisionRefs": location_revision_refs
+        },
+        "aesthetic": aesthetic_value.map(|value| json!({
+            "value": value,
+            "revisionRef": aesthetic_revision
+        })),
+        "worldRules": world_rules,
+        "productionRules": production_rules,
+        "tbdDecisions": tbd_decisions
+    });
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: skill_id.to_string(),
+            skill_version: skill_version.to_string(),
+            operation_id: operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report,
+        canon,
+        assets: Vec::new(),
+        protected_tbds,
+        resolved_context,
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
 pub fn write_snapshot_atomically(
     path: &Path,
     snapshot: &WorkflowContextSnapshot,
@@ -387,17 +705,17 @@ mod tests {
         let conn = fixture();
         conn.execute(
             "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
-             VALUES ('face-asset', 'p', 'face_lock', 'MARA-FACE', 'now', 'now')",
+              VALUES ('face-asset', 'p', 'face_lock', 'MARA-FACE', 'now', 'now')",
             [],
         ).unwrap();
         for (id, number) in [("face-v002", 2), ("face-v003", 3)] {
             let hash = format!("hash-{number}");
             conn.execute(
                 "INSERT INTO asset_versions
-                 (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
-                  original_filename, mime_type, byte_size, created_at)
-                 VALUES (?1, 'face-asset', ?2, 'canonical', 'assets/face.png',
-                         'thumbnails/face.webp', ?3, 'face.png', 'image/png', 1, 'now')",
+                  (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
+                   original_filename, mime_type, byte_size, created_at)
+                  VALUES (?1, 'face-asset', ?2, 'canonical', 'assets/face.png',
+                          'thumbnails/face.webp', ?3, 'face.png', 'image/png', 1, 'now')",
                 params![id, number, hash],
             ).unwrap();
         }
@@ -419,6 +737,154 @@ mod tests {
         ).unwrap_err();
 
         assert!(matches!(error, AppError::WorkflowPrerequisiteFailed(_)));
+    }
+
+    fn world_fixture() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute("INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p', 'Red Door', 'now', 'now', 1)", []).unwrap();
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('loc-1', 'p', 'location', 'Station', 'station', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES ('s-desc', 'loc-1', 'description', '{\"text\":\"A derelict station\"}', 'locked', 1, 'now', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES ('s-geo', 'loc-1', 'geography', '{\"text\":\"Rust belt\"}', 'locked', 2, 'now', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO assets (id, project_id, type, label, owner_entity_id, created_at, updated_at) VALUES ('asset-loc', 'p', 'world_plate', 'STATION-WORLD', 'world-1', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('world-1', 'p', 'loc-1', 'asset-loc', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('story-1', 'p', 'story', 'Story', 'story', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('prod-1', 'p', 'production_rules', 'Production Rules', 'production-rules', 'now', 'now')", []).unwrap();
+        conn
+    }
+
+    fn world_input() -> Value {
+        json!({
+            "worldId": "world-1",
+            "tbdDecisions": []
+        })
+    }
+
+    #[test]
+    fn world_plate_context_requires_locked_description_and_geography() {
+        let conn = world_fixture();
+        // Remove description -> should fail
+        conn.execute("UPDATE canon_sections SET status = 'draft' WHERE id = 's-desc'", []).unwrap();
+        let err = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &world_input(),
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::WorkflowPrerequisiteFailed(_)));
+        // Restore description, remove geography
+        conn.execute("UPDATE canon_sections SET status = 'locked' WHERE id = 's-desc'", []).unwrap();
+        conn.execute("UPDATE canon_sections SET status = 'draft' WHERE id = 's-geo'", []).unwrap();
+        let err2 = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &world_input(),
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap_err();
+        assert!(matches!(err2, AppError::WorkflowPrerequisiteFailed(_)));
+        // Restore both -> should pass
+        conn.execute("UPDATE canon_sections SET status = 'locked' WHERE id = 's-geo'", []).unwrap();
+        let ok = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &world_input(),
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap();
+        assert_eq!(ok.resolved_context["worldId"], "world-1");
+    }
+
+    #[test]
+    fn world_plate_context_includes_world_id_and_locked_fields_and_excludes_draft() {
+        let conn = world_fixture();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES ('s-tags', 'loc-1', 'visual_tags', '{\"tags\":[\"neon\",\"rain\"]}', 'locked', 4, 'now', 'now', 'now')", []).unwrap();
+        // Insert a draft section for a different key to ensure draft is excluded from canon
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('char-1', 'p', 'character', 'Mara', 'mara', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at) VALUES ('s-char-draft', 'char-1', 'psychology', '{\"text\":\"draft\"}', 'draft', 1, 'now', 'now')", []).unwrap();
+        let snapshot = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &world_input(),
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap();
+        assert_eq!(snapshot.resolved_context["world"]["id"], "world-1");
+        assert_eq!(snapshot.resolved_context["worldId"], "world-1");
+        assert_eq!(snapshot.resolved_context["location"]["description"], "A derelict station");
+        assert_eq!(snapshot.resolved_context["location"]["geography"], "Rust belt");
+        assert_eq!(snapshot.resolved_context["location"]["visualTags"][0], "neon");
+        // Draft excluded
+        assert!(snapshot.canon.iter().all(|c| c.section_key != "psychology"));
+        assert!(snapshot.canon.iter().any(|c| c.section_key == "description" && c.revision == 1));
+        assert!(snapshot.canon.iter().any(|c| c.section_key == "geography" && c.revision == 2));
+        // Ensure no character canon
+        assert!(snapshot.canon.iter().all(|c| c.entity_type != crate::canon::model::CanonEntityType::Character));
+        assert!(snapshot.assets.is_empty());
+    }
+
+    #[test]
+    fn world_plate_context_includes_world_rules_and_production_rules_and_tbd_decisions() {
+        let conn = world_fixture();
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('wr-1', 'p', 'world_rule', 'Gravity', 'gravity', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES ('wr-sec', 'wr-1', 'rule', '{\"text\":\"Low gravity\"}', 'locked', 1, 'now', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES ('prod-sec', 'prod-1', 'rules', '{\"rules\":[{\"id\":\"r1\",\"title\":\"Rule\",\"body\":\"Do not reveal\"}]}', 'locked', 1, 'now', 'now', 'now')", []).unwrap();
+        conn.execute("INSERT INTO canon_tbds (id, project_id, canon_entity_id, section_key, topic, note, protected, status, created_at, updated_at) VALUES ('tbd-1', 'p', 'loc-1', 'description', 'Secret', 'Do not reveal', 1, 'open', 'now', 'now')", []).unwrap();
+        let mut input = world_input();
+        input["tbdDecisions"] = json!([{
+            "tbdId": "tbd-1",
+            "topicSnapshot": "Secret",
+            "noteSnapshot": "Do not reveal",
+            "decision": "preserve_unknown",
+            "justification": null
+        }]);
+        let snapshot = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &input,
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap();
+        assert_eq!(snapshot.resolved_context["worldRules"][0]["rule"], "Low gravity");
+        assert_eq!(snapshot.resolved_context["productionRules"][0]["id"], "r1");
+        assert_eq!(snapshot.resolved_context["tbdDecisions"][0]["tbdId"], "tbd-1");
+        assert_eq!(snapshot.protected_tbds.len(), 1);
+        assert_eq!(snapshot.protected_tbds[0].topic, "Secret");
+        assert!(snapshot.canon.iter().any(|c| c.entity_type == crate::canon::model::CanonEntityType::WorldRule));
+    }
+
+    #[test]
+    fn world_plate_context_blocks_without_tbd_decision() {
+        let conn = world_fixture();
+        conn.execute("INSERT INTO canon_tbds (id, project_id, canon_entity_id, topic, protected, status, created_at, updated_at) VALUES ('tbd-1', 'p', 'loc-1', 'Secret', 1, 'open', 'now', 'now')", []).unwrap();
+        let input = world_input(); // empty decisions
+        let err = resolve_world_plate_context(
+            &conn,
+            "p",
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            &input,
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "TBD_DECISION_REQUIRED");
     }
 }
 

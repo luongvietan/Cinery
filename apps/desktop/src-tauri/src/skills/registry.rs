@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::skills::builtin::character_builder::builtin_character_builder;
 use crate::skills::builtin::visual_qa::builtin_visual_qa;
+use crate::skills::builtin::world_builder::builtin_world_builder;
 use crate::skills::model::{SkillDefinition, SkillOperation};
 use crate::workflow::model::WorkflowStepDefinition;
 use semver::Version;
@@ -12,7 +13,11 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     pub fn builtin() -> Result<Self, AppError> {
-        let definitions = [builtin_character_builder(), builtin_visual_qa()];
+        let definitions = [
+            builtin_character_builder(),
+            builtin_visual_qa(),
+            builtin_world_builder(),
+        ];
         let mut skills = HashMap::new();
         for definition in definitions {
             validate_definition(&definition)?;
@@ -152,7 +157,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
 
     if matches!(
         operation.id.as_str(),
-        "character.create_face_lock" | "asset.run_visual_qa"
+        "character.create_face_lock" | "asset.run_visual_qa" | "world.create_plate"
     )
         && step_types
             != [
@@ -193,6 +198,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                     "character_face_lock_context"
                         | "visual_qa_context"
                         | "visual_qa_repair_context"
+                        | "world_plate_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -202,7 +208,10 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             WorkflowStepDefinition::CompileRequest { compiler_id, .. }
                 if !matches!(
                     compiler_id.as_str(),
-                    "character_face_lock_v1" | "visual_qa_v1" | "visual_qa_repair_v1"
+                    "character_face_lock_v1"
+                        | "visual_qa_v1"
+                        | "visual_qa_repair_v1"
+                        | "world_plate_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -256,7 +265,7 @@ mod tests {
         assert_eq!(skill.id, "character-builder");
         assert_eq!(skill.version, "1.0.0");
         assert_eq!(operation.id, "character.create_face_lock");
-        assert_eq!(registry.list().len(), 2);
+        assert_eq!(registry.list().len(), 3);
     }
 
     #[test]
@@ -281,6 +290,24 @@ mod tests {
         let first = definition.operations[0].workflow[0].clone();
         definition.operations[0].workflow.push(first);
         assert!(validate_definition(&definition).is_err());
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_world_plate_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("world-builder", "1.0.0", "world.create_plate")
+            .unwrap();
+
+        assert_eq!(skill.id, "world-builder");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(operation.id, "world.create_plate");
+        assert_eq!(operation.input_schema_id, "create_world_plate");
+        assert_eq!(operation.expected_output.as_ref().unwrap().asset_type, crate::skills::model::AssetType::WorldPlate);
+        assert_eq!(registry.list().len(), 3);
+        let snapshot = serde_json::to_value(skill).unwrap();
+        assert!(snapshot.to_string().contains("world_plate"));
+        assert!(snapshot.get("provider").is_none());
     }
 
     #[test]

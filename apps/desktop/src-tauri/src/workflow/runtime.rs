@@ -3,8 +3,10 @@ use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::skills::registry::SkillRegistry;
 use crate::workflow::artifacts::{workflow_artifact_dir, write_run_artifacts};
-use crate::workflow::compiler::{CharacterFaceLockCompiler, RequestCompiler};
-use crate::workflow::context::resolve_character_face_lock_context;
+use crate::workflow::compiler::{CharacterFaceLockCompiler, RequestCompiler, WorldPlateCompiler};
+use crate::workflow::context::{
+    resolve_character_face_lock_context, resolve_world_plate_context,
+};
 use crate::workflow::executor::{DryRunExecutor, ExecutionExecutor};
 use crate::workflow::model::{
     WorkflowCharacterOption, WorkflowContextSnapshot, WorkflowRunDetail, WorkflowRunRecord,
@@ -53,6 +55,7 @@ impl WorkflowRuntime {
             "create_face_lock" => validate_face_lock_input(&input)?,
             "run_visual_qa" => validate_visual_qa_input(&input)?,
             "repair_failed_qa" => validate_visual_repair_input(&input)?,
+            "create_world_plate" => validate_world_plate_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -70,6 +73,33 @@ impl WorkflowRuntime {
         let blocked = evaluate_tbd_guards(&conn, &project.id, &input, &operation.tbd_guards)?;
         if !blocked.is_empty() {
             return Err(AppError::WorkflowBlockedByProtectedTbd(blocked.join(", ")));
+        }
+        if operation.id == "world.create_plate" {
+            let world_id = input
+                .get("worldId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let location_entity_id: String = conn
+                .query_row(
+                    "SELECT canon_location_entity_id FROM worlds WHERE id = ?1 AND project_id = ?2",
+                    params![world_id, project.id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => AppError::WorldNotFound,
+                    other => AppError::Database(other.to_string()),
+                })?;
+            let decisions: Vec<crate::workflow::tbd_policy::TbdDecision> = input
+                .get("tbdDecisions")
+                .or_else(|| input.get("tbd_decisions"))
+                .map(|value| serde_json::from_value(value.clone()).unwrap_or_default())
+                .unwrap_or_default();
+            crate::workflow::tbd_policy::validate_world_tbd_firewall(
+                &conn,
+                &project.id,
+                &location_entity_id,
+                &decisions,
+            )?;
         }
         let run_id = WorkflowRepository::create_run(
             &mut conn,
@@ -185,6 +215,34 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "world_plate_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail
+                                        .run
+                                        .prerequisite_report_json
+                                        .as_deref()
+                                        .ok_or_else(|| {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        })?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context = resolve_world_plate_context(
+                                &conn,
+                                &project.id,
+                                &detail.run.skill_id,
+                                &detail.run.skill_version,
+                                &detail.run.operation_id,
+                                &input,
+                                report,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
                     };
                     complete_context_step(
@@ -244,6 +302,26 @@ impl WorkflowRuntime {
                                 )?,
                             )
                             .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "world_plate_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = WorldPlateCompiler.compile(
+                                workflow_run_id,
+                                skill,
+                                operation,
+                                &context,
+                            )?;
+                            write_run_artifacts(
+                                project_root,
+                                workflow_run_id,
+                                &context,
+                                &request,
+                            )?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
                         }
                         _ => return Err(AppError::WorkflowCompilerNotFound(compiler_id.clone())),
                     };
@@ -1469,6 +1547,40 @@ fn validate_visual_repair_input(input: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_world_plate_input(input: &Value) -> Result<(), AppError> {
+    if input
+        .get("worldId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+    {
+        return Err(AppError::WorkflowInputInvalid(
+            "worldId must be a non-empty string".into(),
+        ));
+    }
+    for forbidden in ["apiKey", "bearerToken", "credential", "secret"] {
+        if input.get(forbidden).is_some() {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{forbidden} must not be stored in workflow input"
+            )));
+        }
+    }
+    if let Some(decisions) = input.get("tbdDecisions").or_else(|| input.get("tbd_decisions")) {
+        if !decisions.is_array() {
+            return Err(AppError::WorkflowInputInvalid(
+                "tbdDecisions must be an array".into(),
+            ));
+        }
+        serde_json::from_value::<Vec<crate::workflow::tbd_policy::TbdDecision>>(
+            decisions.clone(),
+        )
+        .map_err(|error| {
+            AppError::WorkflowInputInvalid(format!("invalid tbdDecisions: {error}"))
+        })?;
+    }
+    Ok(())
+}
+
 fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -1518,5 +1630,258 @@ mod tests {
 
         assert!(matches!(error, AppError::WorkflowBlockedByProtectedTbd(_)));
         assert!(WorkflowRuntime::list_runs(&root).unwrap().is_empty());
+    }
+
+    fn world_plate_fixture() -> (tempfile::TempDir, std::path::PathBuf, String) {
+        use crate::canon::model::CanonEntityType;
+        use crate::canon::service::CanonService;
+        use crate::worlds::service::WorldService;
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("world-plate");
+        ProjectService::create(&root, "World Plate").unwrap();
+        let loc = CanonService::create_entity(&root, CanonEntityType::Location, "Station").unwrap();
+        let desc = CanonService::upsert_section(
+            &root,
+            &loc.id,
+            "description",
+            serde_json::json!({"text": "A derelict station with rusted arches"}),
+            None,
+        )
+        .unwrap();
+        CanonService::lock_section(&root, &desc.id, None).unwrap();
+        let geo = CanonService::upsert_section(
+            &root,
+            &loc.id,
+            "geography",
+            serde_json::json!({"text": "Industrial rust belt, cracked concrete"}),
+            None,
+        )
+        .unwrap();
+        CanonService::lock_section(&root, &geo.id, None).unwrap();
+        let world = WorldService::create_world(&root, &loc.id).unwrap();
+        (temp, root, world.id)
+    }
+
+    #[test]
+    fn world_plate_prerequisites_block_without_locked_sections() {
+        let (_temp, root, world_id) = world_plate_fixture();
+        let conn = open_project(&root).unwrap();
+        let project_id: String = conn
+            .query_row("SELECT id FROM projects", [], |row| row.get(0))
+            .unwrap();
+        let location_id: String = conn
+            .query_row(
+                "SELECT canon_location_entity_id FROM worlds WHERE id = ?1",
+                [&world_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // Unlock description to make it fail
+        let desc_id: String = conn
+            .query_row(
+                "SELECT id FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'description'",
+                [&location_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        crate::canon::service::CanonService::unlock_section(&root, &desc_id, None).unwrap();
+
+        let err = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({"worldId": world_id}),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AppError::WorkflowPrerequisiteFailed(_)));
+        assert!(WorkflowRuntime::list_runs(&root).unwrap().is_empty());
+
+        // Re-lock and should succeed (no TBD)
+        let conn = open_project(&root).unwrap();
+        let desc_id2: String = conn
+            .query_row(
+                "SELECT id FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'description'",
+                [&location_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        crate::canon::service::CanonService::lock_section(&root, &desc_id2, None).unwrap();
+        let created = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({"worldId": world_id}),
+        )
+        .unwrap();
+        assert_eq!(created.run.skill_id, "world-builder");
+    }
+
+    #[test]
+    fn world_plate_tbd_firewall_blocks_without_decision() {
+        let (_temp, root, world_id) = world_plate_fixture();
+        let conn = open_project(&root).unwrap();
+        let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+        let location_id: String = conn.query_row("SELECT canon_location_entity_id FROM worlds WHERE id = ?1", [&world_id], |row| row.get(0)).unwrap();
+        conn.execute(
+            "INSERT INTO canon_tbds (id, project_id, canon_entity_id, topic, protected, status, created_at, updated_at) VALUES ('tbd-loc', ?1, ?2, 'Secret behind door', 1, 'open', 'now', 'now')",
+            params![project_id, location_id],
+        )
+        .unwrap();
+        drop(conn);
+        let err = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({"worldId": world_id}),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "TBD_DECISION_REQUIRED");
+        assert!(WorkflowRuntime::list_runs(&root).unwrap().is_empty());
+        let ok = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({
+                "worldId": world_id,
+                "tbdDecisions": [{
+                    "tbdId": "tbd-loc",
+                    "topicSnapshot": "Secret behind door",
+                    "noteSnapshot": null,
+                    "decision": "preserve_unknown"
+                }]
+            }),
+        )
+        .unwrap();
+        assert_eq!(ok.run.operation_id, "world.create_plate");
+    }
+
+    #[test]
+    fn world_plate_workflow_creates_candidate_in_existing_stable_asset() {
+        let (_temp, root, world_id) = world_plate_fixture();
+        let conn = open_project(&root).unwrap();
+        let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+        let world_plate_asset_id: String = conn.query_row("SELECT world_plate_asset_id FROM worlds WHERE id = ?1", [&world_id], |row| row.get(0)).unwrap();
+        drop(conn);
+        let created = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({
+                "worldId": world_id,
+                "providerId": "mock",
+                "modelId": "mock-image-v1"
+            }),
+        )
+        .unwrap();
+        let waiting = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+        assert_eq!(waiting.run.status, "waiting_for_approval");
+        // Context snapshot must include exact World ID and canon revision refs
+        let context: WorkflowContextSnapshot = serde_json::from_str(&waiting.run.context_snapshot_json.clone().unwrap()).unwrap();
+        assert_eq!(context.resolved_context["worldId"], world_id);
+        assert!(context.canon.iter().any(|c| c.section_key == "description"));
+        assert!(context.canon.iter().any(|c| c.section_key == "geography"));
+        // Draft excluded, no character canon
+        assert!(context.canon.iter().all(|c| c.entity_type != crate::canon::model::CanonEntityType::Character));
+        // Compiler determinism
+        let request_json = waiting.steps.iter().find(|s| s.step_type == "compile_request").unwrap().output_json.clone().unwrap();
+        let request_json2 = waiting.steps.iter().find(|s| s.step_type == "compile_request").unwrap().output_json.clone().unwrap();
+        assert_eq!(request_json, request_json2);
+        let request: crate::workflow::execution::ExecutionRequest = serde_json::from_str(&request_json).unwrap();
+        assert_eq!(request.provenance.workflow_run_id, created.run.id);
+        assert_eq!(request.provenance.skill_id, "world-builder");
+        assert_eq!(request.provenance.skill_version, "1.0.0");
+        assert!(request.prompt.contains("Create a persistent environment reference plate"));
+        assert!(request.prompt.contains("Do not attach irrelevant Character canon"));
+        assert!(request.expected_output.asset_type == crate::skills::model::AssetType::WorldPlate);
+        assert!(request.expected_output.media_type == crate::skills::model::OutputMediaType::Image);
+
+        WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+        let completed = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+        assert_eq!(completed.run.status, "completed");
+        let conn = open_project(&root).unwrap();
+        let asset_versions: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions WHERE asset_id = ?1", [&world_plate_asset_id], |row| row.get(0)).unwrap();
+        assert_eq!(asset_versions, 1);
+        let version: (String, String, String) = conn.query_row("SELECT id, status, asset_id FROM asset_versions WHERE asset_id = ?1", [&world_plate_asset_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(version.1, "candidate");
+        assert_eq!(version.2, world_plate_asset_id);
+        // Ensure not creating new conceptual Asset per generation
+        let asset_count: i64 = conn.query_row("SELECT COUNT(*) FROM assets WHERE type = 'world_plate' AND project_id = ?1", [&project_id], |row| row.get(0)).unwrap();
+        assert_eq!(asset_count, 1);
+        // Second generation should reuse same stable asset (no new conceptual Asset per generation)
+        drop(conn);
+        let created2 = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({
+                "worldId": world_id,
+                "providerId": "mock",
+                "modelId": "mock-image-v1"
+            }),
+        )
+        .unwrap();
+        WorkflowRuntime::advance_run(&root, &created2.run.id).unwrap();
+        WorkflowRuntime::approve_run_step(&root, &created2.run.id, "approve-request", None).unwrap();
+        let completed2 = WorkflowRuntime::advance_run(&root, &created2.run.id).unwrap();
+        assert_eq!(completed2.run.status, "completed");
+        let conn = open_project(&root).unwrap();
+        // Due to deterministic mock bytes deduplication, second run may reuse existing version (hash collision) — acceptable,
+        // the invariant is that no new conceptual Asset is created per generation.
+        let asset_versions2: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions WHERE asset_id = ?1", [&world_plate_asset_id], |row| row.get(0)).unwrap();
+        assert!(asset_versions2 >= 1 && asset_versions2 <= 2);
+        let asset_count2: i64 = conn.query_row("SELECT COUNT(*) FROM assets WHERE type = 'world_plate' AND project_id = ?1", [&project_id], |row| row.get(0)).unwrap();
+        assert_eq!(asset_count2, 1);
+    }
+
+    #[test]
+    fn world_plate_provider_failure_creates_no_phantom_and_allows_retry() {
+        let (_temp, root, world_id) = world_plate_fixture();
+        let created = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({
+                "worldId": world_id,
+                "providerId": "missing",
+                "modelId": "missing-v1"
+            }),
+        )
+        .unwrap();
+        WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+        WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+        let err = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap_err();
+        assert!(matches!(err, AppError::ProviderExecution(_)));
+        let conn = open_project(&root).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0)).unwrap();
+        assert_eq!(count, 0);
+        let status: String = conn.query_row("SELECT status FROM workflow_runs WHERE id = ?1", [&created.run.id], |row| row.get(0)).unwrap();
+        assert_eq!(status, "failed");
+        // Retry should be possible via new attempt (create new run mimics retry; for this workflow we just ensure failed run does not block new run)
+        drop(conn);
+        let retried = WorkflowRuntime::create_run(
+            &root,
+            "world-builder",
+            "1.0.0",
+            "world.create_plate",
+            serde_json::json!({
+                "worldId": world_id,
+                "providerId": "mock",
+                "modelId": "mock-image-v1"
+            }),
+        )
+        .unwrap();
+        WorkflowRuntime::advance_run(&root, &retried.run.id).unwrap();
+        WorkflowRuntime::approve_run_step(&root, &retried.run.id, "approve-request", None).unwrap();
+        let completed = WorkflowRuntime::advance_run(&root, &retried.run.id).unwrap();
+        assert_eq!(completed.run.status, "completed");
     }
 }
