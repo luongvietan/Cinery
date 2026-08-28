@@ -165,6 +165,24 @@ pub enum AppError {
 
     #[error("Provider execution failed: {0}")]
     ProviderExecution(String),
+
+    #[error("Generated artifact is unavailable: {0}")]
+    GenerationArtifactUnavailable(String),
+
+    #[error("Generated artifact integrity check failed: {0}")]
+    GenerationArtifactIntegrityMismatch(String),
+
+    #[error("Generated artifact capture failed: {0}")]
+    GenerationArtifactCaptureFailed(String),
+
+    #[error("Generated artifact lineage is incomplete")]
+    GenerationLineageIncomplete,
+
+    #[error("Generated artifact belongs to a different project")]
+    GenerationProjectMismatch,
+
+    #[error("Generated artifact is not promotable")]
+    GenerationArtifactNotPromotable,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

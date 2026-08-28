@@ -34,6 +34,8 @@ pub fn write_dry_run_result(
     let result = ExecutionResult {
         kind: "dry_run".into(),
         artifact_path: artifact_path.clone(),
+        result_set_id: None,
+        artifact_ids: Vec::new(),
         request: request.clone(),
     };
     write_json(&artifact_path, &result)?;

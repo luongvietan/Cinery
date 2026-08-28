@@ -40,6 +40,14 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 7,
         sql: include_str!("../../migrations/0007_provider_audit_events.sql"),
     },
+    Migration {
+        version: 8,
+        sql: include_str!("../../migrations/0008_generated_artifacts.sql"),
+    },
+    Migration {
+        version: 9,
+        sql: include_str!("../../migrations/0009_artifact_lineage.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -220,5 +228,73 @@ mod tests {
             )
             .unwrap();
         assert_eq!(audit_exists, 1);
+    }
+
+    #[test]
+    fn generation_migrations_create_artifact_lineage_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for table in [
+            "generation_result_sets",
+            "generated_artifacts",
+            "generated_artifact_sources",
+            "artifact_lineage",
+            "artifact_promotions",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn generation_migrations_enforce_one_result_set_per_attempt_and_one_promotion_per_artifact() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version)
+             VALUES ('project-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_runs
+             (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at)
+             VALUES ('run-1', 'project-1', 'skill', '1.0.0', 'operation', 'completed', '{}', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_step_executions
+             (id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id,
+              provider_id, model_id, adapter_version, idempotency_key, status, started_at)
+             VALUES ('attempt-1', 'run-1', 'execute', 1, 'compiled-1', 'mock', 'mock-image-v1', 1,
+                     'run-1:execute:1', 'succeeded', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO generation_result_sets
+             (id, project_id, workflow_run_id, workflow_step_key, provider_attempt_id,
+              media_kind, requested_output_count, created_at)
+             VALUES ('result-1', 'project-1', 'run-1', 'execute', 'attempt-1', 'image', 4, 'now')",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO generation_result_sets
+                 (id, project_id, workflow_run_id, workflow_step_key, provider_attempt_id,
+                  media_kind, requested_output_count, created_at)
+                 VALUES ('result-2', 'project-1', 'run-1', 'execute', 'attempt-1', 'image', 4, 'now')",
+                [],
+            )
+            .is_err());
     }
 }

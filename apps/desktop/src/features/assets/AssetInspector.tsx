@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   formatVersionNumber,
+  type GeneratedArtifactDetail,
   type AssetVersion,
   type AssetWithVersions,
 } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
+import { getGeneratedArtifact } from "../production/api";
 import {
   formatByteSize,
   formatImageDimensions,
@@ -61,6 +63,8 @@ export function AssetInspector({
   const [promotingVersionId, setPromotingVersionId] = useState<string | null>(
     null,
   );
+  const [generationDetails, setGenerationDetails] = useState<GeneratedArtifactDetail | null>(null);
+  const [generationDetailsError, setGenerationDetailsError] = useState<string | null>(null);
   const selectionKey = `${projectRootPath}\u0000${assetId}`;
   const currentSelectionKey = useRef(selectionKey);
   currentSelectionKey.current = selectionKey;
@@ -144,6 +148,15 @@ export function AssetInspector({
       if (currentSelectionKey.current === requestSelectionKey) {
         setPromotingVersionId(null);
       }
+    }
+  }
+
+  async function handleGenerationDetails(artifactId: string) {
+    setGenerationDetailsError(null);
+    try {
+      setGenerationDetails(await getGeneratedArtifact(projectRootPath, artifactId));
+    } catch (err: unknown) {
+      setGenerationDetailsError(describeError(err));
     }
   }
 
@@ -276,6 +289,11 @@ export function AssetInspector({
                     />
                     <div className="asset-version-details">
                       <p>{formatStatusLabel(version.status)}</p>
+                      {version.origin === "generated" ? (
+                        <p className="asset-version-badge asset-version-badge--generated">
+                          GENERATED
+                        </p>
+                      ) : null}
                       <p>{version.originalFilename}</p>
                       <p>
                         {formatImageDimensions(version.width, version.height)} ·{" "}
@@ -324,6 +342,17 @@ export function AssetInspector({
                     >
                       Reveal
                     </button>
+                    {version.origin === "generated" && version.generationArtifactId ? (
+                      <button
+                        type="button"
+                        className="asset-secondary-button"
+                        onClick={() => {
+                          void handleGenerationDetails(version.generationArtifactId!);
+                        }}
+                      >
+                        View generation details
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               );
@@ -331,6 +360,21 @@ export function AssetInspector({
           </ul>
         )}
       </section>
+      {generationDetailsError ? <p role="alert">{generationDetailsError}</p> : null}
+      {generationDetails ? (
+        <section aria-label="Generation Details" className="asset-generation-details">
+          <h3>Generation Details</h3>
+          <dl>
+            <div><dt>Workflow</dt><dd>{generationDetails.lineage?.workflowDefinitionId ?? "Unavailable"} · {generationDetails.lineage?.workflowVersion ?? ""}</dd></div>
+            <div><dt>Skill</dt><dd>{generationDetails.lineage?.skillId ?? "Unavailable"} · {generationDetails.lineage?.skillVersion ?? ""}</dd></div>
+            <div><dt>Canon snapshot</dt><dd>{generationDetails.lineage?.canonSnapshotId ?? "None"}</dd></div>
+            <div><dt>Provider</dt><dd>{generationDetails.lineage?.providerId ?? "Unavailable"} · {generationDetails.lineage?.modelId ?? ""}</dd></div>
+            <div><dt>Provider attempt</dt><dd>{generationDetails.lineage?.providerAttemptId ?? "Unavailable"}</dd></div>
+            <div><dt>Source version(s)</dt><dd>{generationDetails.lineage?.sourceAssetVersionIds.join(", ") ?? "Unavailable"}</dd></div>
+            <div><dt>Artifact SHA-256</dt><dd>{generationDetails.artifact.sha256}</dd></div>
+          </dl>
+        </section>
+      ) : null}
     </section>
   );
 }

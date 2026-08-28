@@ -2,6 +2,7 @@ pub mod assets;
 pub mod canon;
 pub mod db;
 pub mod error;
+pub mod generation;
 pub mod project;
 pub mod providers;
 pub mod skills;
@@ -56,6 +57,9 @@ pub fn run() {
       providers::commands::list_provider_models,
       providers::commands::cancel_workflow_execution,
       providers::commands::retry_workflow_execution,
+      generation::commands::list_generation_results,
+      generation::commands::get_generated_artifact,
+      generation::commands::promote_generated_artifact,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

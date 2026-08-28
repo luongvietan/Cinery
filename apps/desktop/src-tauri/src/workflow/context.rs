@@ -1,5 +1,6 @@
 use crate::canon::model::CanonEntityType;
 use crate::error::AppError;
+use crate::skills::model::AssetType;
 use crate::workflow::model::{
     CanonSnapshotRef, CanonSnapshotStatus, CanonTbdSnapshot, PrerequisiteReport,
     WorkflowContextSnapshot, WorkflowProjectRef, WorkflowSkillRef,
@@ -122,6 +123,16 @@ pub fn resolve_character_face_lock_context(
             "biologicalRealism": true,
         }
     });
+    let assets = if let Some(asset_version_id) = input
+        .get("sourceAssetVersionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        vec![load_selected_asset_snapshot(conn, project_id, asset_version_id)?]
+    } else {
+        Vec::new()
+    };
+
     Ok(WorkflowContextSnapshot {
         snapshot_version: 1,
         project: WorkflowProjectRef {
@@ -135,7 +146,7 @@ pub fn resolve_character_face_lock_context(
         input: input.clone(),
         prerequisite_report,
         canon,
-        assets: Vec::new(),
+        assets,
         protected_tbds,
         resolved_context,
         captured_at: Utc::now().to_rfc3339(),
@@ -328,4 +339,134 @@ mod tests {
             "right_eyebrow_scar"
         );
     }
+
+    #[test]
+    fn resolves_the_selected_asset_version_into_the_immutable_context_snapshot() {
+        let conn = fixture();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
+             VALUES ('face-asset', 'p', 'face_lock', 'MARA-FACE', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions
+             (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
+              original_filename, mime_type, byte_size, created_at)
+             VALUES ('face-v002', 'face-asset', 2, 'canonical', 'assets/face.png',
+                     'thumbnails/face.webp', 'd', 'face.png', 'image/png', 1, 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE assets SET canonical_version_id = 'face-v002' WHERE id = 'face-asset'",
+            [],
+        )
+        .unwrap();
+        let mut selected = input();
+        selected["sourceAssetVersionId"] = serde_json::json!("face-v002");
+
+        let snapshot = resolve_character_face_lock_context(
+            &conn,
+            "p",
+            "character-builder",
+            "1.0.0",
+            "character.create_face_lock",
+            &selected,
+            PrerequisiteReport { passed: true, checks: vec![] },
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.assets.len(), 1);
+        assert_eq!(snapshot.assets[0].asset_version_id, "face-v002");
+        assert_eq!(snapshot.assets[0].version_number, 2);
+    }
+
+    #[test]
+    fn rejects_a_canonical_source_that_is_no_longer_the_asset_canonical_pointer() {
+        let conn = fixture();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
+             VALUES ('face-asset', 'p', 'face_lock', 'MARA-FACE', 'now', 'now')",
+            [],
+        ).unwrap();
+        for (id, number) in [("face-v002", 2), ("face-v003", 3)] {
+            let hash = format!("hash-{number}");
+            conn.execute(
+                "INSERT INTO asset_versions
+                 (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
+                  original_filename, mime_type, byte_size, created_at)
+                 VALUES (?1, 'face-asset', ?2, 'canonical', 'assets/face.png',
+                         'thumbnails/face.webp', ?3, 'face.png', 'image/png', 1, 'now')",
+                params![id, number, hash],
+            ).unwrap();
+        }
+        conn.execute(
+            "UPDATE assets SET canonical_version_id = 'face-v003' WHERE id = 'face-asset'",
+            [],
+        ).unwrap();
+        let mut selected = input();
+        selected["sourceAssetVersionId"] = serde_json::json!("face-v002");
+
+        let error = resolve_character_face_lock_context(
+            &conn,
+            "p",
+            "character-builder",
+            "1.0.0",
+            "character.create_face_lock",
+            &selected,
+            PrerequisiteReport { passed: true, checks: vec![] },
+        ).unwrap_err();
+
+        assert!(matches!(error, AppError::WorkflowPrerequisiteFailed(_)));
+    }
+}
+
+fn load_selected_asset_snapshot(
+    conn: &Connection,
+    project_id: &str,
+    asset_version_id: &str,
+) -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
+    let (asset_id, asset_type, version_number, status, canonical_version_id, path): (String, String, i64, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT av.asset_id, a.type, av.version_number, av.status, a.canonical_version_id, av.file_path
+             FROM asset_versions av JOIN assets a ON a.id = av.asset_id
+             WHERE av.id = ?1 AND a.project_id = ?2",
+            params![asset_version_id, project_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::AssetVersionNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if status != "canonical" {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "source asset version must be canonical".into(),
+        ));
+    }
+    if canonical_version_id.as_deref() != Some(asset_version_id) {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "source asset version is not the current canonical pointer".into(),
+        ));
+    }
+    let asset_type = match asset_type.as_str() {
+        "face_lock" => AssetType::FaceLock,
+        "outfit" => AssetType::Outfit,
+        "character_sheet" => AssetType::CharacterSheet,
+        "world_plate" => AssetType::WorldPlate,
+        "shot_keyframe" => AssetType::ShotKeyframe,
+        "prop_plate" => AssetType::PropPlate,
+        "image" => AssetType::Image,
+        "video" => AssetType::Video,
+        "audio" => AssetType::Audio,
+        _ => return Err(AppError::InvalidAssetType),
+    };
+    Ok(crate::workflow::model::AssetSnapshotRef {
+        asset_id,
+        asset_version_id: asset_version_id.into(),
+        asset_type,
+        version_number,
+        status: crate::workflow::model::AssetSnapshotStatus::Canonical,
+        path,
+    })
 }

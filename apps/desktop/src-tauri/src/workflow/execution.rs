@@ -177,5 +177,7 @@ pub struct ExecutionProvenance {
 pub struct ExecutionResult {
     pub kind: String,
     pub artifact_path: PathBuf,
+    pub result_set_id: Option<String>,
+    pub artifact_ids: Vec<String>,
     pub request: ExecutionRequest,
 }

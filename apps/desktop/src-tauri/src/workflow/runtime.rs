@@ -11,7 +11,7 @@ use crate::workflow::model::{
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
 use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
-use crate::providers::repository::{append_audit_event, create_attempt, next_attempt_number, persist_job, update_attempt_status};
+use crate::providers::repository::{append_audit_event, create_attempt, next_attempt_number, persist_job, update_artifact_ids, update_attempt_status};
 use crate::providers::service::ProviderService;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -462,7 +462,7 @@ fn execute_ready(
             &workflow_artifact_dir(project_root, &detail.run.id),
         )?
     } else {
-        let compiled_request_id = compiled_request_id(&request_json);
+        let compiled_hash = compiled_request_id(&request_json);
         let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
         let idempotency_key = ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
@@ -470,7 +470,7 @@ fn execute_ready(
             &detail.run.id,
             execute_step_id,
             attempt_number,
-            &compiled_request_id,
+            &compiled_hash,
             &provider_id,
             &model_id,
             &idempotency_key,
@@ -479,7 +479,7 @@ fn execute_ready(
         let submission = match ProviderService::submit_compiled_request(
             &request,
             execute_step_id,
-            &compiled_request_id,
+            &compiled_hash,
             &provider_id,
             &model_id,
             attempt_number,
@@ -516,27 +516,75 @@ fn execute_ready(
             status,
             result: provider_result,
         };
-        let asset_type = request.expected_output.asset_type.as_str();
-        let owner_entity_id = request
-            .expected_output
-            .owner_entity_input_ref
-            .as_deref()
-            .and_then(|reference| input.get(reference))
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let version = crate::workflow::ingestion::persist_provider_result(
-            project_root,
-            &detail.run.id,
-            &outcome.result,
-            asset_type,
-            owner_entity_id,
-        )?;
         update_attempt_status(conn, &attempt.id, "succeeded", None)?;
-        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"artifactPath": version.file_path})))?;
-        crate::workflow::execution::ExecutionResult {
-            kind: provider_id,
-            artifact_path: project_root.join(version.file_path),
-            request,
+        let snapshot: crate::workflow::model::WorkflowContextSnapshot = detail
+            .run
+            .context_snapshot_json
+            .as_deref()
+            .ok_or_else(|| AppError::WorkflowRunInconsistent("context snapshot is missing".into()))
+            .and_then(|json| serde_json::from_str(json).map_err(|error| AppError::WorkflowRunInconsistent(error.to_string())))?;
+        if !snapshot.assets.is_empty() {
+            let compiled_request_hash = compiled_request_id(&request_json);
+            let captured = crate::generation::service::GenerationService::capture_provider_result(
+                project_root,
+                &crate::generation::service::GenerationCaptureInput {
+                    project_id: project_id.into(),
+                    workflow_run_id: detail.run.id.clone(),
+                    workflow_step_key: execute_step_id.into(),
+                    workflow_definition_id: operation.id.clone(),
+                    workflow_version: detail.run.skill_version.clone(),
+                    skill_id: detail.run.skill_id.clone(),
+                    skill_version: detail.run.skill_version.clone(),
+                    compiled_execution_artifact_id: compiled_request_hash.clone(),
+                    compiled_request_sha256: compiled_request_hash,
+                    canon_snapshot_id: (!snapshot.canon.is_empty()).then(|| format!("canon:{}", detail.run.id)),
+                    canon_snapshot_sha256: (!snapshot.canon.is_empty()).then(|| sha256_json(&snapshot.canon)),
+                    provider_attempt_id: attempt.id.clone(),
+                    provider_id: provider_id.clone(),
+                    model_id: model_id.clone(),
+                    source_asset_version_ids: snapshot.assets.iter().map(|asset| asset.asset_version_id.clone()).collect(),
+                    requested_output_count: 4,
+                },
+                &outcome.result,
+            )?;
+            let artifact_ids = captured
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.id.clone())
+                .collect::<Vec<_>>();
+            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+            append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()})))?;
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(&captured.artifacts[0].storage_path),
+                result_set_id: Some(captured.result_set.id),
+                artifact_ids,
+                request,
+            }
+        } else {
+            let asset_type = request.expected_output.asset_type.as_str();
+            let owner_entity_id = request
+                .expected_output
+                .owner_entity_input_ref
+                .as_deref()
+                .and_then(|reference| input.get(reference))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let version = crate::workflow::ingestion::persist_provider_result(
+                project_root,
+                &detail.run.id,
+                &outcome.result,
+                asset_type,
+                owner_entity_id,
+            )?;
+            append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"artifactPath": version.file_path})))?;
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(version.file_path),
+                result_set_id: None,
+                artifact_ids: Vec::new(),
+                request,
+            }
         }
     };
     let result_json =
@@ -603,6 +651,13 @@ fn execute_ready(
 fn compiled_request_id(request_json: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(request_json.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn sha256_json<T: serde::Serialize>(value: &T) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
