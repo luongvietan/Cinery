@@ -34,7 +34,7 @@
 - Consumes: existing `MIGRATIONS` const
 - Produces: tables `scenes`, `scene_characters`, `scene_props`, `shots`, `cinema_compilations` queryable by `cinema::repository`
 
-- [ ] **Step 1: Write failing test for migration existence**
+- [x] **Step 1: Write failing test for migration existence**
 
 In `src/db/migrations.rs` add test:
 
@@ -53,7 +53,7 @@ fn cinema_migration_creates_required_tables() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml db::migrations::tests::cinema_migration_creates_required_tables`
 Expected: FAIL — table not found
 
-- [ ] **Step 2: Create migration SQL**
+- [x] **Step 2: Create migration SQL**
 
 `migrations/0012_cinema_compiler.sql`:
 
@@ -126,7 +126,7 @@ CREATE TABLE cinema_compilations (
 CREATE INDEX idx_cinema_compilations_scene ON cinema_compilations(scene_id, created_at DESC);
 ```
 
-- [ ] **Step 3: Wire migration**
+- [x] **Step 3: Wire migration**
 
 In `src/db/migrations.rs` append to `MIGRATIONS`:
 
@@ -134,17 +134,17 @@ In `src/db/migrations.rs` append to `MIGRATIONS`:
 Migration { version: 12, sql: include_str!("../../migrations/0012_cinema_compiler.sql"), },
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml db::migrations::tests::cinema_migration_creates_required_tables`
 Expected: PASS
 
-- [ ] **Step 5: Run all migration tests**
+- [x] **Step 5: Run all migration tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml db::migrations`
 Expected: PASS (existing + new)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/migrations/0012_cinema_compiler.sql apps/desktop/src-tauri/src/db/migrations.rs
@@ -166,7 +166,7 @@ git commit -m "feat: add cinema compiler DB migration (scenes/shots/compilations
 - Consumes: `AssetType`, canon section types
 - Produces: `SceneCreateInput`, `ShotCreateInput`, `CinemaCompileInput`, `CinemaCompilation`, `ProviderNeutralCinemaPrompt`, `ShotInstruction` used by service/compiler/commands
 
-- [ ] **Step 1: Write failing domain test (TS)**
+- [x] **Step 1: Write failing domain test (TS)**
 
 `packages/domain/src/cinema.test.ts`:
 
@@ -187,19 +187,19 @@ describe("cinema compilation schema", ()=>{
 Run: `pnpm --filter @cinematic/domain test -- cinema.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 2: Implement TS domain**
+- [x] **Step 2: Implement TS domain**
 
 `packages/domain/src/cinema.ts`: define zod schemas:
 - `shotInstructionSchema` {order, durationSeconds (positive <=30), intent (1-240), camera optional, action optional, continuity?}
 - `cinemaCompilationSchema` {id, projectId, sceneId, totalDurationSeconds (1-120), shotCount derived, shots non-empty, total duration = sum shots, behavioralLocks {speech,movement,stillness?}, worldContinuity {plateId, plateAssetVersionId, description?}, continuityNotes, audioInstructions, lastFrame, providerPrompt, createdAt}
 - Helpers `validateTotalDuration`, `computeTimeBudget(duration, shotCount)`
 
-- [ ] **Step 3: Run TS test passes**
+- [x] **Step 3: Run TS test passes**
 
 Run: `pnpm --filter @cinematic/domain test`
 Expected: PASS
 
-- [ ] **Step 4: Implement Rust model**
+- [x] **Step 4: Implement Rust model**
 
 `apps/desktop/src-tauri/src/cinema/model.rs`: define structs with serde camelCase:
 `SceneRecord{id, projectId, title, worldAssetVersionId, canonNotes, createdAt, updatedAt}`
@@ -215,12 +215,12 @@ Add validation fns `validate_duration`.
 
 Add inline tests mirroring TS.
 
-- [ ] **Step 5: Run Rust model tests**
+- [x] **Step 5: Run Rust model tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema::model`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/domain/src/cinema.ts packages/domain/src/cinema.test.ts packages/domain/src/index.ts apps/desktop/src-tauri/src/cinema/model.rs apps/desktop/src-tauri/src/cinema/mod.rs
@@ -240,7 +240,7 @@ git commit -m "feat: add cinema domain types (TS + Rust)"
 - Consumes: `SceneRecord`, `ShotRecord`, `CinemaCompilation` from model
 - Produces: `create_scene`, `get_scene`, `list_scenes`, `add_scene_character`, `add_scene_prop`, `create_shot`, `list_shots`, `insert_compilation`, `get_compilation` used by service
 
-- [ ] **Step 1: Write failing repository test**
+- [x] **Step 1: Write failing repository test**
 
 `tests/cinema_repository.rs`:
 
@@ -261,7 +261,7 @@ fn creates_scene_and_shots_with_ordering_uniqueness() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_repository`
 Expected: FAIL — module not found
 
-- [ ] **Step 2: Implement repository**
+- [x] **Step 2: Implement repository**
 
 `src/cinema/repository.rs`:
 - `create_scene(conn, record)` — insert into scenes
@@ -276,12 +276,12 @@ Expected: FAIL — module not found
 
 All functions return `Result<_, AppError>` mapping rusqlite errors to `AppError::Database`.
 
-- [ ] **Step 3: Run repository tests**
+- [x] **Step 3: Run repository tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_repository`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/src/cinema/repository.rs apps/desktop/src-tauri/src/cinema/mod.rs apps/desktop/src-tauri/tests/cinema_repository.rs
@@ -301,7 +301,7 @@ git commit -m "feat: add cinema repository (scenes/shots/compilations)"
 - Consumes: `cinema::repository`, `canon::repository`, `assets::repository`, `canon_tbds` query
 - Produces: `CinemaService::create_scene`, `add_character_to_scene`, `create_shot`, `validate_scene_for_compilation`, `resolve_behavioral_locks`, `resolve_world_continuity`, `compute_time_budget`
 
-- [ ] **Step 1: Write failing service test — behavioral locks retrieval**
+- [x] **Step 1: Write failing service test — behavioral locks retrieval**
 
 ```rust
 #[test]
@@ -319,7 +319,7 @@ fn blocks_compilation_when_behavior_not_locked() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_service resolves_speech`
 Expected: FAIL — not implemented
 
-- [ ] **Step 2: Implement behavioral retrieval**
+- [x] **Step 2: Implement behavioral retrieval**
 
 In `service.rs`:
 - `resolve_behavioral_locks(conn, character_entity_id)` -> queries `canon_sections` where `section_key IN ('speech','movement','stillness') AND status='locked'`, parses `value_json->text`, returns struct with Option<String> trimmed non-empty; strict: if any of the three not locked => return Err `AppError::WorkflowPrerequisiteFailed("character behavioral canon not locked: speech/movement/stillness")` (choose code matching P8 strict)
@@ -327,16 +327,16 @@ In `service.rs`:
 - `compute_time_budget(totalDurationSeconds, shotCount)` -> if shotCount None => auto: 8s => 2 shots (4s+4s), otherwise divide evenly with remainder distribution to earlier shots, ensure sum == total; validate total 1-120, each shot 0.5-30s
 - `validate_scene_for_compilation(conn, scene_id)` -> checks: scene exists, has >=1 character assignment (each look_asset_version_id is canonical and current pointer; sheet optional but if present also canonical), world plate optional but if present canonical, at least one shot, TBD firewall delegate to next task but called here
 
-- [ ] **Step 3: Implement scene/shot convenience wrappers**
+- [x] **Step 3: Implement scene/shot convenience wrappers**
 
 `create_scene`, `add_scene_character` (validates look is canonical world_plate? no, look is outfit/character_sheet), `create_shot` delegating to repo with ordering auto-increment if not supplied.
 
-- [ ] **Step 4: Run service tests**
+- [x] **Step 4: Run service tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_service`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/src/cinema/service.rs
@@ -357,7 +357,7 @@ git commit -m "feat: add cinema service (behavior/world/time-budget validation)"
 - Consumes: `resolve_behavioral_locks`, `resolve_world_continuity`, `compute_time_budget`, `list_shots`
 - Produces: `check_tbd_firewall`, `compile_provider_neutral_prompt` used by compilation workflow
 
-- [ ] **Step 1: Write failing TBD test**
+- [x] **Step 1: Write failing TBD test**
 
 ```rust
 #[test]
@@ -372,12 +372,12 @@ fn allows_compilation_when_no_protected_tbd() { ... expect Ok }
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_tbd`
 Expected: FAIL
 
-- [ ] **Step 2: Implement TBD guard**
+- [x] **Step 2: Implement TBD guard**
 
 `tbd_guard.rs`:
 - `check_tbd_firewall(conn, project_id, scene_id)` -> query `canon_tbds WHERE project_id=?1 AND protected=1 AND status='open'` then for each tbd check if `canon_entity_id` matches any scene character or scene's world? For MVP, block if ANY protected open TBD exists in project that is not resolved (strict) OR more precise: if tbd.canon_entity_id IS NULL (project_scope) => block; if matches character/world entity => block. Return `Err(AppError::WorkflowBlockedByProtectedTbd(format!("protected TBD '{}' must be resolved before cinema compilation", topic)))`. If no such TBD, Ok.
 
-- [ ] **Step 3: Write failing compiler test**
+- [x] **Step 3: Write failing compiler test**
 
 ```rust
 #[test]
@@ -390,7 +390,7 @@ fn compiles_8s_two_shot_with_behavior_and_world_continuity() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_compiler`
 Expected: FAIL
 
-- [ ] **Step 4: Implement compiler**
+- [x] **Step 4: Implement compiler**
 
 `compiler.rs`:
 - `pub fn compile(project_id, scene_id, totalDurationSeconds, compilation_id, behavioralLocks, worldContinuity, shots, visualLocks, canonSnapshotRefs) -> ProviderNeutralCinemaPrompt`
@@ -424,12 +424,12 @@ Provenance: story bible + scene {sceneId} + compilation {id}
   8. Ensure no TBD topic text is interpolated (filtered)
   9. Deterministic: sort visual locks by key, sort shots by order
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema_tbd cinema_compiler`
 Expected: PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/src/cinema/tbd_guard.rs apps/desktop/src-tauri/src/cinema/compiler.rs
@@ -449,7 +449,7 @@ git commit -m "feat: add cinema TBD firewall and continuity compiler"
 - Consumes: `compiler::compile`, `tbd_guard::check`, `repository::insert_compilation`
 - Produces: `CinemaService::compile_scene(project_root, input) -> CinemaCompilation` persists DB + file
 
-- [ ] **Step 1: Write failing export test**
+- [x] **Step 1: Write failing export test**
 
 ```rust
 #[test]
@@ -469,7 +469,7 @@ fn compile_and_export_writes_deterministic_json_and_records_sha() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_export`
 Expected: FAIL
 
-- [ ] **Step 2: Implement export + compile_and_export**
+- [x] **Step 2: Implement export + compile_and_export**
 
 `export.rs`:
 - `pub fn export_compilation(project_root: &Path, compilation: &ProviderNeutralCinemaPrompt) -> Result<(String, String), AppError>` — writes to `project_root/prompts/cinema/{compilationId}.json` atomically (write to .tmp then rename), returns (relative path, sha256 hex), also optionally writes `.md` human readable.
@@ -477,12 +477,12 @@ Expected: FAIL
 `service.rs::compile_and_export`:
 - transaction: open conn, validate_scene_for_compilation, check TBD firewall, resolve behavioral locks for each character in scene, resolve world continuity, list shots, call compiler::compile, call export::export_compilation, insert into cinema_compilations with compiled json, commit.
 
-- [ ] **Step 3: Run export tests**
+- [x] **Step 3: Run export tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_export`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/src/cinema/export.rs apps/desktop/src-tauri/src/cinema/service.rs
@@ -504,7 +504,7 @@ git commit -m "feat: add cinema compilation export (atomic JSON + sha)"
 - Consumes: `CinemaService`
 - Produces: Tauri `create_scene`, `list_scenes`, `get_scene_with_shots`, `add_scene_character`, `add_scene_prop`, `create_shot`, `list_shots`, `compile_cinema`, `get_cinema_compilation`, `list_cinema_compilations`
 
-- [ ] **Step 1: Write failing command test**
+- [x] **Step 1: Write failing command test**
 
 ```rust
 #[test]
@@ -520,7 +520,7 @@ fn tauri_create_scene_and_compile_via_commands() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_commands`
 Expected: FAIL — commands not found
 
-- [ ] **Step 2: Implement commands**
+- [x] **Step 2: Implement commands**
 
 `commands.rs`: each `#[tauri::command] pub fn xyz(project_root_path: String, ...) -> Result<..., AppCommandError>` validates `project_service::validate_root_path`, then calls `CinemaService` with `PathBuf::from(project_root_path)` handling AppError -> AppCommandError.
 
@@ -534,16 +534,16 @@ Commands:
 - `compile_cinema(project_root_path, scene_id, totalDurationSeconds) -> CinemaCompilation`
 - `get_cinema_compilation`, `list_cinema_compilations`
 
-- [ ] **Step 3: Wire in lib.rs**
+- [x] **Step 3: Wire in lib.rs**
 
 Add to `invoke_handler!` all new commands.
 
-- [ ] **Step 4: Run command tests**
+- [x] **Step 4: Run command tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_commands`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/src/cinema/commands.rs apps/desktop/src-tauri/src/cinema/mod.rs apps/desktop/src-tauri/src/lib.rs apps/desktop/src-tauri/src/error.rs
@@ -562,7 +562,7 @@ git commit -m "feat: wire cinema Tauri commands"
 **Interfaces:**
 - Consumes: all prior cinema APIs + canon/assets helpers
 
-- [ ] **Step 1: Write failing acceptance test**
+- [x] **Step 1: Write failing acceptance test**
 
 Mirrors master plan #41 acceptance:
 
@@ -590,19 +590,19 @@ fn p8_acceptance_one_sheet_one_world_8s_compiles_coherently() {
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_acceptance`
 Expected: FAIL until all prior tasks done
 
-- [ ] **Step 2: Fix any gaps until acceptance passes**
+- [x] **Step 2: Fix any gaps until acceptance passes**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_acceptance -- --nocapture`
 Expected: PASS after iterating on bugs (e.g., ensure visual_locks sorted, prompt template deterministic, TBD guard checks entity linkage)
 
-- [ ] **Step 3: Run full Rust + TS suite**
+- [x] **Step 3: Run full Rust + TS suite**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
 Run: `pnpm --filter @cinematic/domain test`
 Run: `pnpm -r test`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/desktop/src-tauri/tests/cinema_acceptance.rs
@@ -617,18 +617,18 @@ git commit -m "test: add P8 cinema acceptance (8s sheet+world+TBD)"
 - Modify: `docs/superpowers/plans/2026-08-28-p8-cinema-compiler.md` (check off tasks)
 - Test: no code, just verification commands
 
-- [ ] **Step 1: Run idempotency check for migrations**
+- [x] **Step 1: Run idempotency check for migrations**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml db::migrations::tests::running_migrations_twice_is_idempotent`
 Expected: PASS
 
-- [ ] **Step 2: Verify no provider leakage**
+- [x] **Step 2: Verify no provider leakage**
 
 Grep: `ProviderNeutralCinemaPrompt` — should not contain `providerId`/`modelId`
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema::model::tests::compilation_has_no_provider_fields`
 Expected: PASS
 
-- [ ] **Step 3: Build check (no Tauri build needed, just cargo check)**
+- [x] **Step 3: Build check (no Tauri build needed, just cargo check)**
 
 Run: `cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml`
 Expected: PASS
