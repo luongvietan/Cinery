@@ -1,9 +1,15 @@
 use crate::canon::repository as canon_repository;
+use crate::canon::service::CanonService;
+use crate::canon::service::VisualLockDto;
+use crate::cinema::compiler;
+use crate::cinema::export;
+use crate::cinema::model;
 use crate::cinema::model::{
-    validate_shot_duration, BehavioralLocks, SceneCharacterRecord, SceneRecord, ShotRecord,
-    WorldContinuity,
+    validate_shot_duration, BehavioralLocks, CinemaCompilation, CinemaCompileInput,
+    SceneCharacterRecord, SceneRecord, ShotRecord, WorldContinuity,
 };
 use crate::cinema::repository;
+use crate::cinema::tbd_guard;
 use crate::db;
 use crate::error::AppError;
 use crate::project::service::ProjectService;
@@ -334,6 +340,129 @@ impl CinemaService {
         }
 
         Ok(scene)
+    }
+
+    /// Full compilation workflow: validates the scene, applies the TBD
+    /// firewall, resolves behavioral locks / world continuity / visual
+    /// locks, compiles the provider-neutral prompt, exports it atomically
+    /// under `prompts/cinema/`, and persists the compilation record — all
+    /// before the DB insert commits.
+    pub fn compile_scene(
+        project_root: &Path,
+        input: CinemaCompileInput,
+    ) -> Result<CinemaCompilation, AppError> {
+        model::validate_total_duration(input.total_duration_seconds)?;
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+
+        let scene = Self::validate_scene_for_compilation(&conn, &project.id, &input.scene_id)?;
+        tbd_guard::check_tbd_firewall(&conn, &project.id, &scene.id)?;
+
+        // Collect the topics of every open TBD so their text is scrubbed
+        // from the prompt even when they do not block compilation
+        // (e.g. an unprotected question, or one scoped to an unrelated arc).
+        let forbidden_topics: Vec<String> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT topic FROM canon_tbds WHERE project_id = ?1 AND status = 'open' \
+                     ORDER BY created_at ASC, id ASC",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![project.id], |row| row.get::<_, String>(0))
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
+                .collect::<Result<Vec<String>, AppError>>()?
+        };
+
+        let behavioral_locks = Self::resolve_scene_behavioral_locks(&conn, &scene.id)?;
+        let world_continuity = match &scene.world_asset_version_id {
+            Some(version_id) => {
+                let version = ensure_canonical_version(
+                    &conn,
+                    &project.id,
+                    version_id,
+                    &["world_plate"],
+                )?;
+                WorldContinuity {
+                    plate_id: Some(version.asset_id),
+                    plate_asset_version_id: Some(version.version_id),
+                    description: Some(version.label),
+                }
+            }
+            None => WorldContinuity::default(),
+        };
+
+        let characters = repository::list_scene_characters(&conn, &scene.id)?;
+        let shots = repository::list_shots(&conn, &scene.id)?;
+
+        // Aggregate visual locks across every cast character (deterministic
+        // ordering is handled by the compiler).
+        let mut visual_locks: Vec<VisualLockDto> = Vec::new();
+        for character in &characters {
+            visual_locks.extend(CanonService::get_locked_character_visual_locks(
+                project_root,
+                &character.character_entity_id,
+            )?);
+        }
+
+        let compilation_id = Ulid::new().to_string();
+        let prompt = compiler::compile(
+            &scene,
+            &compilation_id,
+            input.total_duration_seconds,
+            input.shot_count,
+            &characters,
+            &behavioral_locks,
+            &world_continuity,
+            &visual_locks,
+            &shots,
+            &forbidden_topics,
+        )?;
+
+        let (export_path, export_sha256) =
+            export::export_compilation(project_root, &prompt)?;
+
+        let now = Utc::now().to_rfc3339();
+        let record = CinemaCompilation {
+            id: compilation_id,
+            project_id: project.id,
+            scene_id: scene.id,
+            input_json: serde_json::to_string(&input)
+                .map_err(|e| AppError::Database(e.to_string()))?,
+            compilation_json: serde_json::to_string(&prompt)
+                .map_err(|e| AppError::Database(e.to_string()))?,
+            export_path,
+            export_sha256,
+            created_at: now,
+        };
+        repository::insert_compilation(&conn, &record)?;
+        Ok(record)
+    }
+
+    /// Reads a single compilation record for the opened project.
+    pub fn get_compilation(
+        project_root: &Path,
+        compilation_id: &str,
+    ) -> Result<CinemaCompilation, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let record = repository::get_compilation(&conn, compilation_id)?;
+        if record.project_id != project.id {
+            return Err(AppError::CinemaCompilationNotFound);
+        }
+        Ok(record)
+    }
+
+    /// Lists every compilation recorded for `scene_id`, newest first.
+    pub fn list_compilations(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<Vec<CinemaCompilation>, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::list_compilations(&conn, scene_id)
     }
 }
 
