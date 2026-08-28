@@ -83,9 +83,16 @@ describe("MVP golden path (deterministic UI portions)", () => {
     vi.mocked(listWorkflowRuns).mockReset().mockResolvedValue([]);
     vi.mocked(listProviders).mockReset().mockResolvedValue(["mock"]);
     vi.mocked(getProviderCapabilities).mockReset().mockResolvedValue({
-      mediaTypes: ["image/png"],
+      mediaTypes: ["image"],
+      supportsSeed: false,
+      supportsNegativePrompt: false,
+      supportsReferenceImage: true,
+      supportsMultipleReferenceImages: false,
+      supportsImageToVideo: false,
       supportsCancel: false,
       supportsProgress: false,
+      supportedAspectRatios: ["1:1"],
+      supportedModels: ["mock-image-v1"],
     });
     vi.mocked(listProviderModels).mockReset().mockResolvedValue(["mock-image-v1"]);
     vi.mocked(getProviderConfigurationStatus).mockReset().mockResolvedValue({
@@ -94,9 +101,6 @@ describe("MVP golden path (deterministic UI portions)", () => {
       credentialConfigured: false,
       credentialReference: null,
       defaultModel: "mock-image-v1",
-      endpoint: null,
-      requestTimeoutSeconds: 60,
-      pollingIntervalSeconds: 3,
     });
     vi.mocked(listScenes).mockReset().mockResolvedValue([
       {

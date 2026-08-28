@@ -61,7 +61,45 @@ The manual walkthrough is documented at
 The automated acceptance test lives at
 [`apps/desktop/src-tauri/tests/canon_engine_acceptance.rs`](apps/desktop/src-tauri/tests/canon_engine_acceptance.rs).
 
-### Sprint 1 non-goals
+## MVP IMPLEMENTED (P0–P9)
+
+The current release covers the full MVP chain described in
+[`docs/specs/ai-cinematic-production-os-master-plan.md`](docs/specs/ai-cinematic-production-os-master-plan.md):
+
+- **Project kernel & asset versioning (P0–P1):** local projects, exact
+  version history, transactional canonical promotion, thumbnails.
+- **Canon engine (P2):** typed entities, section locking, append-only
+  revisions, protected TBD firewall, deterministic Story Bible export.
+- **Skill workflow runtime (P3–P4):** builtin skills (Face Lock, Visual QA),
+  immutable context snapshots, approvals, provider execution with
+  idempotent attempts, artifact lineage.
+- **Provider integrations (P5):** mock + OpenAI adapters, capability
+  disclosure, keychain-only credentials, cancel/retry UX.
+- **Visual QA & repair (P6–P7):** check planner, per-check review,
+  repair-to-child-version workflow, exact-version scene pinning.
+- **Cinema compiler (P8):** provider-neutral scene compilation, runtime
+  budget guards, protected-TBD firewall, durable prompt export.
+- **Integration & polish (P9):** project overview & readiness, health
+  scanning, provenance traversal, unified job lifecycle/recovery,
+  privacy hardening, diagnostics export, UX/accessibility polish,
+  golden-path acceptance fixture.
+
+Documentation:
+
+- [`docs/architecture.md`](docs/architecture.md) — stack, layering, invariants
+- [`docs/project-format.md`](docs/project-format.md) — on-disk project layout
+- [`docs/recovery.md`](docs/recovery.md) — interrupted-job guarantees
+- [`docs/privacy.md`](docs/privacy.md) — credentials, disclosure, redaction
+- [`docs/release-checklist.md`](docs/release-checklist.md) — release process
+
+## POST-MVP (not implemented)
+
+The following are explicitly **not** in the current release and must not be
+advertised as available: multi-user collaboration, cloud sync, video
+generation providers beyond the MVP set, six-panel layouts, and any feature
+listed in the master plan's Post-MVP roadmap (section 60).
+
+## Sprint 1 non-goals (historical)
 
 The following are explicitly out of scope for Sprint 1:
 
