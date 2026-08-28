@@ -29,3 +29,6 @@ Thumbs.db
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Local git worktrees (isolated implementation workspaces)
+.worktrees/
