@@ -1,12 +1,16 @@
 {
-  "nodeCount": 0,
-  "edgeCount": 0,
-  "languages": [],
-  "totalCount": 0,
+  "nodeCount": 1821,
+  "edgeCount": 2689,
+  "languages": [
+    "rust",
+    "tsx",
+    "typescript"
+  ],
+  "totalCount": 1821,
   "readyCount": 0,
   "staleCount": 0,
-  "dirty": true,
+  "dirty": false,
   "syncing": false,
-  "syncedAt": null,
-  "lastFile": "progress.md"
+  "syncedAt": "2026-08-28T17:14:28.092Z",
+  "lastFile": "provenance.rs"
 }

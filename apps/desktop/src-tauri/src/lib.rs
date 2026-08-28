@@ -8,6 +8,7 @@ pub mod integration;
 pub mod project;
 pub mod providers;
 pub mod qa;
+pub mod recovery;
 pub mod skills;
 pub mod workflow;
 
@@ -80,6 +81,7 @@ pub fn run() {
       cinema::commands::compile_cinema,
       cinema::commands::get_cinema_compilation,
       cinema::commands::list_cinema_compilations,
+      recovery::commands::get_project_recovery_state,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

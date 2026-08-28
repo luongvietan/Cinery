@@ -1,0 +1,137 @@
+.container {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: var(--color-surface, #f5f5f5);
+}
+
+.loading {
+  color: var(--color-text-muted, #999);
+  font-style: italic;
+}
+
+.error {
+  color: var(--color-error, #d32f2f);
+  padding: 0.75rem;
+  background: var(--color-error-bg, #ffebee);
+  border-radius: 0.25rem;
+  border-left: 4px solid var(--color-error, #d32f2f);
+}
+
+.allClear {
+  color: var(--color-success, #388e3c);
+  font-weight: 500;
+}
+
+.header {
+  margin-bottom: 1rem;
+}
+
+.header h2 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1.25rem;
+  color: var(--color-text, #333);
+}
+
+.subtitle {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted, #666);
+}
+
+.jobsList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.jobCard {
+  border: 1px solid var(--color-border, #ddd);
+  border-radius: 0.25rem;
+  background: white;
+  overflow: hidden;
+}
+
+.jobCardHeader {
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--color-border, #eee);
+  background: var(--color-surface-hover, #fafafa);
+  transition: background-color 0.2s;
+}
+
+.jobCardHeader:hover {
+  background: var(--color-surface-hover, #f0f0f0);
+}
+
+.jobCardTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.jobType {
+  font-weight: 600;
+  color: var(--color-primary, #1976d2);
+  font-size: 0.875rem;
+  text-transform: capitalize;
+}
+
+.jobId {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #666);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.disposition {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  text-transform: capitalize;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.disposition-nothing_required {
+  background: var(--color-info-bg, #e3f2fd);
+  color: var(--color-info, #1976d2);
+}
+
+.disposition-resume_local {
+  background: var(--color-success-bg, #e8f5e9);
+  color: var(--color-success, #388e3c);
+}
+
+.disposition-await_user_retry {
+  background: var(--color-warning-bg, #fff3e0);
+  color: var(--color-warning, #f57c00);
+}
+
+.disposition-inspect_remote_result {
+  background: var(--color-info-bg, #e3f2fd);
+  color: var(--color-info, #1976d2);
+}
+
+.disposition-manual_resolution_required {
+  background: var(--color-error-bg, #ffebee);
+  color: var(--color-error, #d32f2f);
+}
+
+.expandIcon {
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted, #999);
+}
+
+.jobCardContent {
+  padding: 1rem;
+  border-top: 1px solid var(--color-border, #eee);
+}
