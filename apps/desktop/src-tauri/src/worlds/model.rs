@@ -1,3 +1,5 @@
+use crate::assets::model::AssetRecord;
+use crate::canon::model::CanonEntityRecord;
 use serde::{Deserialize, Serialize};
 
 /// Production representation of a Canon Location.
@@ -13,4 +15,15 @@ pub struct World {
     pub world_plate_asset_id: String,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// World enriched with its Canon Location display data and
+/// stable World Plate Asset, returned by list/get queries
+/// without copying Location narrative into World storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorldDetail {
+    pub world: World,
+    pub location: CanonEntityRecord,
+    pub world_plate_asset: AssetRecord,
 }

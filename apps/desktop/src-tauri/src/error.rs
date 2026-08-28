@@ -192,6 +192,21 @@ pub enum AppError {
 
     #[error("Visual QA data is invalid: {0}")]
     InvalidQaData(String),
+
+    #[error("Canon location was not found")]
+    WorldLocationNotFound,
+
+    #[error("Canon entity is not a location")]
+    WorldLocationInvalidType,
+
+    #[error("A world already exists for this location")]
+    WorldAlreadyExists,
+
+    #[error("World was not found")]
+    WorldNotFound,
+
+    #[error("World plate asset is invalid: {0}")]
+    WorldPlateAssetInvalid(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

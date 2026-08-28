@@ -66,6 +66,11 @@ pub fn run() {
       qa::commands::list_qa_runs,
       qa::commands::get_qa_run,
       qa::commands::review_qa_check,
+      worlds::commands::create_world,
+      worlds::commands::list_worlds,
+      worlds::commands::get_world,
+      worlds::commands::list_worlds_detailed,
+      worlds::commands::get_world_detailed,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
