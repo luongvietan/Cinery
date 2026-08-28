@@ -211,7 +211,7 @@ fn build_node(
         }
         "scene" => {
             let mut stmt = conn
-                .prepare("SELECT intent, created_at FROM scenes WHERE id = ?1")
+                .prepare("SELECT title, created_at FROM scenes WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             stmt.query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
                 .map_err(|e| AppError::Database(e.to_string()))?
