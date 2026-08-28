@@ -111,6 +111,7 @@ pub struct QaCheckPlan {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct QaCheckResult {
     pub check_id: String,
     pub status: QaCheckStatus,
@@ -122,6 +123,7 @@ pub struct QaCheckResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct VisualQaResult {
     pub schema_version: u32,
     pub checks: Vec<QaCheckResult>,
