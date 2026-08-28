@@ -2,6 +2,7 @@ pub mod assets;
 pub mod canon;
 pub mod cinema;
 pub mod db;
+pub mod diagnostics;
 pub mod error;
 pub mod generation;
 pub mod integration;
