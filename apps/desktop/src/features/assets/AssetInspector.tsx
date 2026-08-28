@@ -9,6 +9,7 @@ import {
 import { describeError } from "../../lib/errors";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
 import { getGeneratedArtifact } from "../production/api";
+import { QaPanel } from "../qa/QaPanel";
 import {
   formatByteSize,
   formatImageDimensions,
@@ -65,6 +66,7 @@ export function AssetInspector({
   );
   const [generationDetails, setGenerationDetails] = useState<GeneratedArtifactDetail | null>(null);
   const [generationDetailsError, setGenerationDetailsError] = useState<string | null>(null);
+  const [qaVersionId, setQaVersionId] = useState<string | null>(null);
   const selectionKey = `${projectRootPath}\u0000${assetId}`;
   const currentSelectionKey = useRef(selectionKey);
   currentSelectionKey.current = selectionKey;
@@ -83,6 +85,7 @@ export function AssetInspector({
     setError(null);
     setPromotionError(null);
     setPromotingVersionId(null);
+    setQaVersionId(null);
 
     getAssetWithVersions(projectRootPath, assetId)
       .then((result) => {
@@ -180,6 +183,10 @@ export function AssetInspector({
     : versions.length > 0
       ? "No canonical version"
       : "No versions";
+  const qaVersion =
+    sortedVersions.find((version) => version.id === qaVersionId) ??
+    sortedVersions[0] ??
+    null;
 
   return (
     <section aria-label={`Asset ${asset.label}`}>
@@ -353,6 +360,14 @@ export function AssetInspector({
                         View generation details
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className="asset-secondary-button"
+                      aria-pressed={qaVersion?.id === version.id}
+                      onClick={() => setQaVersionId(version.id)}
+                    >
+                      View QA
+                    </button>
                   </div>
                 </li>
               );
@@ -360,6 +375,13 @@ export function AssetInspector({
           </ul>
         )}
       </section>
+      {qaVersion ? (
+        <QaPanel
+          projectRootPath={projectRootPath}
+          assetVersionId={qaVersion.id}
+          versionLabel={formatVersionNumber(qaVersion.versionNumber)}
+        />
+      ) : null}
       {generationDetailsError ? <p role="alert">{generationDetailsError}</p> : null}
       {generationDetails ? (
         <section aria-label="Generation Details" className="asset-generation-details">

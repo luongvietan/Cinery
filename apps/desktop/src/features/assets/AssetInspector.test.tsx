@@ -5,6 +5,7 @@ import { AssetInspector } from "./AssetInspector";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
 
 vi.mock("./api");
+vi.mock("../qa/QaPanel", () => ({ QaPanel: () => null }));
 vi.mock("./shell", () => ({
   openAssetFolder: vi.fn(),
   openProjectRelativePath: vi.fn(),

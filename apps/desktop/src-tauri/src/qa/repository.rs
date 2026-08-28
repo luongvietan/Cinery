@@ -291,6 +291,23 @@ pub fn fail_for_workflow(
     Ok(())
 }
 
+pub fn update_overall_status(
+    conn: &Connection,
+    qa_run_id: &str,
+    overall: super::models::QaOverallStatus,
+) -> Result<(), AppError> {
+    let changed = conn
+        .execute(
+            "UPDATE qa_runs SET overall_status = ?1 WHERE id = ?2 AND status = 'succeeded'",
+            params![overall.as_str(), qa_run_id],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(QaError::RunNotFound.into());
+    }
+    Ok(())
+}
+
 fn list_checks(conn: &Connection, qa_run_id: &str) -> Result<Vec<QaCheckRecord>, AppError> {
     let mut statement = conn
         .prepare(
@@ -364,13 +381,18 @@ where
     T::Err: Display + Send + Sync + 'static,
 {
     value.parse::<T>().map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(ParseError(error.to_string())))
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            Type::Text,
+            Box::new(ParseError(error.to_string())),
+        )
     })
 }
 
 fn parse_json<T: DeserializeOwned>(index: usize, value: String) -> rusqlite::Result<T> {
-    serde_json::from_str(&value)
-        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error)))
+    serde_json::from_str(&value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(index, Type::Text, Box::new(error))
+    })
 }
 
 #[derive(Debug)]

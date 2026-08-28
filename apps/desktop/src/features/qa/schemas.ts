@@ -87,3 +87,48 @@ export const visualQaResultSchema = z
     modelSummary: z.string().max(4_000).nullable(),
   })
   .strict();
+
+export const qaRunRecordSchema = z
+  .object({
+    id: z.string().min(1),
+    projectId: z.string().min(1),
+    assetId: z.string().min(1),
+    assetVersionId: z.string().min(1),
+    workflowRunId: z.string().min(1).nullable(),
+    status: qaRunStatusSchema,
+    overallStatus: qaOverallStatusSchema.nullable(),
+    adapterId: z.string().nullable(),
+    adapterVersion: z.string().nullable(),
+    modelId: z.string().nullable(),
+    executionLocation: z.string().min(1),
+    checkPlan: qaCheckPlanSchema,
+    contextSnapshot: z.unknown(),
+    rawResponseMetadata: z.unknown().nullable(),
+    errorCode: z.string().nullable(),
+    errorMessage: z.string().nullable(),
+    createdAt: z.string().min(1),
+    startedAt: z.string().nullable(),
+    completedAt: z.string().nullable(),
+  })
+  .strict();
+
+export const qaCheckRecordSchema = qaCheckResultSchema
+  .extend({
+    id: z.string().min(1),
+    qaRunId: z.string().min(1),
+    checkType: qaCheckTypeSchema,
+    source: qaCheckSourceSchema,
+    requirement: z.unknown(),
+    reviewStatus: qaReviewStatusSchema,
+    reviewNote: z.string().nullable(),
+    reviewedAt: z.string().nullable(),
+    createdAt: z.string().min(1),
+  })
+  .strict();
+
+export const qaRunDetailSchema = z
+  .object({
+    run: qaRunRecordSchema,
+    checks: z.array(qaCheckRecordSchema).max(128),
+  })
+  .strict();

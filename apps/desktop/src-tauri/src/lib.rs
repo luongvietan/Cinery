@@ -61,6 +61,9 @@ pub fn run() {
       generation::commands::list_generation_results,
       generation::commands::get_generated_artifact,
       generation::commands::promote_generated_artifact,
+      qa::commands::list_qa_runs,
+      qa::commands::get_qa_run,
+      qa::commands::review_qa_check,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

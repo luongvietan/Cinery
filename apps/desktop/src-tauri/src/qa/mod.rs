@@ -1,8 +1,10 @@
 pub mod adapters;
 pub mod check_planner;
+pub mod commands;
 pub mod context;
 pub mod errors;
 pub mod models;
 pub mod normalizer;
 pub mod repository;
+pub mod service;
 pub mod workflow;

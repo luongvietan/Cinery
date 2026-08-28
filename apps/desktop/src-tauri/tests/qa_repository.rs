@@ -4,6 +4,7 @@ use cinematic_desktop_lib::qa::models::{
     QaRunRecord, QaRunStatus,
 };
 use cinematic_desktop_lib::qa::repository;
+use cinematic_desktop_lib::qa::service::QaService;
 use rusqlite::Connection;
 use serde_json::json;
 
@@ -91,7 +92,10 @@ fn qa_history_round_trips_and_review_preserves_model_result() {
         loaded.checks[0].review_status,
         QaReviewStatus::OverriddenPass
     );
-    assert_eq!(loaded.checks[0].review_note.as_deref(), Some("False positive"));
+    assert_eq!(
+        loaded.checks[0].review_note.as_deref(),
+        Some("False positive")
+    );
 
     drop(conn);
 }
@@ -128,9 +132,11 @@ fn qa_history_is_scoped_to_the_exact_asset_version() {
             .len(),
         1
     );
-    assert!(repository::list_runs_for_asset_version(&conn, "project-1", "missing")
-        .unwrap()
-        .is_empty());
+    assert!(
+        repository::list_runs_for_asset_version(&conn, "project-1", "missing")
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -184,4 +190,85 @@ fn qa_history_survives_database_close_and_reopen() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.run.context_snapshot["immutable"], true);
+}
+
+#[test]
+fn human_override_recomputes_effective_overall_without_rewriting_model_status() {
+    let mut conn = fixture();
+    let run = QaRunRecord {
+        id: "qa-review".into(),
+        project_id: "project-1".into(),
+        asset_id: "asset-1".into(),
+        asset_version_id: "version-1".into(),
+        workflow_run_id: None,
+        status: QaRunStatus::Succeeded,
+        overall_status: Some(QaOverallStatus::Fail),
+        adapter_id: Some("mock".into()),
+        adapter_version: Some("1".into()),
+        model_id: Some("mock-vlm".into()),
+        execution_location: "local".into(),
+        check_plan: json!({
+            "schemaVersion": 1,
+            "assetId": "asset-1",
+            "assetVersionId": "version-1",
+            "ownerEntityId": null,
+            "assetType": "image",
+            "referenceAssetVersionIds": [],
+            "checks": [{
+                "id": "lock:scar",
+                "checkType": "permanent_visual_lock",
+                "source": "visual_lock",
+                "key": "scar",
+                "label": "Scar",
+                "requirement": "Correct side",
+                "validatorHint": null,
+                "blocking": true,
+                "referenceAssetVersionIds": []
+            }],
+            "createdAt": "now"
+        }),
+        context_snapshot: json!({}),
+        raw_response_metadata: None,
+        error_code: None,
+        error_message: None,
+        created_at: "now".into(),
+        started_at: Some("now".into()),
+        completed_at: Some("now".into()),
+    };
+    repository::insert_run(&conn, &run).unwrap();
+    repository::insert_checks(
+        &mut conn,
+        &[QaCheckRecord {
+            id: "row-review".into(),
+            qa_run_id: run.id.clone(),
+            check_id: "lock:scar".into(),
+            check_type: QaCheckType::PermanentVisualLock,
+            source: QaCheckSource::VisualLock,
+            requirement: json!({}),
+            status: QaCheckStatus::Fail,
+            confidence: Some(0.9),
+            observed: "Wrong side".into(),
+            reason: "Mismatch".into(),
+            repair_hint: None,
+            review_status: QaReviewStatus::Unreviewed,
+            review_note: None,
+            reviewed_at: None,
+            created_at: "now".into(),
+        }],
+    )
+    .unwrap();
+
+    let reviewed = QaService::review_check(
+        &conn,
+        "project-1",
+        "qa-review",
+        "lock:scar",
+        QaReviewStatus::OverriddenPass,
+        Some("Model confused viewer-left"),
+    )
+    .unwrap();
+
+    assert_eq!(reviewed.run.overall_status, Some(QaOverallStatus::Pass));
+    assert_eq!(reviewed.checks[0].status, QaCheckStatus::Fail);
+    assert_eq!(reviewed.checks[0].effective_status(), QaCheckStatus::Pass);
 }
