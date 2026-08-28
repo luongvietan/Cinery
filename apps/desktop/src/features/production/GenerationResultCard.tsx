@@ -7,7 +7,7 @@ export function GenerationResultCard({ projectRootPath, detail, selected, onSele
   return (
     <article className={selected ? "generation-result-card generation-result-card--selected" : "generation-result-card"}>
       <button type="button" className="generation-result-select" aria-pressed={selected} aria-label={`Select result ${artifact.ordinal}`} onClick={onSelect}>
-        <img src={convertFileSrc(source)} alt={`Generated result ${artifact.ordinal}`} />
+        <img src={convertFileSrc(source)} alt={`Generated result ${artifact.ordinal}`} loading="lazy" decoding="async" />
         <span className="generation-result-number">Result {artifact.ordinal}</span>
         <span>{artifact.width ?? "—"} × {artifact.height ?? "—"} · {artifact.mimeType.replace("image/", "").toUpperCase()}</span>
         {selected ? <strong aria-live="polite">Selected</strong> : null}

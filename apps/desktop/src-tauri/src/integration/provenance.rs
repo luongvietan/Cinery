@@ -291,22 +291,44 @@ fn traverse_backwards(
                 });
             }
 
-            // Check for repair parent
+            // Check for repair chains: this version as a repair source
+            // (REPAIRS -> child version) and as a repair result
+            // (DERIVED_FROM -> source version). The qa_repairs table
+            // records both sides, so both edges are read-only history.
             let mut stmt = conn
                 .prepare(
-                    "SELECT parent_asset_version_id FROM qa_repairs WHERE id = ?1 AND parent_asset_version_id IS NOT NULL",
+                    "SELECT child_asset_version_id FROM qa_repairs WHERE source_asset_version_id = ?1",
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            if let Some(parent_id) = stmt
+            for row in stmt
+                .query_map([id], |r| r.get::<_, String>(0))
+                .map_err(|e| AppError::Database(e.to_string()))?
+            {
+                let child_id = row.map_err(|e| AppError::Database(e.to_string()))?;
+                add_node_if_missing(conn, "asset_version", &child_id, nodes_map, queue)?;
+                edges_vec.push(ProvenanceEdge {
+                    from: id.to_string(),
+                    to: child_id,
+                    relation: "REPAIRS".to_string(),
+                });
+            }
+
+            // This version as a repair result: DERIVED_FROM its source.
+            let mut stmt = conn
+                .prepare(
+                    "SELECT source_asset_version_id FROM qa_repairs WHERE child_asset_version_id = ?1",
+                )
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            if let Some(source_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
                 .optional()
                 .map_err(|e| AppError::Database(e.to_string()))?
             {
-                add_node_if_missing(conn, "asset_version", &parent_id, nodes_map, queue)?;
+                add_node_if_missing(conn, "asset_version", &source_id, nodes_map, queue)?;
                 edges_vec.push(ProvenanceEdge {
                     from: id.to_string(),
-                    to: parent_id,
-                    relation: "REPAIRS".to_string(),
+                    to: source_id,
+                    relation: "DERIVED_FROM".to_string(),
                 });
             }
 
@@ -346,25 +368,34 @@ fn traverse_backwards(
             }
         }
         "workflow_run" => {
-            // Workflow Run -> Canon Revision (via context)
+            // Workflow Run -> Canon entities referenced by its immutable
+            // context snapshot. The snapshot stores each canon entity it
+            // consumed, so identity edges are derived from durable context
+            // rather than a synthetic id join.
             let mut stmt = conn
-                .prepare(
-                    "SELECT ce.id FROM workflow_runs wr
-                     JOIN canon_entities ce ON wr.id = ce.id
-                     WHERE wr.id = ?1 LIMIT 1",
-                )
+                .prepare("SELECT context_snapshot_json FROM workflow_runs WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            if let Some(canon_id) = stmt
-                .query_row([id], |r| r.get::<_, String>(0))
+            if let Some(snapshot_json) = stmt
+                .query_row([id], |r| r.get::<_, Option<String>>(0))
                 .optional()
                 .map_err(|e| AppError::Database(e.to_string()))?
+                .and_then(|v| v)
             {
-                // Use the canon_id as reference
-                edges_vec.push(ProvenanceEdge {
-                    from: id.to_string(),
-                    to: canon_id,
-                    relation: "USES_IDENTITY".to_string(),
-                });
+                if let Ok(snapshot) =
+                    serde_json::from_str::<crate::workflow::model::WorkflowContextSnapshot>(
+                        &snapshot_json,
+                    )
+                {
+                    for canon in snapshot.canon {
+                        let canon_id = canon.entity_id;
+                        add_node_if_missing(conn, "canon", &canon_id, nodes_map, queue)?;
+                        edges_vec.push(ProvenanceEdge {
+                            from: id.to_string(),
+                            to: canon_id,
+                            relation: "USES_IDENTITY".to_string(),
+                        });
+                    }
+                }
             }
         }
         "qa_run" => {
@@ -386,9 +417,9 @@ fn traverse_backwards(
             }
         }
         "repair_version" => {
-            // Repair -> QA Run
+            // Repair -> Source QA Run
             let mut stmt = conn
-                .prepare("SELECT qa_run_id FROM qa_repairs WHERE id = ?1")
+                .prepare("SELECT source_qa_run_id FROM qa_repairs WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(qa_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
@@ -403,9 +434,9 @@ fn traverse_backwards(
                 });
             }
 
-            // Repair -> Parent Asset Version
+            // Repair -> Source Asset Version
             let mut stmt = conn
-                .prepare("SELECT parent_asset_version_id FROM qa_repairs WHERE id = ?1")
+                .prepare("SELECT source_asset_version_id FROM qa_repairs WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(parent_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
@@ -424,7 +455,7 @@ fn traverse_backwards(
             // Scene -> Character Look Version
             let mut stmt = conn
                 .prepare(
-                    "SELECT character_look_asset_version_id FROM scene_characters WHERE scene_id = ?1",
+                    "SELECT look_asset_version_id FROM scene_characters WHERE scene_id = ?1",
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt

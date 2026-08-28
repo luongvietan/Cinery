@@ -72,12 +72,15 @@ impl RecoveryService {
     ) -> Result<Vec<RecoveryClassification>, AppError> {
         let mut classifications = Vec::new();
 
-        // Query all provider executions for this project
+        // Query all provider executions for this project. Execution rows
+        // belong to workflow runs, so the project is reached through the
+        // workflow_runs join.
         let mut statement = conn
             .prepare(
-                "SELECT id, step_definition_id, attempt_number, provider_id, model_id, adapter_version,
-                        status, provider_job_id, normalized_error_json, started_at, completed_at
-                 FROM provider_executions WHERE project_id = ?1",
+                "SELECT e.id, e.status, e.normalized_error_json
+                 FROM workflow_step_executions e
+                 JOIN workflow_runs wr ON wr.id = e.workflow_run_id
+                 WHERE wr.project_id = ?1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
@@ -85,8 +88,8 @@ impl RecoveryService {
             .query_map([project_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,  // id
-                    row.get::<_, String>(6)?,  // status
-                    row.get::<_, Option<String>>(8)?,  // normalized_error_json
+                    row.get::<_, String>(1)?,  // status
+                    row.get::<_, Option<String>>(2)?,  // normalized_error_json
                 ))
             })
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -226,11 +229,17 @@ fn is_provider_complete(status: &str) -> bool {
 }
 
 /// Check if an asset version was created for a provider execution.
+/// A promoted generation output becomes an asset version, linked through
+/// artifact_promotions -> generated_artifacts -> generation_result_sets.
 fn check_asset_for_provider_execution(conn: &Connection, exec_id: &str) -> Result<bool, AppError> {
     let mut statement = conn
         .prepare(
-            "SELECT 1 FROM asset_versions WHERE generation_artifact_id IN (
-               SELECT artifact_id FROM generation_artifacts WHERE provider_execution_id = ?1
+            "SELECT 1 FROM asset_versions av
+             WHERE av.id IN (
+               SELECT ap.asset_version_id FROM artifact_promotions ap
+               JOIN generated_artifacts ga ON ga.id = ap.artifact_id
+               JOIN generation_result_sets grs ON grs.id = ga.result_set_id
+               WHERE grs.provider_attempt_id = ?1
              ) LIMIT 1",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

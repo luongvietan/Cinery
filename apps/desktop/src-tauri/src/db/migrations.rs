@@ -60,6 +60,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 12,
         sql: include_str!("../../migrations/0012_cinema_compiler.sql"),
     },
+    Migration {
+        version: 13,
+        sql: include_str!("../../migrations/0013_performance_indexes.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -471,5 +475,31 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn performance_migration_creates_required_indexes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for index in [
+            "idx_workflow_steps_run",
+            "idx_workflow_events_run",
+            "idx_qa_runs_workflow",
+            "idx_artifact_lineage_artifact",
+            "idx_workflow_approvals_run_step",
+            "idx_workflow_runs_project_status",
+            "idx_asset_versions_asset_status",
+            "idx_qa_runs_project_version",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+                    [index],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "index {index} should exist");
+        }
     }
 }

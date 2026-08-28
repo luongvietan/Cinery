@@ -177,6 +177,8 @@ export function AssetList({
                         ),
                       )}
                       alt=""
+                      loading="lazy"
+                      decoding="async"
                     />
                   ) : (
                     <span
