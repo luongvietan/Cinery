@@ -18,6 +18,7 @@ ulid = "1"
 sha2 = "0.10"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 mime_guess = "2"
+base64 = "0.22"
 ureq = { version = "2.12", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde_yaml = "0.9"

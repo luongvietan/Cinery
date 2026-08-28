@@ -128,6 +128,32 @@ pub struct VisualQaResult {
     pub model_summary: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualQaMedia {
+    pub asset_version_id: String,
+    pub local_path: String,
+    pub media_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualQaReference {
+    pub asset_version_id: String,
+    pub local_path: String,
+    pub purpose: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualQaRequest {
+    pub request_id: String,
+    pub target: VisualQaMedia,
+    pub references: Vec<VisualQaReference>,
+    pub checks: Vec<QaCheckDefinition>,
+    pub response_schema_version: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualExpectation {

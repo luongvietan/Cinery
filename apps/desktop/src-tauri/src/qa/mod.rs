@@ -1,3 +1,4 @@
+pub mod adapters;
 pub mod check_planner;
 pub mod context;
 pub mod errors;

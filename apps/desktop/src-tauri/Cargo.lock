@@ -489,6 +489,7 @@ dependencies = [
 name = "cinematic-desktop"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "image",
  "mime_guess",
