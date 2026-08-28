@@ -208,6 +208,12 @@ export function QaPanel({
         </button>
       </header>
 
+      {busy ? (
+        <p className="qa-busy-note" role="note" id="qa-busy-reason">
+          A QA action is in progress; controls are paused until it finishes.
+        </p>
+      ) : null}
+
       {error ? <p role="alert">{error}</p> : null}
       {pendingWorkflow && disclosure ? (
         <section className="qa-execution-review" aria-label="QA execution review">
@@ -221,7 +227,12 @@ export function QaPanel({
             ) : null}
           </div>
           <div>
-            <button type="button" disabled={busy} onClick={() => void approveAndRun()}>
+            <button
+              type="button"
+              disabled={busy}
+              aria-describedby={busy ? "qa-busy-reason" : undefined}
+              onClick={() => void approveAndRun()}
+            >
               Approve and Run QA
             </button>
             <button type="button" className="qa-secondary-button" disabled={busy} onClick={() => void rejectQa()}>

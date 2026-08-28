@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { AssetSummary, OverviewAction, SceneRecord } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
+import { ActionButton } from "../../components/ActionButton";
 import { listAssets } from "../assets/api";
 import { listCanonEntities } from "../canon/api";
 import { compileCinema, getScene, listScenes, stageScene as stageSceneCommand } from "./api";
@@ -8,6 +9,7 @@ import { compileCinema, getScene, listScenes, stageScene as stageSceneCommand } 
 export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: string; action: OverviewAction | null }) {
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [scenes, setScenes] = useState<SceneRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -16,7 +18,7 @@ export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: 
     try {
       const [nextAssets, nextScenes] = await Promise.all([listAssets(projectRootPath), listScenes(projectRootPath)]);
       setAssets(nextAssets); setScenes(nextScenes);
-    } catch (reason) { setError(describeError(reason)); }
+    } catch (reason) { setError(describeError(reason)); } finally { setLoaded(true); }
   }
   useEffect(() => { void load(); }, [projectRootPath]);
 
@@ -45,10 +47,18 @@ export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: 
   }
 
   const scopedScene = action?.sceneId ? scenes.filter((scene) => scene.id === action.sceneId) : scenes;
+  const stageBlockedReason = busy
+    ? "Finishing the current scene action…"
+    : null;
   return <section className="cinema-workspace" aria-label="Scene and cinema workspace">
     <header><span className="production-kicker">Production / Cinema</span><h2>Scenes & Cinema</h2><p>Stage exact canonical references, then compile durable provider-neutral prompts.</p></header>
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
-    {action?.id === "scene" || action?.id === "restage_scene" ? <button type="button" disabled={busy} onClick={() => void stageScene()}>{action.id === "restage_scene" ? "Restage Scene" : "Stage Scene"}</button> : null}
-    <ul>{scopedScene.map((scene) => <li key={scene.id}><strong>{scene.title}</strong><button type="button" disabled={busy} onClick={() => void compile(scene)}>Compile {scene.title}</button></li>)}</ul>
+    {action?.id === "scene" || action?.id === "restage_scene" ? (
+      <span className="action-button-blocked">
+        <ActionButton disabled={busy} disabledReason={stageBlockedReason} onClick={() => void stageScene()}>{action.id === "restage_scene" ? "Restage Scene" : "Stage Scene"}</ActionButton>
+      </span>
+    ) : null}
+    {loaded && !error && scopedScene.length === 0 ? <p role="status">No scenes yet. Stage a scene from the production progress panel.</p> : null}
+    <ul>{scopedScene.map((scene) => <li key={scene.id}><strong>{scene.title}</strong><ActionButton disabled={busy} disabledReason={busy ? "Finishing the current scene action…" : null} onClick={() => void compile(scene)}>Compile {scene.title}</ActionButton></li>)}</ul>
   </section>;
 }

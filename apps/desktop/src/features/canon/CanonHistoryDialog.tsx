@@ -19,12 +19,26 @@ export function CanonHistoryDialog({ projectRootPath, sectionId, sectionTitle, o
       .then(setRevisions)
       .catch((caught) => setError(describeError(caught)));
   }, [projectRootPath, sectionId]);
+
+  useEffect(() => {
+    if (!sectionId) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sectionId, onClose]);
+
   if (!sectionId) return null;
   return (
     <div className="canon-dialog-backdrop" role="presentation" onClick={onClose}>
-      <section className="canon-dialog" role="dialog" aria-label={`${sectionTitle} history`} onClick={(event) => event.stopPropagation()}>
-        <header><h2>{sectionTitle} history</h2><button type="button" onClick={onClose}>Close</button></header>
+      <section className="canon-dialog" role="dialog" aria-modal="true" aria-label={`${sectionTitle} history`} onClick={(event) => event.stopPropagation()}>
+        <header><h2>{sectionTitle} history</h2><button type="button" autoFocus onClick={onClose}>Close</button></header>
         {error ? <p role="alert">{error}</p> : null}
+        {revisions.length === 0 && !error ? <p role="status">No revisions recorded yet.</p> : null}
         <ol className="canon-history-list">
           {revisions.map((revision) => (
             <li key={revision.id}>

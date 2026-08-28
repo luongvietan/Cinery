@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { CanonSection } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
+import { ActionButton } from "../../components/ActionButton";
 
 interface CanonSectionCardProps<T> {
   title: string;
@@ -64,6 +65,14 @@ export function CanonSectionCard<T>({
     }
   }
 
+  const lockBlockedReason = !section
+    ? "Save the draft before locking."
+    : !isValid()
+      ? "Fix validation errors before locking."
+      : busy
+        ? "Finishing the current action…"
+        : null;
+
   return (
     <article className="canon-section-card" aria-label={title}>
       <header className="canon-section-card__header">
@@ -87,29 +96,17 @@ export function CanonSectionCard<T>({
       <footer className="canon-section-card__actions">
         {!locked ? (
           <>
-            <button
-              type="button"
-              onClick={() => {
-                const parsed = validatedValue();
-                if (parsed !== null) void run(() => onSave(parsed));
-              }}
-              disabled={busy}
-            >
+            <ActionButton disabled={busy} disabledReason={busy ? "Saving…" : null} onClick={() => { const parsed = validatedValue(); if (parsed !== null) void run(() => onSave(parsed)); }}>
               Save Draft
-            </button>
-            <button
-              type="button"
-              className="canon-secondary-button"
-              onClick={() => void run(onLock)}
-              disabled={busy || !section || !isValid()}
-            >
+            </ActionButton>
+            <ActionButton className="canon-secondary-button" disabled={busy || !section || !isValid()} disabledReason={lockBlockedReason} onClick={() => void run(onLock)}>
               Lock
-            </button>
+            </ActionButton>
           </>
         ) : (
-          <button type="button" onClick={() => void run(onUnlock)} disabled={busy}>
+          <ActionButton disabled={busy} disabledReason={busy ? "Finishing the current action…" : null} onClick={() => void run(onUnlock)}>
             Unlock
-          </button>
+          </ActionButton>
         )}
       </footer>
     </article>

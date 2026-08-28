@@ -42,8 +42,14 @@ export function CharacterBuilderOperation({
       </header>
       <form className="production-form" onSubmit={handleSubmit}>
         <label>Character<select value={characterEntityId} onChange={(event) => setCharacterEntityId(event.target.value)} required>{characters.length === 0 ? <option value="">No Character Canon entities available</option> : characters.map((character) => <option key={character.id} value={character.id}>{character.name}</option>)}</select></label>
-        <label>Source reference<select value={sourceAssetVersionId} onChange={(event) => setSourceAssetVersionId(event.target.value)} required disabled={sourceAssets.length === 0}><option value="">No canonical face asset available</option>{sourceAssets.map((asset) => <option key={asset.id} value={asset.canonicalVersionId ?? ""}>{asset.label} · v{String(asset.canonicalVersionNumber ?? 0).padStart(3, "0")} · Canonical</option>)}</select></label>
-        <p className="production-help">The selected AssetVersion is pinned when this production run starts.</p>
+        <label>Source reference<select value={sourceAssetVersionId} onChange={(event) => setSourceAssetVersionId(event.target.value)} required disabled={sourceAssets.length === 0} aria-describedby="source-reference-help"><option value="">No canonical face asset available</option>{sourceAssets.map((asset) => <option key={asset.id} value={asset.canonicalVersionId ?? ""}>{asset.label} · v{String(asset.canonicalVersionNumber ?? 0).padStart(3, "0")} · Canonical</option>)}</select></label>
+        {sourceAssets.length === 0 ? (
+          <p className="production-help" id="source-reference-help" role="note">
+            Requires a canonical Face. Promote or import a canonical face asset for a character first.
+          </p>
+        ) : (
+          <p className="production-help" id="source-reference-help">The selected AssetVersion is pinned when this production run starts.</p>
+        )}
         <div className="production-form-grid">{VISUAL_FIELDS.map((field) => <label key={field}>{field[0].toUpperCase() + field.slice(1)}<input value={visualSpec[field]} onChange={(event) => setVisualSpec((current) => ({ ...current, [field]: event.target.value }))} required /></label>)}</div>
         <label>Baseline wardrobe<input value={baselineWardrobe} onChange={(event) => setBaselineWardrobe(event.target.value)} required /></label>
         <div className="production-form-actions"><button type="submit" disabled={pending || !sourceAssetVersionId}>{pending ? "Preparing…" : "Review Request"}</button><button className="production-secondary" type="button" onClick={onCancel} disabled={pending}>Cancel</button></div>

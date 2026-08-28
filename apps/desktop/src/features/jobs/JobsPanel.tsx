@@ -99,6 +99,7 @@ const JobCard: React.FC<JobCardProps> = ({ classification }) => {
         onClick={() => setExpanded(!expanded)}
         role="button"
         tabIndex={0}
+        aria-expanded={expanded}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             setExpanded(!expanded);
