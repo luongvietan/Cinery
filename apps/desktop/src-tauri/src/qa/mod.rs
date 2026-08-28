@@ -6,6 +6,7 @@ pub mod errors;
 pub mod models;
 pub mod normalizer;
 pub mod repair;
+pub mod repair_workflow;
 pub mod repository;
 pub mod service;
 pub mod workflow;

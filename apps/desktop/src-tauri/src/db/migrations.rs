@@ -52,6 +52,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 10,
         sql: include_str!("../../migrations/0010_visual_qa.sql"),
     },
+    Migration {
+        version: 11,
+        sql: include_str!("../../migrations/0011_visual_qa_repairs.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
