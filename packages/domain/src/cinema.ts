@@ -68,6 +68,34 @@ export const cinemaCompilationSchema = z
 
 export type CinemaCompilation = z.infer<typeof cinemaCompilationSchema>;
 
+export interface SceneRecord {
+  id: string;
+  projectId: string;
+  title: string;
+  worldAssetVersionId: string | null;
+  canonNotes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SceneDetail {
+  scene: SceneRecord;
+  characters: Array<{ characterEntityId: string; lookAssetVersionId: string; sheetAssetVersionId: string | null }>;
+  props: Array<{ propAssetVersionId: string }>;
+  shots: Array<{ id: string; durationSeconds: number }>;
+}
+
+export interface CinemaCompilationRecord {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  inputJson: string;
+  compilationJson: string;
+  exportPath: string;
+  exportSha256: string;
+  createdAt: string;
+}
+
 /**
  * Validates a total compilation runtime: the master plan bounds P8 scenes
  * between 1 and 120 seconds.

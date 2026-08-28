@@ -142,8 +142,25 @@ fn empty_project_recommends_story_canon() {
 #[test]
 fn character_without_canonical_face_recommends_face_lock() {
     let fixture = ProjectFixture::new();
-    fixture.character();
-    assert_eq!(next_title(&fixture.root), "Face Lock");
+    let character_id = fixture.character();
+    let overview = get_project_overview(&fixture.root).unwrap();
+    assert_eq!(
+        overview.readiness.next_action.as_ref().unwrap().title,
+        "Face Lock"
+    );
+    assert_eq!(
+        overview
+            .readiness
+            .steps
+            .last()
+            .unwrap()
+            .action
+            .as_ref()
+            .unwrap()
+            .character_entity_id
+            .as_deref(),
+        Some(character_id.as_str())
+    );
 }
 
 #[test]
@@ -257,8 +274,25 @@ fn protected_open_tbd_for_scene_character_reports_blocked() {
 #[test]
 fn valid_scene_without_compilation_recommends_cinema_compilation() {
     let fixture = ProjectFixture::new();
-    fixture.ready_scene();
-    assert_eq!(next_title(&fixture.root), "Cinema Compilation");
+    let ready = fixture.ready_scene();
+    let overview = get_project_overview(&fixture.root).unwrap();
+    assert_eq!(
+        overview.readiness.next_action.as_ref().unwrap().title,
+        "Cinema Compilation"
+    );
+    assert_eq!(
+        overview
+            .readiness
+            .steps
+            .last()
+            .unwrap()
+            .action
+            .as_ref()
+            .unwrap()
+            .scene_id
+            .as_deref(),
+        Some(ready.scene_id.as_str())
+    );
 }
 
 #[test]
@@ -278,6 +312,139 @@ fn completed_cinema_compilation_reports_complete_production_path() {
     let overview = get_project_overview(&fixture.root).unwrap();
     assert_eq!(overview.readiness.status, ReadinessStatus::Complete);
     assert!(overview.readiness.next_action.is_none());
+}
+
+#[test]
+fn protected_tbd_opened_after_compilation_blocks_the_current_overview() {
+    let fixture = ProjectFixture::new();
+    let ready = fixture.ready_scene();
+    CinemaService::compile_scene(
+        &fixture.root,
+        CinemaCompileInput {
+            scene_id: ready.scene_id,
+            total_duration_seconds: 4.0,
+            shot_count: None,
+        },
+    )
+    .unwrap();
+    tbd::create(
+        &fixture.root,
+        Some(&ready.character_id),
+        None,
+        "Mara's true motive",
+        None,
+        true,
+    )
+    .unwrap();
+
+    let overview = get_project_overview(&fixture.root).unwrap();
+    assert_eq!(overview.readiness.status, ReadinessStatus::Blocked);
+    assert_eq!(
+        overview.readiness.next_action.unwrap().title,
+        "Resolve protected TBD"
+    );
+}
+
+#[test]
+fn overview_read_does_not_recover_or_mutate_a_running_workflow() {
+    let fixture = ProjectFixture::new();
+    let project = ProjectService::open(&fixture.root).unwrap();
+    let conn =
+        cinematic_desktop_lib::db::open_existing_connection(&fixture.root.join("project.db"))
+            .unwrap();
+    conn.execute(
+        "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at) VALUES ('running-run', ?1, 'skill', '1', 'operation', 'running', '{}', 'now', 'now')",
+        [&project.id],
+    )
+    .unwrap();
+    drop(conn);
+
+    get_project_overview(&fixture.root).unwrap();
+
+    let conn =
+        cinematic_desktop_lib::db::open_existing_connection(&fixture.root.join("project.db"))
+            .unwrap();
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM workflow_runs WHERE id = 'running-run'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let event_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM workflow_events WHERE workflow_run_id = 'running-run'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "running");
+    assert_eq!(event_count, 0);
+}
+
+#[test]
+fn later_uncompiled_scene_remains_the_next_production_action_after_an_older_compile() {
+    let fixture = ProjectFixture::new();
+    let old = fixture.ready_scene();
+    CinemaService::compile_scene(
+        &fixture.root,
+        CinemaCompileInput {
+            scene_id: old.scene_id,
+            total_duration_seconds: 4.0,
+            shot_count: None,
+        },
+    )
+    .unwrap();
+
+    let character_id = old.character_id;
+    let look = AssetService::list_assets(&fixture.root)
+        .unwrap()
+        .into_iter()
+        .find(|asset| asset.id == old.look_asset_id)
+        .unwrap()
+        .canonical_version_id
+        .unwrap();
+    let sheet = AssetService::list_assets(&fixture.root)
+        .unwrap()
+        .into_iter()
+        .find(|asset| asset.asset_type == "character_sheet")
+        .unwrap()
+        .canonical_version_id
+        .unwrap();
+    let world = AssetService::list_assets(&fixture.root)
+        .unwrap()
+        .into_iter()
+        .find(|asset| asset.asset_type == "world_plate")
+        .unwrap()
+        .canonical_version_id
+        .unwrap();
+    let later = CinemaService::create_scene(&fixture.root, "Scene 002", Some(world), None).unwrap();
+    CinemaService::add_character_to_scene(
+        &fixture.root,
+        &later.id,
+        &character_id,
+        &look,
+        Some(sheet),
+    )
+    .unwrap();
+    CinemaService::create_shot(
+        &fixture.root,
+        &later.id,
+        None,
+        4.0,
+        "Mara returns",
+        None,
+        None,
+    )
+    .unwrap();
+
+    let overview = get_project_overview(&fixture.root).unwrap();
+    assert_eq!(overview.readiness.status, ReadinessStatus::Pending);
+    let next_action = overview.readiness.next_action.unwrap();
+    assert_eq!(next_action.title, "Cinema Compilation");
+    assert_eq!(next_action.scene_id.as_deref(), Some(later.id.as_str()));
+    assert_eq!(overview.scene_readiness[0].scene_id, later.id);
+    assert_eq!(overview.scene_readiness[0].status, ReadinessStatus::Pending);
 }
 
 #[test]

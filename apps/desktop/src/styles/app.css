@@ -1744,6 +1744,7 @@ select:focus-visible {
 .project-overview__header p { margin-top: var(--space-4); color: var(--color-mid-gray); }
 .project-overview__complete { color: var(--color-success); font-weight: 700; white-space: nowrap; }
 .project-overview__steps { display: grid; margin: 0; padding: 0; list-style: none; }
+.project-overview__scenes h3 { margin: 0; padding: var(--space-16) var(--space-24); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; background: var(--surface-sidebar); border-bottom: 1px solid var(--color-hairline); }
 .project-overview__step { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: var(--space-12); padding: var(--space-16) var(--space-24); border-bottom: 1px solid var(--color-hairline); }
 .project-overview__step > span { font-weight: 800; text-align: center; }
 .project-overview__step strong { color: var(--color-ink); }

@@ -17,6 +17,7 @@ interface AssetListProps {
   refreshKey?: number;
   onSelectAsset: (assetId: string) => void;
   onBack?: () => void;
+  defaultOwnerEntityId?: string | null;
 }
 
 export function AssetList({
@@ -25,6 +26,7 @@ export function AssetList({
   refreshKey = 0,
   onSelectAsset,
   onBack,
+  defaultOwnerEntityId = null,
 }: AssetListProps) {
   const [assets, setAssets] = useState<AssetSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -81,6 +83,7 @@ export function AssetList({
         projectRootPath,
         type: assetType,
         label,
+        ...(defaultOwnerEntityId ? { ownerEntityId: defaultOwnerEntityId } : {}),
       });
       const refreshed = await listAssets(projectRootPath);
       setAssets(refreshed);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ProjectSummary } from "@cinematic/domain";
+import type { OverviewAction, ProjectSummary } from "@cinematic/domain";
 import { BackButton } from "../../components/BackButton";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
@@ -8,13 +8,14 @@ import { ProductionWorkspace } from "../production/ProductionWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
 import { ProjectOverview } from "../overview/ProjectOverview";
+import { CinemaWorkspace } from "../cinema/CinemaWorkspace";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers";
+type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers" | "cinema";
 
 export function ProjectWorkspace({
   project,
@@ -23,6 +24,7 @@ export function ProjectWorkspace({
   const [panelView, setPanelView] = useState<PanelView>("overview");
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [assetRefreshKey, setAssetRefreshKey] = useState(0);
+  const [overviewAction, setOverviewAction] = useState<OverviewAction | null>(null);
 
   function handleAssetChanged() {
     setAssetRefreshKey((key) => key + 1);
@@ -30,6 +32,12 @@ export function ProjectWorkspace({
 
   function handleAssetsPanelBack() {
     setPanelView("overview");
+    setSelectedAssetId(null);
+  }
+
+  function navigateOverviewAction(action: OverviewAction) {
+    setOverviewAction(action);
+    setPanelView(action.destination);
     setSelectedAssetId(null);
   }
 
@@ -103,7 +111,7 @@ export function ProjectWorkspace({
       </nav>
       <section aria-label="Project workspace">
         {panelView === "overview" ? (
-          <ProjectOverview projectRootPath={project.rootPath} onNavigate={setPanelView} />
+          <ProjectOverview projectRootPath={project.rootPath} onNavigate={navigateOverviewAction} />
         ) : null}
         {panelView === "assets" ? (
           <>
@@ -113,6 +121,7 @@ export function ProjectWorkspace({
               refreshKey={assetRefreshKey}
               onSelectAsset={(assetId) => setSelectedAssetId(assetId)}
               onBack={handleAssetsPanelBack}
+              defaultOwnerEntityId={overviewAction?.destination === "assets" ? overviewAction.characterEntityId : null}
             />
             {selectedAssetId ? (
               <AssetInspector
@@ -131,8 +140,9 @@ export function ProjectWorkspace({
         {panelView === "production" ? (
           <ProductionWorkspace projectRootPath={project.rootPath} />
         ) : null}
-        {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} /> : null}
+        {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} initialTab={overviewAction?.id === "resolve_protected_tbd" ? "TBDs" : "Story"} /> : null}
         {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
+        {panelView === "cinema" ? <CinemaWorkspace projectRootPath={project.rootPath} action={overviewAction} /> : null}
       </section>
     </>
   );

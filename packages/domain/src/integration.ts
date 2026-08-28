@@ -5,7 +5,9 @@ export type ReadinessStatus = (typeof READINESS_STATUSES)[number];
 export interface OverviewAction {
   id: string;
   title: string;
-  destination: "canon" | "assets" | "production";
+  destination: "canon" | "assets" | "production" | "cinema";
+  characterEntityId: string | null;
+  sceneId: string | null;
 }
 
 export interface ReadinessStep {
@@ -47,4 +49,13 @@ export interface ProjectOverview {
   healthSummary: ProjectHealthSummary;
   recentActivity: ActivityItem[];
   activeJobs: BackgroundJobSummary[];
+  sceneReadiness: SceneReadiness[];
+}
+
+export interface SceneReadiness {
+  sceneId: string;
+  title: string;
+  status: ReadinessStatus;
+  detail: string;
+  action: OverviewAction | null;
 }

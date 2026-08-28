@@ -1,7 +1,7 @@
 use crate::db;
 use crate::error::AppError;
-use crate::project::service::ProjectService;
-use rusqlite::{params, Connection, OptionalExtension};
+use crate::project::{paths, repository as project_repository};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::Path;
 
@@ -19,6 +19,8 @@ pub struct OverviewAction {
     pub id: String,
     pub title: String,
     pub destination: String,
+    pub character_entity_id: Option<String>,
+    pub scene_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,14 +74,29 @@ pub struct ProjectOverview {
     pub health_summary: ProjectHealthSummary,
     pub recent_activity: Vec<ActivityItem>,
     pub active_jobs: Vec<BackgroundJobSummary>,
+    pub scene_readiness: Vec<SceneReadiness>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneReadiness {
+    pub scene_id: String,
+    pub title: String,
+    pub status: ReadinessStatus,
+    pub detail: String,
+    pub action: Option<OverviewAction>,
 }
 
 /// Produces a product-level read model from existing P0-P8 records. It does
 /// not persist a readiness state or rewrite exact scene references: a scene's
 /// pinned versions remain evidence even after their asset moves on.
 pub fn get_project_overview(project_root: &Path) -> Result<ProjectOverview, AppError> {
-    let project = ProjectService::open(project_root)?;
+    let manifest = paths::read_manifest(project_root)?;
     let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+    let project = project_repository::read_project(&conn)?;
+    if project.id != manifest.project_id {
+        return Err(AppError::ProjectIdentityMismatch);
+    }
     let readiness = derive_readiness(&conn, &project.id)?;
     let active_jobs = list_active_jobs(&conn, &project.id)?;
     let health_summary = ProjectHealthSummary {
@@ -92,11 +109,12 @@ pub fn get_project_overview(project_root: &Path) -> Result<ProjectOverview, AppE
         health_summary,
         recent_activity: list_recent_activity(&conn, &project.id)?,
         active_jobs,
+        scene_readiness: list_scene_readiness(&conn, &project.id)?,
     })
 }
 
 fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadiness, AppError> {
-    let characters = character_ids(conn, project_id)?;
+    let characters = character_readiness(conn, project_id)?;
     if characters.is_empty() {
         return Ok(with_next(
             vec![pending_step(
@@ -104,8 +122,10 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
                 "Story Canon",
                 "Create the story foundation before production.",
                 "canon",
+                None,
+                None,
             )],
-            action("story_canon", "Story Canon", "canon"),
+            action("story_canon", "Story Canon", "canon", None, None),
         ));
     }
 
@@ -114,17 +134,25 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
         "Story Canon",
         "A character production path is active.",
     )];
-    for character_id in &characters {
-        if !has_canonical_asset(conn, project_id, "face_lock", Some(character_id))? {
+    for character in &characters {
+        if !character.has_face {
             steps.push(pending_step(
                 "face_lock",
                 "Face Lock",
                 "Promote a canonical face for every character.",
-                "production",
+                "assets",
+                Some(&character.id),
+                None,
             ));
             return Ok(with_next(
                 steps,
-                action("face_lock", "Face Lock", "production"),
+                action(
+                    "face_lock",
+                    "Face Lock",
+                    "assets",
+                    Some(&character.id),
+                    None,
+                ),
             ));
         }
     }
@@ -134,17 +162,25 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
         "Every character has a canonical face reference.",
     ));
 
-    for character_id in &characters {
-        if !has_canonical_asset(conn, project_id, "outfit", Some(character_id))? {
+    for character in &characters {
+        if !character.has_look {
             steps.push(pending_step(
                 "character_look",
                 "Character Look",
                 "Promote a canonical look for every character.",
                 "assets",
+                Some(&character.id),
+                None,
             ));
             return Ok(with_next(
                 steps,
-                action("character_look", "Character Look", "assets"),
+                action(
+                    "character_look",
+                    "Character Look",
+                    "assets",
+                    Some(&character.id),
+                    None,
+                ),
             ));
         }
     }
@@ -154,17 +190,25 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
         "Every character has a canonical look reference.",
     ));
 
-    for character_id in &characters {
-        if !has_canonical_asset(conn, project_id, "character_sheet", Some(character_id))? {
+    for character in &characters {
+        if !character.has_sheet {
             steps.push(pending_step(
                 "character_sheet",
                 "Character Sheet",
                 "Promote a canonical sheet for every character.",
                 "assets",
+                Some(&character.id),
+                None,
             ));
             return Ok(with_next(
                 steps,
-                action("character_sheet", "Character Sheet", "assets"),
+                action(
+                    "character_sheet",
+                    "Character Sheet",
+                    "assets",
+                    Some(&character.id),
+                    None,
+                ),
             ));
         }
     }
@@ -180,10 +224,12 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
             "World Plate",
             "Promote a canonical world plate before staging scenes.",
             "assets",
+            None,
+            None,
         ));
         return Ok(with_next(
             steps,
-            action("world_plate", "World Plate", "assets"),
+            action("world_plate", "World Plate", "assets", None, None),
         ));
     }
     steps.push(complete_step(
@@ -192,41 +238,37 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
         "A canonical world plate is available.",
     ));
 
-    let scene_id = valid_scene_id(conn, project_id)?;
-    let Some(scene_id) = scene_id else {
+    let scenes = list_scene_readiness(conn, project_id)?;
+    if scenes.is_empty() {
         steps.push(pending_step(
             "scene",
             "Scene",
             "Stage a scene with pinned character references and a shot.",
-            "production",
+            "cinema",
+            None,
+            None,
         ));
-        return Ok(with_next(steps, action("scene", "Scene", "production")));
-    };
+        return Ok(with_next(
+            steps,
+            action("scene", "Scene", "cinema", None, None),
+        ));
+    }
     steps.push(complete_step(
         "scene",
         "Scene",
         "A staged scene has durable exact references.",
     ));
 
-    if has_compilation(conn, project_id, &scene_id)? {
-        steps.push(complete_step(
-            "cinema_compilation",
-            "Cinema Compilation",
-            "A provider-neutral cinema prompt was compiled and persisted.",
-        ));
-        return Ok(ProjectReadiness {
-            status: ReadinessStatus::Complete,
-            next_action: None,
-            steps,
-        });
-    }
-
-    if has_blocking_scene_tbd(conn, project_id, &scene_id)? {
+    if let Some(blocked) = scenes
+        .iter()
+        .find(|scene| scene.status == ReadinessStatus::Blocked)
+    {
         steps.push(blocked_step(
             "cinema_compilation",
             "Cinema Compilation",
             "A protected open TBD blocks this scene from compilation.",
             "canon",
+            Some(&blocked.scene_id),
         ));
         return Ok(ProjectReadiness {
             status: ReadinessStatus::Blocked,
@@ -234,21 +276,47 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
                 "resolve_protected_tbd",
                 "Resolve protected TBD",
                 "canon",
+                None,
+                Some(&blocked.scene_id),
             )),
             steps,
         });
     }
 
-    steps.push(pending_step(
+    if let Some(pending) = scenes
+        .iter()
+        .find(|scene| scene.status == ReadinessStatus::Pending)
+    {
+        steps.push(pending_step(
+            "cinema_compilation",
+            "Cinema Compilation",
+            "Compile the staged scene into a durable provider-neutral prompt.",
+            "cinema",
+            None,
+            Some(&pending.scene_id),
+        ));
+        return Ok(with_next(
+            steps,
+            action(
+                "cinema_compilation",
+                "Cinema Compilation",
+                "cinema",
+                None,
+                Some(&pending.scene_id),
+            ),
+        ));
+    }
+
+    steps.push(complete_step(
         "cinema_compilation",
         "Cinema Compilation",
-        "Compile the staged scene into a durable provider-neutral prompt.",
-        "production",
+        "Every staged scene has a provider-neutral cinema prompt.",
     ));
-    Ok(with_next(
+    Ok(ProjectReadiness {
+        status: ReadinessStatus::Complete,
+        next_action: None,
         steps,
-        action("cinema_compilation", "Cinema Compilation", "production"),
-    ))
+    })
 }
 
 fn with_next(steps: Vec<ReadinessStep>, next_action: OverviewAction) -> ProjectReadiness {
@@ -259,11 +327,19 @@ fn with_next(steps: Vec<ReadinessStep>, next_action: OverviewAction) -> ProjectR
     }
 }
 
-fn action(id: &str, title: &str, destination: &str) -> OverviewAction {
+fn action(
+    id: &str,
+    title: &str,
+    destination: &str,
+    character_entity_id: Option<&str>,
+    scene_id: Option<&str>,
+) -> OverviewAction {
     OverviewAction {
         id: id.into(),
         title: title.into(),
         destination: destination.into(),
+        character_entity_id: character_entity_id.map(str::to_string),
+        scene_id: scene_id.map(str::to_string),
     }
 }
 
@@ -277,17 +353,36 @@ fn complete_step(id: &str, title: &str, detail: &str) -> ReadinessStep {
     }
 }
 
-fn pending_step(id: &str, title: &str, detail: &str, destination: &str) -> ReadinessStep {
+fn pending_step(
+    id: &str,
+    title: &str,
+    detail: &str,
+    destination: &str,
+    character_entity_id: Option<&str>,
+    scene_id: Option<&str>,
+) -> ReadinessStep {
     ReadinessStep {
         id: id.into(),
         title: title.into(),
         status: ReadinessStatus::Pending,
         detail: detail.into(),
-        action: Some(action(id, title, destination)),
+        action: Some(action(
+            id,
+            title,
+            destination,
+            character_entity_id,
+            scene_id,
+        )),
     }
 }
 
-fn blocked_step(id: &str, title: &str, detail: &str, destination: &str) -> ReadinessStep {
+fn blocked_step(
+    id: &str,
+    title: &str,
+    detail: &str,
+    destination: &str,
+    scene_id: Option<&str>,
+) -> ReadinessStep {
     ReadinessStep {
         id: id.into(),
         title: title.into(),
@@ -297,15 +392,34 @@ fn blocked_step(id: &str, title: &str, detail: &str, destination: &str) -> Readi
             "resolve_protected_tbd",
             "Resolve protected TBD",
             destination,
+            None,
+            scene_id,
         )),
     }
 }
 
-fn character_ids(conn: &Connection, project_id: &str) -> Result<Vec<String>, AppError> {
-    let mut stmt = conn.prepare("SELECT id FROM canon_entities WHERE project_id = ?1 AND type = 'character' ORDER BY name COLLATE NOCASE, id")
+struct CharacterReadiness {
+    id: String,
+    has_face: bool,
+    has_look: bool,
+    has_sheet: bool,
+}
+
+fn character_readiness(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Vec<CharacterReadiness>, AppError> {
+    let mut stmt = conn.prepare("SELECT c.id, MAX(CASE WHEN a.type = 'face_lock' AND av.status = 'canonical' THEN 1 ELSE 0 END), MAX(CASE WHEN a.type = 'outfit' AND av.status = 'canonical' THEN 1 ELSE 0 END), MAX(CASE WHEN a.type = 'character_sheet' AND av.status = 'canonical' THEN 1 ELSE 0 END) FROM canon_entities c LEFT JOIN assets a ON a.project_id = c.project_id AND a.owner_entity_id = c.id LEFT JOIN asset_versions av ON av.id = a.canonical_version_id WHERE c.project_id = ?1 AND c.type = 'character' GROUP BY c.id ORDER BY c.name COLLATE NOCASE, c.id")
         .map_err(database)?;
     let rows = stmt
-        .query_map([project_id], |row| row.get(0))
+        .query_map([project_id], |row| {
+            Ok(CharacterReadiness {
+                id: row.get(0)?,
+                has_face: row.get::<_, i64>(1)? > 0,
+                has_look: row.get::<_, i64>(2)? > 0,
+                has_sheet: row.get::<_, i64>(3)? > 0,
+            })
+        })
         .map_err(database)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(database)
 }
@@ -323,33 +437,58 @@ fn has_canonical_asset(
     ).map_err(database)
 }
 
-fn valid_scene_id(conn: &Connection, project_id: &str) -> Result<Option<String>, AppError> {
-    conn.query_row(
-        "SELECT s.id FROM scenes s WHERE s.project_id = ?1 AND s.world_asset_version_id IS NOT NULL AND EXISTS(SELECT 1 FROM asset_versions av WHERE av.id = s.world_asset_version_id) AND EXISTS(SELECT 1 FROM scene_characters sc JOIN asset_versions look ON look.id = sc.look_asset_version_id WHERE sc.scene_id = s.id) AND EXISTS(SELECT 1 FROM shots sh WHERE sh.scene_id = s.id) ORDER BY s.created_at ASC, s.id ASC LIMIT 1",
-        [project_id],
-        |row| row.get(0),
-    ).optional().map_err(database)
-}
-
-fn has_compilation(conn: &Connection, project_id: &str, scene_id: &str) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM cinema_compilations WHERE project_id = ?1 AND scene_id = ?2)",
-        params![project_id, scene_id],
-        |row| row.get(0),
-    )
-    .map_err(database)
-}
-
-fn has_blocking_scene_tbd(
+fn list_scene_readiness(
     conn: &Connection,
     project_id: &str,
-    scene_id: &str,
-) -> Result<bool, AppError> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM canon_tbds t WHERE t.project_id = ?1 AND t.status = 'open' AND t.protected = 1 AND (t.canon_entity_id IS NULL OR EXISTS(SELECT 1 FROM scene_characters sc WHERE sc.scene_id = ?2 AND sc.character_entity_id = t.canon_entity_id)))",
-        params![project_id, scene_id],
-        |row| row.get(0),
-    ).map_err(database)
+) -> Result<Vec<SceneReadiness>, AppError> {
+    let mut stmt = conn.prepare("SELECT s.id, s.title, EXISTS(SELECT 1 FROM cinema_compilations cc WHERE cc.project_id = s.project_id AND cc.scene_id = s.id), EXISTS(SELECT 1 FROM canon_tbds t WHERE t.project_id = s.project_id AND t.status = 'open' AND t.protected = 1 AND (t.canon_entity_id IS NULL OR EXISTS(SELECT 1 FROM scene_characters sc WHERE sc.scene_id = s.id AND sc.character_entity_id = t.canon_entity_id))) FROM scenes s WHERE s.project_id = ?1 AND s.world_asset_version_id IS NOT NULL AND EXISTS(SELECT 1 FROM asset_versions av WHERE av.id = s.world_asset_version_id) AND EXISTS(SELECT 1 FROM scene_characters sc JOIN asset_versions look ON look.id = sc.look_asset_version_id WHERE sc.scene_id = s.id) AND EXISTS(SELECT 1 FROM shots sh WHERE sh.scene_id = s.id) ORDER BY s.created_at DESC, s.id DESC").map_err(database)?;
+    let rows = stmt
+        .query_map([project_id], |row| {
+            let id: String = row.get(0)?;
+            let title: String = row.get(1)?;
+            let compiled = row.get::<_, bool>(2)?;
+            let blocked = row.get::<_, bool>(3)?;
+            let (status, detail, action) = if blocked {
+                (
+                    ReadinessStatus::Blocked,
+                    "A protected open TBD blocks this scene from compilation.".to_string(),
+                    Some(action(
+                        "resolve_protected_tbd",
+                        "Resolve protected TBD",
+                        "canon",
+                        None,
+                        Some(&id),
+                    )),
+                )
+            } else if compiled {
+                (
+                    ReadinessStatus::Complete,
+                    "A provider-neutral cinema prompt was compiled and persisted.".to_string(),
+                    None,
+                )
+            } else {
+                (
+                    ReadinessStatus::Pending,
+                    "Compile this staged scene into a durable provider-neutral prompt.".to_string(),
+                    Some(action(
+                        "cinema_compilation",
+                        "Cinema Compilation",
+                        "cinema",
+                        None,
+                        Some(&id),
+                    )),
+                )
+            };
+            Ok(SceneReadiness {
+                scene_id: id,
+                title,
+                status,
+                detail,
+                action,
+            })
+        })
+        .map_err(database)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(database)
 }
 
 fn count_tbds(conn: &Connection, project_id: &str, protected_only: bool) -> Result<i64, AppError> {
