@@ -5,3 +5,4 @@ pub mod errors;
 pub mod models;
 pub mod normalizer;
 pub mod repository;
+pub mod workflow;

@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::skills::builtin::character_builder::builtin_character_builder;
+use crate::skills::builtin::visual_qa::builtin_visual_qa;
 use crate::skills::model::{SkillDefinition, SkillOperation};
 use crate::workflow::model::WorkflowStepDefinition;
 use semver::Version;
@@ -11,13 +12,13 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     pub fn builtin() -> Result<Self, AppError> {
-        let definition = builtin_character_builder();
-        validate_definition(&definition)?;
-
-        let key = registry_key(&definition.id, &definition.version);
-        Ok(Self {
-            skills: HashMap::from([(key, definition)]),
-        })
+        let definitions = [builtin_character_builder(), builtin_visual_qa()];
+        let mut skills = HashMap::new();
+        for definition in definitions {
+            validate_definition(&definition)?;
+            skills.insert(registry_key(&definition.id, &definition.version), definition);
+        }
+        Ok(Self { skills })
     }
 
     pub fn get(&self, skill_id: &str, version: &str) -> Result<&SkillDefinition, AppError> {
@@ -149,7 +150,10 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
         )));
     }
 
-    if operation.id == "character.create_face_lock"
+    if matches!(
+        operation.id.as_str(),
+        "character.create_face_lock" | "asset.run_visual_qa"
+    )
         && step_types
             != [
                 "validate_input",
@@ -184,14 +188,17 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
 
         match step {
             WorkflowStepDefinition::ResolveContext { resolver_id, .. }
-                if resolver_id != "character_face_lock_context" =>
+                if !matches!(
+                    resolver_id.as_str(),
+                    "character_face_lock_context" | "visual_qa_context"
+                ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
                     "unknown resolver: {resolver_id}"
                 )))
             }
             WorkflowStepDefinition::CompileRequest { compiler_id, .. }
-                if compiler_id != "character_face_lock_v1" =>
+                if !matches!(compiler_id.as_str(), "character_face_lock_v1" | "visual_qa_v1") =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
                     "unknown compiler: {compiler_id}"
@@ -244,7 +251,19 @@ mod tests {
         assert_eq!(skill.id, "character-builder");
         assert_eq!(skill.version, "1.0.0");
         assert_eq!(operation.id, "character.create_face_lock");
-        assert_eq!(registry.list().len(), 1);
+        assert_eq!(registry.list().len(), 2);
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_visual_qa_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("visual-qa", "1.0.0", "asset.run_visual_qa")
+            .unwrap();
+
+        assert_eq!(skill.id, "visual-qa");
+        assert_eq!(operation.input_schema_id, "run_visual_qa");
+        assert!(operation.expected_output.is_none());
     }
 
     #[test]

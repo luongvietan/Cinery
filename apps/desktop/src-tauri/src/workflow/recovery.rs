@@ -52,6 +52,13 @@ pub fn recover_interrupted_runs(project_root: &Path) -> Result<usize, AppError> 
         .map_err(db_error)?;
         append_event_in_transaction(&tx, run_id, "run_failed", None, Some(&payload), &now)?;
         tx.commit().map_err(db_error)?;
+        crate::qa::repository::fail_for_workflow(
+            &conn,
+            run_id,
+            "INTERRUPTED_DURING_STEP",
+            "Visual QA was interrupted by application shutdown",
+            &now,
+        )?;
     }
     Ok(run_ids.len())
 }

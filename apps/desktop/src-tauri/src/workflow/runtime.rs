@@ -51,6 +51,7 @@ impl WorkflowRuntime {
     ) -> Result<WorkflowRunDetail, AppError> {
         match operation.input_schema_id.as_str() {
             "create_face_lock" => validate_face_lock_input(&input)?,
+            "run_visual_qa" => validate_visual_qa_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -132,34 +133,49 @@ impl WorkflowRuntime {
                     resolver_id,
                     ..
                 } => {
-                    if resolver_id != "character_face_lock_context" {
-                        return Err(AppError::WorkflowResolverNotFound(resolver_id.clone()));
-                    }
                     let input: Value = serde_json::from_str(&detail.run.input_json)
                         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
-                    let report: crate::workflow::model::PrerequisiteReport = serde_json::from_str(
-                        detail
-                            .run
-                            .prerequisite_report_json
-                            .as_deref()
-                            .ok_or_else(|| {
-                                AppError::WorkflowRunInconsistent(
-                                    "missing prerequisite report".into(),
+                    let context_json = match resolver_id.as_str() {
+                        "character_face_lock_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail
+                                        .run
+                                        .prerequisite_report_json
+                                        .as_deref()
+                                        .ok_or_else(|| {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        })?,
                                 )
-                            })?,
-                    )
-                    .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
-                    let context = resolve_character_face_lock_context(
-                        &conn,
-                        &project.id,
-                        &detail.run.skill_id,
-                        &detail.run.skill_version,
-                        &detail.run.operation_id,
-                        &input,
-                        report,
-                    )?;
-                    let context_json = serde_json::to_string(&context)
-                        .map_err(|error| AppError::Database(error.to_string()))?;
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context = resolve_character_face_lock_context(
+                                &conn,
+                                &project.id,
+                                &detail.run.skill_id,
+                                &detail.run.skill_version,
+                                &detail.run.operation_id,
+                                &input,
+                                report,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "visual_qa_context" => {
+                            let context = crate::qa::workflow::resolve_and_persist(
+                                &conn,
+                                &project.id,
+                                workflow_run_id,
+                                &input,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
+                    };
                     complete_context_step(
                         &mut conn,
                         workflow_run_id,
@@ -172,22 +188,41 @@ impl WorkflowRuntime {
                     compiler_id,
                     ..
                 } => {
-                    if compiler_id != "character_face_lock_v1" {
-                        return Err(AppError::WorkflowCompilerNotFound(compiler_id.clone()));
-                    }
-                    let context: WorkflowContextSnapshot =
-                        serde_json::from_str(&load_context(&conn, workflow_run_id)?).map_err(
-                            |error| AppError::WorkflowRunInconsistent(error.to_string()),
-                        )?;
-                    let request = CharacterFaceLockCompiler.compile(
-                        workflow_run_id,
-                        skill,
-                        operation,
-                        &context,
-                    )?;
-                    write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
-                    let request_json = serde_json::to_string(&request)
-                        .map_err(|error| AppError::Database(error.to_string()))?;
+                    let context_json = load_context(&conn, workflow_run_id)?;
+                    let request_json = match compiler_id.as_str() {
+                        "character_face_lock_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = CharacterFaceLockCompiler.compile(
+                                workflow_run_id,
+                                skill,
+                                operation,
+                                &context,
+                            )?;
+                            write_run_artifacts(
+                                project_root,
+                                workflow_run_id,
+                                &context,
+                                &request,
+                            )?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "visual_qa_v1" => {
+                            let context: crate::qa::workflow::QaWorkflowContext =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            serde_json::to_string(&crate::qa::workflow::compile_request(
+                                project_root,
+                                &context,
+                            ))
+                            .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        _ => return Err(AppError::WorkflowCompilerNotFound(compiler_id.clone())),
+                    };
                     complete_step(
                         &mut conn,
                         workflow_run_id,
@@ -310,6 +345,7 @@ impl WorkflowRuntime {
             &now,
         )?;
         tx.commit().map_err(db_error)?;
+        crate::qa::repository::cancel_for_workflow(&conn, workflow_run_id, &now)?;
         WorkflowRepository::get_run(&conn, &project.id, workflow_run_id)
     }
 
@@ -334,6 +370,7 @@ impl WorkflowRuntime {
         tx.execute("UPDATE workflow_runs SET status = 'cancelled', completed_at = ?1, updated_at = ?1 WHERE id = ?2", params![now, workflow_run_id]).map_err(db_error)?;
         append_event_in_transaction(&tx, workflow_run_id, "run_cancelled", None, None, &now)?;
         tx.commit().map_err(db_error)?;
+        crate::qa::repository::cancel_for_workflow(&conn, workflow_run_id, &now)?;
         WorkflowRepository::get_run(&conn, &project.id, workflow_run_id)
     }
 
@@ -368,6 +405,147 @@ impl WorkflowRuntime {
     }
 }
 
+fn execute_visual_qa_ready(
+    conn: &mut Connection,
+    project_id: &str,
+    detail: WorkflowRunDetail,
+    operation: &crate::skills::model::SkillOperation,
+) -> Result<WorkflowRunDetail, AppError> {
+    let execute_index = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "execute" && step.status == "pending")
+        .map(|step| step.step_index)
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("execute step is missing".into()))?;
+    let request_json = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "compile_request")
+        .and_then(|step| step.output_json.clone())
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("compiled request is missing".into()))?;
+    let compiled: crate::qa::workflow::CompiledVisualQaRequest =
+        serde_json::from_str(&request_json)
+            .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let (execute_step_id, complete_step_id) = match (
+        operation.workflow.get(execute_index as usize),
+        operation.workflow.get(execute_index as usize + 1),
+    ) {
+        (
+            Some(crate::workflow::model::WorkflowStepDefinition::Execute { id, .. }),
+            Some(crate::workflow::model::WorkflowStepDefinition::Complete { id: complete_id }),
+        ) => (id.as_str(), complete_id.as_str()),
+        _ => {
+            return Err(AppError::WorkflowRunInconsistent(
+                "visual QA execute/complete definitions are missing".into(),
+            ))
+        }
+    };
+    let started_at = Utc::now().to_rfc3339();
+    let execution_payload = serde_json::json!({
+        "qaRunId": compiled.qa_run_id,
+        "executionLocation": compiled.execution_location,
+        "adapterId": compiled.adapter_id,
+        "modelId": compiled.model_id,
+    })
+    .to_string();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    tx.execute(
+        "UPDATE workflow_runs SET status = 'running', updated_at = ?1 WHERE id = ?2",
+        params![started_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    mark_step(&tx, &detail.run.id, execute_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(execute_step_id),
+        None,
+        &started_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_started",
+        Some(execute_step_id),
+        Some(&execution_payload),
+        &started_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+
+    let input: Value = serde_json::from_str(&detail.run.input_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let result = crate::qa::workflow::execute(conn, &input, &compiled)?;
+    let result_json =
+        serde_json::to_string(&result).map_err(|error| AppError::Database(error.to_string()))?;
+    let complete_index = execute_index + 1;
+    let completed_at = Utc::now().to_rfc3339();
+    let completed_payload = serde_json::json!({"qaRunId": result.qa_run_id}).to_string();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    mark_step(
+        &tx,
+        &detail.run.id,
+        execute_index,
+        "completed",
+        Some(&result_json),
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_completed",
+        Some(execute_step_id),
+        Some(&completed_payload),
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(execute_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "completed", None)?;
+    tx.execute(
+        "UPDATE workflow_runs
+         SET status = 'completed', current_step_index = ?1, completed_at = ?2, updated_at = ?2
+         WHERE id = ?3",
+        params![complete_index + 1, completed_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "run_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+    WorkflowRepository::get_run(conn, project_id, &detail.run.id)
+}
+
 fn execute_ready(
     conn: &mut Connection,
     project_root: &Path,
@@ -375,6 +553,9 @@ fn execute_ready(
     detail: WorkflowRunDetail,
     operation: &crate::skills::model::SkillOperation,
 ) -> Result<WorkflowRunDetail, AppError> {
+    if operation.id == "asset.run_visual_qa" {
+        return execute_visual_qa_ready(conn, project_id, detail, operation);
+    }
     let execute_index = detail
         .steps
         .iter()
@@ -833,6 +1014,13 @@ fn finalize_run_failure_if_running(
     tx.execute("UPDATE workflow_runs SET status = 'failed', failure_code = 'WORKFLOW_STEP_FAILED', failure_message = ?1, completed_at = ?2, updated_at = ?2 WHERE id = ?3", params![error.to_string(), now, run_id]).map_err(db_error)?;
     append_event_in_transaction(&tx, run_id, "run_failed", None, Some(&payload), &now)?;
     tx.commit().map_err(db_error)?;
+    crate::qa::repository::fail_for_workflow(
+        &conn,
+        run_id,
+        "WORKFLOW_STEP_FAILED",
+        &error.to_string(),
+        &now,
+    )?;
     Ok(())
 }
 fn validate_face_lock_input(input: &Value) -> Result<(), AppError> {
@@ -873,6 +1061,44 @@ fn validate_face_lock_input(input: &Value) -> Result<(), AppError> {
                 "visualSpec.{key} must be a non-empty string"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_visual_qa_input(input: &Value) -> Result<(), AppError> {
+    for key in ["projectRootPath", "assetVersionId", "adapterId"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    for forbidden in ["apiKey", "bearerToken", "credential", "secret"] {
+        if input.get(forbidden).is_some() {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{forbidden} must not be stored in workflow input"
+            )));
+        }
+    }
+    if let Some(expectations) = input.get("expectations") {
+        serde_json::from_value::<Vec<crate::qa::models::VisualExpectation>>(
+            expectations.clone(),
+        )
+        .map_err(|error| {
+            AppError::WorkflowInputInvalid(format!("invalid expectations: {error}"))
+        })?;
+    }
+    if input.get("adapterId").and_then(Value::as_str) == Some("mock")
+        && input.get("mockResponse").is_none()
+    {
+        return Err(AppError::WorkflowInputInvalid(
+            "mockResponse is required for mock QA".into(),
+        ));
     }
     Ok(())
 }

@@ -155,6 +155,142 @@ pub fn review_check(
     Ok(())
 }
 
+pub fn mark_run_running(
+    conn: &Connection,
+    qa_run_id: &str,
+    started_at: &str,
+) -> Result<(), AppError> {
+    let changed = conn
+        .execute(
+            "UPDATE qa_runs SET status = 'running', started_at = ?1
+             WHERE id = ?2 AND status = 'queued'",
+            params![started_at, qa_run_id],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(QaError::RunNotFound.into());
+    }
+    Ok(())
+}
+
+pub fn complete_run(
+    conn: &mut Connection,
+    qa_run_id: &str,
+    overall: super::models::QaOverallStatus,
+    raw_response_metadata: &serde_json::Value,
+    checks: &[QaCheckRecord],
+    completed_at: &str,
+) -> Result<(), AppError> {
+    let transaction = conn.transaction().map_err(db_error)?;
+    for check in checks {
+        transaction
+            .execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  confidence, observed, reason, repair_hint, review_status, review_note,
+                  reviewed_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    check.id,
+                    check.qa_run_id,
+                    check.check_id,
+                    check.check_type.as_str(),
+                    check.source.as_str(),
+                    check.requirement.to_string(),
+                    check.status.as_str(),
+                    check.confidence,
+                    check.observed,
+                    check.reason,
+                    check.repair_hint,
+                    check.review_status.as_str(),
+                    check.review_note,
+                    check.reviewed_at,
+                    check.created_at,
+                ],
+            )
+            .map_err(db_error)?;
+    }
+    let changed = transaction
+        .execute(
+            "UPDATE qa_runs
+             SET status = 'succeeded', overall_status = ?1, raw_response_metadata_json = ?2,
+                 error_code = NULL, error_message = NULL, completed_at = ?3
+             WHERE id = ?4 AND status = 'running'",
+            params![
+                overall.as_str(),
+                raw_response_metadata.to_string(),
+                completed_at,
+                qa_run_id
+            ],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(QaError::RunNotFound.into());
+    }
+    transaction.commit().map_err(db_error)
+}
+
+pub fn mark_run_failed(
+    conn: &Connection,
+    qa_run_id: &str,
+    error_code: &str,
+    error_message: &str,
+    raw_response_metadata: Option<&serde_json::Value>,
+    completed_at: &str,
+) -> Result<(), AppError> {
+    let changed = conn
+        .execute(
+            "UPDATE qa_runs
+             SET status = 'failed', overall_status = NULL, error_code = ?1, error_message = ?2,
+                 raw_response_metadata_json = ?3, completed_at = ?4
+             WHERE id = ?5 AND status IN ('queued', 'running')",
+            params![
+                error_code,
+                error_message,
+                raw_response_metadata.map(serde_json::Value::to_string),
+                completed_at,
+                qa_run_id
+            ],
+        )
+        .map_err(db_error)?;
+    if changed == 0 {
+        return Err(QaError::RunNotFound.into());
+    }
+    Ok(())
+}
+
+pub fn cancel_for_workflow(
+    conn: &Connection,
+    workflow_run_id: &str,
+    completed_at: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE qa_runs SET status = 'cancelled', completed_at = ?1
+         WHERE workflow_run_id = ?2 AND status IN ('queued', 'running')",
+        params![completed_at, workflow_run_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn fail_for_workflow(
+    conn: &Connection,
+    workflow_run_id: &str,
+    error_code: &str,
+    error_message: &str,
+    completed_at: &str,
+) -> Result<(), AppError> {
+    conn.execute(
+        "UPDATE qa_runs
+         SET status = 'failed', overall_status = NULL, error_code = ?1,
+             error_message = ?2, completed_at = ?3
+         WHERE workflow_run_id = ?4 AND status IN ('queued', 'running')",
+        params![error_code, error_message, completed_at, workflow_run_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
 fn list_checks(conn: &Connection, qa_run_id: &str) -> Result<Vec<QaCheckRecord>, AppError> {
     let mut statement = conn
         .prepare(
