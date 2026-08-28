@@ -65,6 +65,16 @@ pub fn run() {
       qa::commands::list_qa_runs,
       qa::commands::get_qa_run,
       qa::commands::review_qa_check,
+      cinema::commands::create_scene,
+      cinema::commands::list_scenes,
+      cinema::commands::get_scene,
+      cinema::commands::add_scene_character,
+      cinema::commands::add_scene_prop,
+      cinema::commands::create_shot,
+      cinema::commands::list_shots,
+      cinema::commands::compile_cinema,
+      cinema::commands::get_cinema_compilation,
+      cinema::commands::list_cinema_compilations,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

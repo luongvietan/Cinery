@@ -128,6 +128,34 @@ impl CinemaService {
         Ok(())
     }
 
+    /// Pins a canonical prop plate version into a scene.
+    pub fn add_prop_to_scene(
+        project_root: &Path,
+        scene_id: &str,
+        prop_asset_version_id: &str,
+    ) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
+        ensure_canonical_version(&conn, &project.id, prop_asset_version_id, &["prop_plate"])?;
+        let display_order: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM scene_props WHERE scene_id = ?1",
+                params![scene.id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        repository::add_scene_prop(
+            &conn,
+            &crate::cinema::model::ScenePropRecord {
+                scene_id: scene.id,
+                prop_asset_version_id: prop_asset_version_id.to_string(),
+                display_order,
+            },
+        )?;
+        Ok(())
+    }
+
     /// Creates a shot; when `ordering` is omitted the shot is appended after
     /// the scene's existing shots.
     pub fn create_shot(
