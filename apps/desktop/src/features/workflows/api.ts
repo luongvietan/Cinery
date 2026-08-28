@@ -93,3 +93,11 @@ export function validateProviderConfiguration(providerId: string): Promise<void>
 export function listProviderModels(providerId: string): Promise<string[]> {
   return invokeCommand("list_provider_models", { providerId });
 }
+
+export function cancelWorkflowExecution(projectRootPath: string, workflowRunId: string, stepId: string): Promise<WorkflowRunDetail> {
+  return invokeCommand("cancel_workflow_execution", { projectRootPath, workflowRunId, stepId });
+}
+
+export function retryWorkflowExecution(projectRootPath: string, workflowRunId: string, stepId: string): Promise<WorkflowRunDetail> {
+  return invokeCommand("retry_workflow_execution", { projectRootPath, workflowRunId, stepId });
+}

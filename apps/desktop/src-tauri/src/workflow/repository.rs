@@ -163,7 +163,8 @@ impl WorkflowRepository {
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| AppError::Database(error.to_string()))?;
 
-        Ok(WorkflowRunDetail { run, steps, events })
+        let provider_executions = crate::providers::repository::list_attempt_summaries(&conn, run_id)?;
+        Ok(WorkflowRunDetail { run, steps, events, provider_executions })
     }
 
     pub fn list_runs(

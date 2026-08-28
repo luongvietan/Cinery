@@ -11,7 +11,7 @@ use crate::workflow::model::{
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
 use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
-use crate::providers::repository::{create_attempt, next_attempt_number, persist_job, update_attempt_status};
+use crate::providers::repository::{append_audit_event, create_attempt, next_attempt_number, persist_job, update_attempt_status};
 use crate::providers::service::ProviderService;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -470,14 +470,23 @@ fn execute_ready(
             model_id,
             &idempotency_key,
         )?;
-        let outcome = ProviderService::execute_compiled_request(
+        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.queued", Some(&serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number})))?;
+        let outcome = match ProviderService::execute_compiled_request(
             &request,
             execute_step_id,
             &compiled_request_id,
             provider_id,
             model_id,
             attempt_number,
-        )?;
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                let _ = append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.failed", Some(&serde_json::json!({"error": error.to_string()})));
+                return Err(error);
+            }
+        };
         persist_job(
             conn,
             &attempt.id,
@@ -485,6 +494,7 @@ fn execute_ready(
             &outcome.submission.job.provider_job_id,
             "submitted",
         )?;
+        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.submitted", Some(&serde_json::json!({"providerJobId": outcome.submission.job.provider_job_id})))?;
         let asset_type = request.expected_output.asset_type.as_str();
         let owner_entity_id = request
             .expected_output
@@ -501,6 +511,7 @@ fn execute_ready(
             owner_entity_id,
         )?;
         update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"artifactPath": version.file_path})))?;
         crate::workflow::execution::ExecutionResult {
             kind: provider_id.into(),
             artifact_path: project_root.join(version.file_path),

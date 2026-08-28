@@ -36,6 +36,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 6,
         sql: include_str!("../../migrations/0006_provider_integrations.sql"),
     },
+    Migration {
+        version: 7,
+        sql: include_str!("../../migrations/0007_provider_audit_events.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -208,5 +212,13 @@ mod tests {
                 .unwrap();
             assert_eq!(exists, 1, "table {table} should exist");
         }
+        let audit_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'provider_audit_events'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(audit_exists, 1);
     }
 }

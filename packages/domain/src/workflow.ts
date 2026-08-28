@@ -212,6 +212,7 @@ export interface WorkflowRunDetail {
   run: WorkflowRunRecord;
   steps: WorkflowStepRecord[];
   events: WorkflowEventRecord[];
+  providerExecutions?: ProviderExecutionSummary[];
 }
 
 export type ProviderMediaType = "image" | "video";
@@ -244,4 +245,18 @@ export interface ProviderConfigurationStatus {
   credentialConfigured: boolean;
   credentialReference: string | null;
   defaultModel: string | null;
+}
+
+export interface ProviderExecutionSummary {
+  id: string;
+  stepDefinitionId: string;
+  attemptNumber: number;
+  providerId: string;
+  modelId: string;
+  adapterVersion: number;
+  status: ProviderLifecycle;
+  providerJobId: string | null;
+  normalizedErrorJson: string | null;
+  startedAt: string;
+  completedAt: string | null;
 }

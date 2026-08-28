@@ -314,6 +314,68 @@ pub fn latest_attempt(
     .map_err(db_error)
 }
 
+pub fn append_audit_event(
+    conn: &Connection,
+    execution_id: Option<&str>,
+    workflow_run_id: &str,
+    event_type: &str,
+    payload: Option<&serde_json::Value>,
+) -> Result<(), AppError> {
+    let payload_json = payload
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    conn.execute(
+        "INSERT INTO provider_audit_events
+         (id, execution_id, workflow_run_id, event_type, payload_json, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            ulid::Ulid::new().to_string(),
+            execution_id,
+            workflow_run_id,
+            event_type,
+            payload_json,
+            Utc::now().to_rfc3339(),
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn list_attempt_summaries(
+    conn: &Connection,
+    workflow_run_id: &str,
+) -> Result<Vec<crate::workflow::model::ProviderExecutionSummary>, AppError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, step_definition_id, attempt_number, provider_id, model_id,
+                    adapter_version, status, provider_job_id, normalized_error_json,
+                    started_at, completed_at
+             FROM workflow_step_executions WHERE workflow_run_id = ?1 ORDER BY attempt_number",
+        )
+        .map_err(db_error)?;
+    let result = statement
+        .query_map([workflow_run_id], |row| {
+            Ok(crate::workflow::model::ProviderExecutionSummary {
+                id: row.get(0)?,
+                step_definition_id: row.get(1)?,
+                attempt_number: row.get(2)?,
+                provider_id: row.get(3)?,
+                model_id: row.get(4)?,
+                adapter_version: row.get(5)?,
+                status: row.get(6)?,
+                provider_job_id: row.get(7)?,
+                normalized_error_json: row.get(8)?,
+                started_at: row.get(9)?,
+                completed_at: row.get(10)?,
+            })
+        })
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error);
+    result
+}
+
 fn row_to_provider_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfigRecord> {
     Ok(ProviderConfigRecord {
         provider_id: row.get(0)?,

@@ -1,5 +1,7 @@
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::providers::commands::retry_workflow_execution;
+use cinematic_desktop_lib::providers::commands::cancel_workflow_execution;
 use cinematic_desktop_lib::workflow::runtime::WorkflowRuntime;
 use rusqlite::params;
 use serde_json::json;
@@ -49,9 +51,11 @@ fn approved_mock_execution_persists_attempt_job_and_candidate_artifact() {
     let attempt_count: i64 = conn.query_row("SELECT COUNT(*) FROM workflow_step_executions WHERE workflow_run_id = ?1 AND status = 'succeeded'", [&created.run.id], |row| row.get(0)).unwrap();
     let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM provider_jobs", [], |row| row.get(0)).unwrap();
     let asset_version_count: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0)).unwrap();
+    let audit_event_count: i64 = conn.query_row("SELECT COUNT(*) FROM provider_audit_events WHERE workflow_run_id = ?1", [&created.run.id], |row| row.get(0)).unwrap();
     assert_eq!(attempt_count, 1);
     assert_eq!(job_count, 1);
     assert_eq!(asset_version_count, 1);
+    assert_eq!(audit_event_count, 3);
 }
 
 #[test]
@@ -74,4 +78,53 @@ fn recovery_preserves_a_durable_remote_job_for_reconciliation() {
     let recovered = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
     assert_eq!(recovered.run.status, "running");
     assert_eq!(recovered.steps.iter().find(|step| step.step_definition_id == "execute").unwrap().status, "running");
+}
+
+#[test]
+fn failed_provider_attempt_is_immutable_and_retry_creates_a_new_attempt() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.0.0",
+        "character.create_face_lock",
+        json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal","providerId":"missing","modelId":"missing-v1"}),
+    ).unwrap();
+    WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+    WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+    assert!(WorkflowRuntime::advance_run(&root, &created.run.id).is_err());
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let status: String = conn.query_row("SELECT status FROM workflow_step_executions WHERE workflow_run_id = ?1", [&created.run.id], |row| row.get(0)).unwrap();
+    assert_eq!(status, "failed");
+    drop(conn);
+
+    let retried = retry_workflow_execution(root.to_string_lossy().into(), created.run.id.clone(), "execute".into()).unwrap();
+    assert_eq!(retried.run.status, "ready_for_execution");
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let attempt_count: i64 = conn.query_row("SELECT COUNT(*) FROM workflow_step_executions WHERE workflow_run_id = ?1", [&created.run.id], |row| row.get(0)).unwrap();
+    assert_eq!(attempt_count, 2);
+}
+
+#[test]
+fn cancellation_marks_remote_attempt_cancelled_and_run_terminal() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.0.0",
+        "character.create_face_lock",
+        json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal"}),
+    ).unwrap();
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.execute("UPDATE workflow_runs SET status = 'running' WHERE id = ?1", [&created.run.id]).unwrap();
+    conn.execute("UPDATE workflow_steps SET status = 'running' WHERE workflow_run_id = ?1 AND step_definition_id = 'execute'", [&created.run.id]).unwrap();
+    conn.execute("INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id, provider_id, model_id, adapter_version, idempotency_key, status, provider_job_id, artifact_ids_json, started_at) VALUES ('execution-cancel', ?1, 'execute', 1, 'compiled', 'mock', 'mock-image-v1', 1, 'idempotency-cancel', 'running', 'remote-job-cancel', '[]', 'now')", [&created.run.id]).unwrap();
+    drop(conn);
+
+    let cancelled = cancel_workflow_execution(root.to_string_lossy().into(), created.run.id.clone(), "execute".into()).unwrap();
+    assert_eq!(cancelled.run.status, "cancelled");
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let status: String = conn.query_row("SELECT status FROM workflow_step_executions WHERE id = 'execution-cancel'", [], |row| row.get(0)).unwrap();
+    assert_eq!(status, "cancelled");
 }

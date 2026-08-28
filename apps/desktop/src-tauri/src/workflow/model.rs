@@ -306,8 +306,25 @@ pub struct WorkflowEventRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProviderExecutionSummary {
+    pub id: String,
+    pub step_definition_id: String,
+    pub attempt_number: i64,
+    pub provider_id: String,
+    pub model_id: String,
+    pub adapter_version: i64,
+    pub status: String,
+    pub provider_job_id: Option<String>,
+    pub normalized_error_json: Option<String>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowRunDetail {
     pub run: WorkflowRunRecord,
     pub steps: Vec<WorkflowStepRecord>,
     pub events: Vec<WorkflowEventRecord>,
+    pub provider_executions: Vec<ProviderExecutionSummary>,
 }
