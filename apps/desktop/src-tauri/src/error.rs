@@ -192,6 +192,24 @@ pub enum AppError {
 
     #[error("Visual QA data is invalid: {0}")]
     InvalidQaData(String),
+
+    #[error("Scene was not found")]
+    SceneNotFound,
+
+    #[error("Shot was not found")]
+    ShotNotFound,
+
+    #[error("Cinema compilation was not found")]
+    CinemaCompilationNotFound,
+
+    #[error("Scene title must contain 1 to 160 characters")]
+    InvalidSceneTitle,
+
+    #[error("Shot intent must contain 1 to 240 characters")]
+    InvalidShotIntent,
+
+    #[error("Cinema duration is invalid: {0}")]
+    InvalidCinemaDuration(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

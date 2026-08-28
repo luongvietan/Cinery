@@ -1,5 +1,6 @@
 pub mod assets;
 pub mod canon;
+pub mod cinema;
 pub mod db;
 pub mod error;
 pub mod generation;

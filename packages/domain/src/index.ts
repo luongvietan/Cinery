@@ -8,6 +8,7 @@ export * from "./workflow";
 export * from "./execution";
 export * from "./generation";
 export * from "./lineage";
+export * from "./cinema";
 
 export interface AppCommandError {
   code: string;
