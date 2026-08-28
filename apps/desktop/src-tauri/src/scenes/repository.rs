@@ -284,6 +284,42 @@ pub fn delete_scene_character_by_scene_and_character(
     Ok(existing)
 }
 
+pub fn update_scene_character_look(
+    tx: &Transaction<'_>,
+    assignment_id: &str,
+    new_version_id: &str,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scene_characters SET look_asset_version_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![new_version_id, updated_at, assignment_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneCharacterNotFound);
+    }
+    Ok(())
+}
+
+pub fn update_scene_character_sheet(
+    tx: &Transaction<'_>,
+    assignment_id: &str,
+    new_version_id: Option<&str>,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scene_characters SET sheet_asset_version_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![new_version_id, updated_at, assignment_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneCharacterNotFound);
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Scene Props
 // ---------------------------------------------------------------------------
@@ -374,6 +410,37 @@ pub fn delete_scene_prop_by_version(
     tx.execute("DELETE FROM scene_props WHERE id = ?1", params![existing.id])
         .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(existing)
+}
+
+pub fn get_scene_prop(
+    conn: &Connection,
+    assignment_id: &str,
+) -> Result<ScenePropAssignment, AppError> {
+    conn.query_row(
+        "SELECT id, scene_id, prop_asset_version_id, label, notes, created_at FROM scene_props WHERE id = ?1",
+        params![assignment_id],
+        row_to_prop,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))?
+    .ok_or(AppError::ScenePropNotFound)
+}
+
+pub fn update_scene_prop_version(
+    tx: &Transaction<'_>,
+    assignment_id: &str,
+    new_version_id: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scene_props SET prop_asset_version_id = ?1 WHERE id = ?2",
+            params![new_version_id, assignment_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::ScenePropNotFound);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

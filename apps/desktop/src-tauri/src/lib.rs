@@ -83,6 +83,11 @@ pub fn run() {
       scenes::commands::add_scene_prop,
       scenes::commands::remove_scene_prop,
       scenes::commands::list_scene_props,
+      scenes::commands::resolve_scene_references,
+      scenes::commands::upgrade_scene_world_reference,
+      scenes::commands::upgrade_scene_character_look_reference,
+      scenes::commands::upgrade_scene_character_sheet_reference,
+      scenes::commands::upgrade_scene_prop_reference,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

@@ -195,3 +195,44 @@ pub struct SceneReadiness {
     pub blockers: Vec<SceneReadinessBlocker>,
     pub warnings: Vec<SceneReadinessWarning>,
 }
+
+// ---------------------------------------------------------------------------
+// Resolved scene references (derived, never stored)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedSceneReference {
+    pub asset_id: String,
+    pub pinned_version_id: String,
+    pub current_canonical_version_id: Option<String>,
+    pub health: SceneReferenceHealth,
+    pub version_number: i64,
+    pub status: String,
+    pub file_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedCharacterReference {
+    pub assignment_id: String,
+    pub character_entity_id: String,
+    pub look: ResolvedSceneReference,
+    pub sheet: Option<ResolvedSceneReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedPropReference {
+    pub assignment_id: String,
+    pub reference: ResolvedSceneReference,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedSceneReferences {
+    pub scene_id: String,
+    pub world: Option<ResolvedSceneReference>,
+    pub characters: Vec<ResolvedCharacterReference>,
+    pub props: Vec<ResolvedPropReference>,
+}

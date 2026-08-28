@@ -1,6 +1,9 @@
 use crate::error::AppCommandError;
 use crate::project::service as project_service;
-use crate::scenes::model::{Scene, SceneCharacterAssignment, ScenePropAssignment};
+use crate::scenes::model::{
+    ResolvedSceneReference, ResolvedSceneReferences, Scene, SceneCharacterAssignment,
+    ScenePropAssignment,
+};
 use crate::scenes::service::SceneService;
 use std::path::PathBuf;
 
@@ -147,4 +150,59 @@ pub fn list_scene_props(
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
     SceneService::list_scene_props(&root, &scene_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn resolve_scene_references(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<ResolvedSceneReferences, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::resolve_scene_references(&root, &scene_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn upgrade_scene_world_reference(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<ResolvedSceneReference, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::upgrade_scene_world_reference(&root, &scene_id).map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn upgrade_scene_character_look_reference(
+    project_root_path: String,
+    scene_id: String,
+    assignment_id: String,
+) -> Result<ResolvedSceneReference, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::upgrade_scene_character_look_reference(&root, &scene_id, &assignment_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn upgrade_scene_character_sheet_reference(
+    project_root_path: String,
+    scene_id: String,
+    assignment_id: String,
+) -> Result<ResolvedSceneReference, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::upgrade_scene_character_sheet_reference(&root, &scene_id, &assignment_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn upgrade_scene_prop_reference(
+    project_root_path: String,
+    scene_id: String,
+    assignment_id: String,
+) -> Result<ResolvedSceneReference, AppCommandError> {
+    project_service::validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    SceneService::upgrade_scene_prop_reference(&root, &scene_id, &assignment_id).map_err(Into::into)
 }

@@ -4,8 +4,9 @@ use crate::db;
 use crate::error::AppError;
 use crate::project::service::ProjectService;
 use crate::scenes::model::{
-    Scene, SceneCharacterAssignment, ScenePropAssignment, SceneReferenceAction, SceneReferenceEvent,
-    SceneReferenceKind,
+    ResolvedCharacterReference, ResolvedPropReference, ResolvedSceneReference,
+    ResolvedSceneReferences, Scene, SceneCharacterAssignment, ScenePropAssignment,
+    SceneReferenceAction, SceneReferenceEvent, SceneReferenceHealth, SceneReferenceKind,
 };
 use crate::scenes::repository as scenes_repository;
 use crate::worlds::repository as worlds_repository;
@@ -565,6 +566,999 @@ impl SceneService {
         }
         scenes_repository::list_scene_props(&conn, scene_id)
     }
+
+    // -----------------------------------------------------------------------
+    // Reference health resolver (read-only, never mutates)
+    // -----------------------------------------------------------------------
+
+    /// Resolves the health of every exact reference pinned to a Scene.
+    ///
+    /// This function is *read-only* and must never executeUPDATE/DELETE.
+    /// It derives health from the current canonical pointers and validates
+    /// ownership/type/file invariants.
+    pub fn resolve_scene_references(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<ResolvedSceneReferences, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+
+        let world = if let Some(pinned) = &scene.world_asset_version_id {
+            Some(Self::resolve_world_ref(&conn, project_root, pinned, &scene)?)
+        } else {
+            None
+        };
+
+        let char_assignments = scenes_repository::list_scene_characters(&conn, scene_id)?;
+        let mut characters = Vec::new();
+        for assignment in char_assignments {
+            let look = Self::resolve_character_look_ref(
+                &conn,
+                project_root,
+                &assignment.look_asset_version_id,
+                &scene,
+                &assignment,
+            )?;
+            let sheet = if let Some(sheet_id) = &assignment.sheet_asset_version_id {
+                Some(Self::resolve_character_sheet_ref(
+                    &conn,
+                    project_root,
+                    sheet_id,
+                    &scene,
+                    &assignment,
+                )?)
+            } else {
+                None
+            };
+            characters.push(ResolvedCharacterReference {
+                assignment_id: assignment.id.clone(),
+                character_entity_id: assignment.character_entity_id.clone(),
+                look,
+                sheet,
+            });
+        }
+
+        let prop_assignments = scenes_repository::list_scene_props(&conn, scene_id)?;
+        let mut props = Vec::new();
+        for assignment in prop_assignments {
+            let reference = Self::resolve_prop_ref(
+                &conn,
+                project_root,
+                &assignment.prop_asset_version_id,
+                &scene,
+            )?;
+            props.push(ResolvedPropReference {
+                assignment_id: assignment.id.clone(),
+                reference,
+            });
+        }
+
+        Ok(ResolvedSceneReferences {
+            scene_id: scene.id,
+            world,
+            characters,
+            props,
+        })
+    }
+
+    fn resolve_world_ref(
+        conn: &rusqlite::Connection,
+        project_root: &Path,
+        pinned_version_id: &str,
+        scene: &Scene,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        // Try to load pinned version
+        let version_opt = asset_repository::get_asset_version_by_id(conn, pinned_version_id)?;
+        let Some(version) = version_opt else {
+            return Ok(ResolvedSceneReference {
+                asset_id: String::new(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: None,
+                health: SceneReferenceHealth::Broken,
+                version_number: 0,
+                status: "unknown".to_string(),
+                file_path: String::new(),
+            });
+        };
+
+        // Try to load asset
+        let asset = match asset_repository::get_asset(conn, &version.asset_id) {
+            Ok(a) => a,
+            Err(_) => {
+                return Ok(ResolvedSceneReference {
+                    asset_id: version.asset_id.clone(),
+                    pinned_version_id: pinned_version_id.to_string(),
+                    current_canonical_version_id: None,
+                    health: SceneReferenceHealth::Broken,
+                    version_number: version.version_number,
+                    status: version.status.clone(),
+                    file_path: version.file_path.clone(),
+                });
+            }
+        };
+
+        // Validate invariants
+        let mut broken = false;
+        if asset.project_id != scene.project_id {
+            broken = true;
+        }
+        if asset.asset_type != "world_plate" {
+            broken = true;
+        }
+        if let Some(world_id) = &scene.world_id {
+            if asset.owner_entity_id.as_deref() != Some(world_id.as_str()) {
+                // also verify world.asset matches? Load world to double-check
+                // If asset id mismatches world plate asset, treat as broken
+                // Try to fetch world
+                match worlds_repository::get_world(conn, world_id) {
+                    Ok(w) => {
+                        if w.world_plate_asset_id != asset.id {
+                            broken = true;
+                        }
+                    }
+                    Err(_) => broken = true,
+                }
+            }
+        } else {
+            broken = true;
+        }
+        // File existence
+        if !project_root.join(&version.file_path).exists() {
+            broken = true;
+        }
+
+        if broken {
+            return Ok(ResolvedSceneReference {
+                asset_id: asset.id.clone(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: asset.canonical_version_id.clone(),
+                health: SceneReferenceHealth::Broken,
+                version_number: version.version_number,
+                status: version.status.clone(),
+                file_path: version.file_path.clone(),
+            });
+        }
+
+        // Determine health based on canonical pointer
+        let current_canonical = asset.canonical_version_id.clone();
+        let health = match &current_canonical {
+            None => SceneReferenceHealth::Historical,
+            Some(canonical_id) => {
+                // Validate canonical exists
+                let canonical_opt =
+                    asset_repository::get_asset_version_by_id(conn, canonical_id)?;
+                let Some(canonical_ver) = canonical_opt else {
+                    // Canonical pointer broken -> treat as Broken
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                };
+                if canonical_ver.status != "canonical" {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                }
+                if canonical_id == pinned_version_id {
+                    SceneReferenceHealth::Current
+                } else {
+                    SceneReferenceHealth::UpgradeAvailable
+                }
+            }
+        };
+
+        Ok(ResolvedSceneReference {
+            asset_id: asset.id.clone(),
+            pinned_version_id: pinned_version_id.to_string(),
+            current_canonical_version_id: current_canonical,
+            health,
+            version_number: version.version_number,
+            status: version.status.clone(),
+            file_path: version.file_path.clone(),
+        })
+    }
+
+    fn resolve_character_look_ref(
+        conn: &rusqlite::Connection,
+        project_root: &Path,
+        pinned_version_id: &str,
+        scene: &Scene,
+        assignment: &SceneCharacterAssignment,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let version_opt = asset_repository::get_asset_version_by_id(conn, pinned_version_id)?;
+        let Some(version) = version_opt else {
+            return Ok(ResolvedSceneReference {
+                asset_id: String::new(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: None,
+                health: SceneReferenceHealth::Broken,
+                version_number: 0,
+                status: "unknown".to_string(),
+                file_path: String::new(),
+            });
+        };
+        let asset = match asset_repository::get_asset(conn, &version.asset_id) {
+            Ok(a) => a,
+            Err(_) => {
+                return Ok(ResolvedSceneReference {
+                    asset_id: version.asset_id.clone(),
+                    pinned_version_id: pinned_version_id.to_string(),
+                    current_canonical_version_id: None,
+                    health: SceneReferenceHealth::Broken,
+                    version_number: version.version_number,
+                    status: version.status.clone(),
+                    file_path: version.file_path.clone(),
+                });
+            }
+        };
+
+        let mut broken = false;
+        if asset.project_id != scene.project_id {
+            broken = true;
+        }
+        if matches!(
+            asset.asset_type.as_str(),
+            "world_plate" | "prop_plate" | "shot_keyframe"
+        ) {
+            broken = true;
+        }
+        if asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            broken = true;
+        }
+        // Character entity must exist and be character type
+        match canon_repository::get_entity(conn, &assignment.character_entity_id) {
+            Ok(ent) => {
+                if ent.entity_type != "character" || ent.project_id != scene.project_id {
+                    broken = true;
+                }
+            }
+            Err(_) => broken = true,
+        }
+        if !project_root.join(&version.file_path).exists() {
+            broken = true;
+        }
+
+        if broken {
+            return Ok(ResolvedSceneReference {
+                asset_id: asset.id.clone(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: asset.canonical_version_id.clone(),
+                health: SceneReferenceHealth::Broken,
+                version_number: version.version_number,
+                status: version.status.clone(),
+                file_path: version.file_path.clone(),
+            });
+        }
+
+        let current_canonical = asset.canonical_version_id.clone();
+        let health = match &current_canonical {
+            None => SceneReferenceHealth::Historical,
+            Some(canonical_id) => {
+                let canonical_opt =
+                    asset_repository::get_asset_version_by_id(conn, canonical_id)?;
+                let Some(canonical_ver) = canonical_opt else {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                };
+                if canonical_ver.status != "canonical" {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                }
+                if canonical_id == pinned_version_id {
+                    SceneReferenceHealth::Current
+                } else {
+                    SceneReferenceHealth::UpgradeAvailable
+                }
+            }
+        };
+
+        Ok(ResolvedSceneReference {
+            asset_id: asset.id.clone(),
+            pinned_version_id: pinned_version_id.to_string(),
+            current_canonical_version_id: current_canonical,
+            health,
+            version_number: version.version_number,
+            status: version.status.clone(),
+            file_path: version.file_path.clone(),
+        })
+    }
+
+    fn resolve_character_sheet_ref(
+        conn: &rusqlite::Connection,
+        project_root: &Path,
+        pinned_version_id: &str,
+        scene: &Scene,
+        assignment: &SceneCharacterAssignment,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let version_opt = asset_repository::get_asset_version_by_id(conn, pinned_version_id)?;
+        let Some(version) = version_opt else {
+            return Ok(ResolvedSceneReference {
+                asset_id: String::new(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: None,
+                health: SceneReferenceHealth::Broken,
+                version_number: 0,
+                status: "unknown".to_string(),
+                file_path: String::new(),
+            });
+        };
+        let asset = match asset_repository::get_asset(conn, &version.asset_id) {
+            Ok(a) => a,
+            Err(_) => {
+                return Ok(ResolvedSceneReference {
+                    asset_id: version.asset_id.clone(),
+                    pinned_version_id: pinned_version_id.to_string(),
+                    current_canonical_version_id: None,
+                    health: SceneReferenceHealth::Broken,
+                    version_number: version.version_number,
+                    status: version.status.clone(),
+                    file_path: version.file_path.clone(),
+                });
+            }
+        };
+
+        let mut broken = false;
+        if asset.project_id != scene.project_id {
+            broken = true;
+        }
+        if asset.asset_type != "character_sheet" && asset.asset_type != "outfit" {
+            broken = true;
+        }
+        if asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            broken = true;
+        }
+        match canon_repository::get_entity(conn, &assignment.character_entity_id) {
+            Ok(ent) => {
+                if ent.entity_type != "character" || ent.project_id != scene.project_id {
+                    broken = true;
+                }
+            }
+            Err(_) => broken = true,
+        }
+        if !project_root.join(&version.file_path).exists() {
+            broken = true;
+        }
+
+        if broken {
+            return Ok(ResolvedSceneReference {
+                asset_id: asset.id.clone(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: asset.canonical_version_id.clone(),
+                health: SceneReferenceHealth::Broken,
+                version_number: version.version_number,
+                status: version.status.clone(),
+                file_path: version.file_path.clone(),
+            });
+        }
+
+        let current_canonical = asset.canonical_version_id.clone();
+        let health = match &current_canonical {
+            None => SceneReferenceHealth::Historical,
+            Some(canonical_id) => {
+                let canonical_opt =
+                    asset_repository::get_asset_version_by_id(conn, canonical_id)?;
+                let Some(canonical_ver) = canonical_opt else {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                };
+                if canonical_ver.status != "canonical" {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                }
+                if canonical_id == pinned_version_id {
+                    SceneReferenceHealth::Current
+                } else {
+                    SceneReferenceHealth::UpgradeAvailable
+                }
+            }
+        };
+
+        Ok(ResolvedSceneReference {
+            asset_id: asset.id.clone(),
+            pinned_version_id: pinned_version_id.to_string(),
+            current_canonical_version_id: current_canonical,
+            health,
+            version_number: version.version_number,
+            status: version.status.clone(),
+            file_path: version.file_path.clone(),
+        })
+    }
+
+    fn resolve_prop_ref(
+        conn: &rusqlite::Connection,
+        project_root: &Path,
+        pinned_version_id: &str,
+        scene: &Scene,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let version_opt = asset_repository::get_asset_version_by_id(conn, pinned_version_id)?;
+        let Some(version) = version_opt else {
+            return Ok(ResolvedSceneReference {
+                asset_id: String::new(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: None,
+                health: SceneReferenceHealth::Broken,
+                version_number: 0,
+                status: "unknown".to_string(),
+                file_path: String::new(),
+            });
+        };
+        let asset = match asset_repository::get_asset(conn, &version.asset_id) {
+            Ok(a) => a,
+            Err(_) => {
+                return Ok(ResolvedSceneReference {
+                    asset_id: version.asset_id.clone(),
+                    pinned_version_id: pinned_version_id.to_string(),
+                    current_canonical_version_id: None,
+                    health: SceneReferenceHealth::Broken,
+                    version_number: version.version_number,
+                    status: version.status.clone(),
+                    file_path: version.file_path.clone(),
+                });
+            }
+        };
+
+        let mut broken = false;
+        if asset.project_id != scene.project_id {
+            broken = true;
+        }
+        if asset.asset_type != "prop_plate" {
+            broken = true;
+        }
+        if !project_root.join(&version.file_path).exists() {
+            broken = true;
+        }
+
+        if broken {
+            return Ok(ResolvedSceneReference {
+                asset_id: asset.id.clone(),
+                pinned_version_id: pinned_version_id.to_string(),
+                current_canonical_version_id: asset.canonical_version_id.clone(),
+                health: SceneReferenceHealth::Broken,
+                version_number: version.version_number,
+                status: version.status.clone(),
+                file_path: version.file_path.clone(),
+            });
+        }
+
+        let current_canonical = asset.canonical_version_id.clone();
+        let health = match &current_canonical {
+            None => SceneReferenceHealth::Historical,
+            Some(canonical_id) => {
+                let canonical_opt =
+                    asset_repository::get_asset_version_by_id(conn, canonical_id)?;
+                let Some(canonical_ver) = canonical_opt else {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                };
+                if canonical_ver.status != "canonical" {
+                    return Ok(ResolvedSceneReference {
+                        asset_id: asset.id.clone(),
+                        pinned_version_id: pinned_version_id.to_string(),
+                        current_canonical_version_id: current_canonical.clone(),
+                        health: SceneReferenceHealth::Broken,
+                        version_number: version.version_number,
+                        status: version.status.clone(),
+                        file_path: version.file_path.clone(),
+                    });
+                }
+                if canonical_id == pinned_version_id {
+                    SceneReferenceHealth::Current
+                } else {
+                    SceneReferenceHealth::UpgradeAvailable
+                }
+            }
+        };
+
+        Ok(ResolvedSceneReference {
+            asset_id: asset.id.clone(),
+            pinned_version_id: pinned_version_id.to_string(),
+            current_canonical_version_id: current_canonical,
+            health,
+            version_number: version.version_number,
+            status: version.status.clone(),
+            file_path: version.file_path.clone(),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Explicit upgrade operations (mutating, transactional, exactly one ref)
+    // -----------------------------------------------------------------------
+
+    pub fn upgrade_scene_world_reference(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+
+        // 1. load scene
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        let pinned_id = scene
+            .world_asset_version_id
+            .clone()
+            .ok_or_else(|| AppError::SceneReferenceBroken("no world reference to upgrade".to_string()))?;
+
+        // 2. load pinned version
+        let pinned_version = asset_repository::get_asset_version_by_id(&conn, &pinned_id)?
+            .ok_or_else(|| AppError::SceneReferenceBroken(format!("pinned world version {pinned_id} not found")))?;
+
+        // 3. find conceptual Asset
+        let asset = asset_repository::get_asset(&conn, &pinned_version.asset_id).map_err(|_| {
+            AppError::SceneReferenceBroken(format!("asset {} not found", pinned_version.asset_id))
+        })?;
+        if asset.project_id != project.id {
+            return Err(AppError::SceneReferenceBroken("world asset project mismatch".to_string()));
+        }
+        if asset.asset_type != "world_plate" {
+            return Err(AppError::SceneReferenceBroken("world asset type mismatch".to_string()));
+        }
+        if let Some(world_id) = &scene.world_id {
+            if asset.owner_entity_id.as_deref() != Some(world_id.as_str()) {
+                return Err(AppError::SceneReferenceBroken("world asset owner mismatch".to_string()));
+            }
+            // also verify world.asset matches
+            let world = worlds_repository::get_world(&conn, world_id)?;
+            if world.world_plate_asset_id != asset.id {
+                return Err(AppError::SceneReferenceBroken("world plate asset mismatch".to_string()));
+            }
+        } else {
+            return Err(AppError::SceneReferenceBroken("scene has no world_id".to_string()));
+        }
+        if !project_root.join(&pinned_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("pinned world file missing".to_string()));
+        }
+
+        // 4. resolve current canonical
+        let canonical_id = asset.canonical_version_id.clone().ok_or_else(|| {
+            AppError::SceneReferenceCanonicalMissing(format!(
+                "world asset {} has no canonical version",
+                asset.id
+            ))
+        })?;
+
+        // 5. validate ownership/type already done for asset, but also canonical version
+        let canonical_version = asset_repository::get_asset_version_by_id(&conn, &canonical_id)?
+            .ok_or_else(|| {
+                AppError::SceneReferenceBroken(format!("canonical version {canonical_id} not found"))
+            })?;
+        if canonical_version.asset_id != asset.id {
+            return Err(AppError::SceneReferenceBroken("canonical asset mismatch".to_string()));
+        }
+        if canonical_version.status != "canonical" {
+            return Err(AppError::SceneReferenceBroken("canonical status not canonical".to_string()));
+        }
+        if !project_root.join(&canonical_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("canonical world file missing".to_string()));
+        }
+
+        // 6. fail if no canonical already handled, 7. fail if already current
+        if pinned_id == canonical_id {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
+        }
+
+        // 8. begin transaction
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        // Re-validate scene exists inside tx (optional but consistent)
+        let current = scenes_repository::get_scene(&tx, scene_id)?;
+        if current.world_asset_version_id.as_deref() != Some(pinned_id.as_str()) {
+            // Concurrent modification: pinned changed, treat as already current or broken
+            // For simplicity, check if now already canonical
+            if current.world_asset_version_id.as_deref() == Some(canonical_id.as_str()) {
+                return Err(AppError::SceneReferenceAlreadyCurrent);
+            }
+        }
+
+        let now = Utc::now().to_rfc3339();
+        // 9. update exactly one Scene reference
+        scenes_repository::update_scene_world(
+            &tx,
+            scene_id,
+            scene.world_id.as_deref(),
+            Some(&canonical_id),
+            &now,
+        )?;
+
+        // 10. create one scene_reference_event
+        let event = SceneReferenceEvent {
+            id: Ulid::new().to_string(),
+            scene_id: scene_id.to_string(),
+            reference_kind: SceneReferenceKind::World,
+            assignment_id: None,
+            action: SceneReferenceAction::Upgrade,
+            from_version_id: Some(pinned_id.clone()),
+            to_version_id: Some(canonical_id.clone()),
+            created_at: now.clone(),
+        };
+        scenes_repository::insert_reference_event(&tx, &event)?;
+
+        // 11. commit
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        // 12. return updated reference health (should be current)
+        let mut conn2 = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn2)?;
+        let updated_scene = scenes_repository::get_scene(&conn2, scene_id)?;
+        let new_pinned = updated_scene
+            .world_asset_version_id
+            .clone()
+            .ok_or_else(|| AppError::SceneReferenceBroken("world reference missing after upgrade".to_string()))?;
+        // Resolve newly pinned reference
+        Self::resolve_world_ref(&conn2, project_root, &new_pinned, &updated_scene)
+    }
+
+    pub fn upgrade_scene_character_look_reference(
+        project_root: &Path,
+        scene_id: &str,
+        assignment_id: &str,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        let assignment = scenes_repository::get_scene_character(&conn, assignment_id)?;
+        if assignment.scene_id != scene_id {
+            return Err(AppError::SceneCharacterNotFound);
+        }
+
+        let pinned_id = assignment.look_asset_version_id.clone();
+        let pinned_version = asset_repository::get_asset_version_by_id(&conn, &pinned_id)?
+            .ok_or_else(|| AppError::SceneReferenceBroken(format!("pinned look version {pinned_id} not found")))?;
+        let asset = asset_repository::get_asset(&conn, &pinned_version.asset_id).map_err(|_| {
+            AppError::SceneReferenceBroken(format!("asset {} not found", pinned_version.asset_id))
+        })?;
+        if asset.project_id != project.id {
+            return Err(AppError::SceneReferenceBroken("look asset project mismatch".to_string()));
+        }
+        if matches!(
+            asset.asset_type.as_str(),
+            "world_plate" | "prop_plate" | "shot_keyframe"
+        ) {
+            return Err(AppError::SceneReferenceBroken("look asset type mismatch".to_string()));
+        }
+        if asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            return Err(AppError::SceneReferenceBroken("look asset owner mismatch".to_string()));
+        }
+        match canon_repository::get_entity(&conn, &assignment.character_entity_id) {
+            Ok(ent) => {
+                if ent.entity_type != "character" || ent.project_id != project.id {
+                    return Err(AppError::SceneReferenceBroken("character entity mismatch".to_string()));
+                }
+            }
+            Err(_) => return Err(AppError::SceneReferenceBroken("character entity not found".to_string())),
+        }
+        if !project_root.join(&pinned_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("pinned look file missing".to_string()));
+        }
+
+        let canonical_id = asset.canonical_version_id.clone().ok_or_else(|| {
+            AppError::SceneReferenceCanonicalMissing(format!(
+                "look asset {} has no canonical version",
+                asset.id
+            ))
+        })?;
+        let canonical_version = asset_repository::get_asset_version_by_id(&conn, &canonical_id)?
+            .ok_or_else(|| {
+                AppError::SceneReferenceBroken(format!("canonical version {canonical_id} not found"))
+            })?;
+        if canonical_version.asset_id != asset.id {
+            return Err(AppError::SceneReferenceBroken("canonical asset mismatch".to_string()));
+        }
+        if canonical_version.status != "canonical" {
+            return Err(AppError::SceneReferenceBroken("canonical status not canonical".to_string()));
+        }
+        if canonical_version.asset_id != pinned_version.asset_id {
+            return Err(AppError::SceneReferenceBroken("canonical asset id mismatch".to_string()));
+        }
+        // Validate canonical still owned by same character
+        let canonical_asset = asset_repository::get_asset(&conn, &canonical_version.asset_id)?;
+        if canonical_asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            return Err(AppError::SceneReferenceBroken("canonical look owner mismatch".to_string()));
+        }
+        if !project_root.join(&canonical_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("canonical look file missing".to_string()));
+        }
+
+        if pinned_id == canonical_id {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let current = scenes_repository::get_scene_character(&tx, assignment_id)?;
+        if current.look_asset_version_id != pinned_id {
+            if current.look_asset_version_id == canonical_id {
+                return Err(AppError::SceneReferenceAlreadyCurrent);
+            }
+        }
+        let now = Utc::now().to_rfc3339();
+        scenes_repository::update_scene_character_look(&tx, assignment_id, &canonical_id, &now)?;
+        let event = SceneReferenceEvent {
+            id: Ulid::new().to_string(),
+            scene_id: scene_id.to_string(),
+            reference_kind: SceneReferenceKind::CharacterLook,
+            assignment_id: Some(assignment_id.to_string()),
+            action: SceneReferenceAction::Upgrade,
+            from_version_id: Some(pinned_id.clone()),
+            to_version_id: Some(canonical_id.clone()),
+            created_at: now.clone(),
+        };
+        scenes_repository::insert_reference_event(&tx, &event)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut conn2 = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn2)?;
+        let updated = scenes_repository::get_scene_character(&conn2, assignment_id)?;
+        let scene2 = scenes_repository::get_scene(&conn2, scene_id)?;
+        Self::resolve_character_look_ref(
+            &conn2,
+            project_root,
+            &updated.look_asset_version_id,
+            &scene2,
+            &updated,
+        )
+    }
+
+    pub fn upgrade_scene_character_sheet_reference(
+        project_root: &Path,
+        scene_id: &str,
+        assignment_id: &str,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        let assignment = scenes_repository::get_scene_character(&conn, assignment_id)?;
+        if assignment.scene_id != scene_id {
+            return Err(AppError::SceneCharacterNotFound);
+        }
+        let pinned_id = assignment
+            .sheet_asset_version_id
+            .clone()
+            .ok_or_else(|| AppError::SceneReferenceBroken("no sheet reference to upgrade".to_string()))?;
+
+        let pinned_version = asset_repository::get_asset_version_by_id(&conn, &pinned_id)?
+            .ok_or_else(|| AppError::SceneReferenceBroken(format!("pinned sheet version {pinned_id} not found")))?;
+        let asset = asset_repository::get_asset(&conn, &pinned_version.asset_id).map_err(|_| {
+            AppError::SceneReferenceBroken(format!("asset {} not found", pinned_version.asset_id))
+        })?;
+        if asset.project_id != project.id {
+            return Err(AppError::SceneReferenceBroken("sheet asset project mismatch".to_string()));
+        }
+        if asset.asset_type != "character_sheet" && asset.asset_type != "outfit" {
+            return Err(AppError::SceneReferenceBroken("sheet asset type mismatch".to_string()));
+        }
+        if asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            return Err(AppError::SceneReferenceBroken("sheet asset owner mismatch".to_string()));
+        }
+        match canon_repository::get_entity(&conn, &assignment.character_entity_id) {
+            Ok(ent) => {
+                if ent.entity_type != "character" || ent.project_id != project.id {
+                    return Err(AppError::SceneReferenceBroken("character entity mismatch".to_string()));
+                }
+            }
+            Err(_) => return Err(AppError::SceneReferenceBroken("character entity not found".to_string())),
+        }
+        if !project_root.join(&pinned_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("pinned sheet file missing".to_string()));
+        }
+
+        let canonical_id = asset.canonical_version_id.clone().ok_or_else(|| {
+            AppError::SceneReferenceCanonicalMissing(format!(
+                "sheet asset {} has no canonical version",
+                asset.id
+            ))
+        })?;
+        let canonical_version = asset_repository::get_asset_version_by_id(&conn, &canonical_id)?
+            .ok_or_else(|| {
+                AppError::SceneReferenceBroken(format!("canonical version {canonical_id} not found"))
+            })?;
+        if canonical_version.asset_id != asset.id {
+            return Err(AppError::SceneReferenceBroken("canonical asset mismatch".to_string()));
+        }
+        if canonical_version.status != "canonical" {
+            return Err(AppError::SceneReferenceBroken("canonical status not canonical".to_string()));
+        }
+        let canonical_asset = asset_repository::get_asset(&conn, &canonical_version.asset_id)?;
+        if canonical_asset.owner_entity_id.as_deref() != Some(assignment.character_entity_id.as_str()) {
+            return Err(AppError::SceneReferenceBroken("canonical sheet owner mismatch".to_string()));
+        }
+        if !project_root.join(&canonical_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("canonical sheet file missing".to_string()));
+        }
+
+        if pinned_id == canonical_id {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let current = scenes_repository::get_scene_character(&tx, assignment_id)?;
+        if current.sheet_asset_version_id.as_deref() != Some(pinned_id.as_str()) {
+            if current.sheet_asset_version_id.as_deref() == Some(canonical_id.as_str()) {
+                return Err(AppError::SceneReferenceAlreadyCurrent);
+            }
+        }
+        let now = Utc::now().to_rfc3339();
+        scenes_repository::update_scene_character_sheet(&tx, assignment_id, Some(&canonical_id), &now)?;
+        let event = SceneReferenceEvent {
+            id: Ulid::new().to_string(),
+            scene_id: scene_id.to_string(),
+            reference_kind: SceneReferenceKind::CharacterSheet,
+            assignment_id: Some(assignment_id.to_string()),
+            action: SceneReferenceAction::Upgrade,
+            from_version_id: Some(pinned_id.clone()),
+            to_version_id: Some(canonical_id.clone()),
+            created_at: now.clone(),
+        };
+        scenes_repository::insert_reference_event(&tx, &event)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut conn2 = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn2)?;
+        let updated = scenes_repository::get_scene_character(&conn2, assignment_id)?;
+        let scene2 = scenes_repository::get_scene(&conn2, scene_id)?;
+        let new_sheet_id = updated
+            .sheet_asset_version_id
+            .clone()
+            .ok_or_else(|| AppError::SceneReferenceBroken("sheet missing after upgrade".to_string()))?;
+        Self::resolve_character_sheet_ref(&conn2, project_root, &new_sheet_id, &scene2, &updated)
+    }
+
+    pub fn upgrade_scene_prop_reference(
+        project_root: &Path,
+        scene_id: &str,
+        assignment_id: &str,
+    ) -> Result<ResolvedSceneReference, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn)?;
+
+        let scene = scenes_repository::get_scene(&conn, scene_id)?;
+        if scene.project_id != project.id {
+            return Err(AppError::SceneNotFound);
+        }
+        let assignment = scenes_repository::get_scene_prop(&conn, assignment_id)?;
+        if assignment.scene_id != scene_id {
+            return Err(AppError::ScenePropNotFound);
+        }
+        let pinned_id = assignment.prop_asset_version_id.clone();
+        let pinned_version = asset_repository::get_asset_version_by_id(&conn, &pinned_id)?
+            .ok_or_else(|| AppError::SceneReferenceBroken(format!("pinned prop version {pinned_id} not found")))?;
+        let asset = asset_repository::get_asset(&conn, &pinned_version.asset_id).map_err(|_| {
+            AppError::SceneReferenceBroken(format!("asset {} not found", pinned_version.asset_id))
+        })?;
+        if asset.project_id != project.id {
+            return Err(AppError::SceneReferenceBroken("prop asset project mismatch".to_string()));
+        }
+        if asset.asset_type != "prop_plate" {
+            return Err(AppError::SceneReferenceBroken("prop asset type mismatch".to_string()));
+        }
+        if !project_root.join(&pinned_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("pinned prop file missing".to_string()));
+        }
+
+        let canonical_id = asset.canonical_version_id.clone().ok_or_else(|| {
+            AppError::SceneReferenceCanonicalMissing(format!(
+                "prop asset {} has no canonical version",
+                asset.id
+            ))
+        })?;
+        let canonical_version = asset_repository::get_asset_version_by_id(&conn, &canonical_id)?
+            .ok_or_else(|| {
+                AppError::SceneReferenceBroken(format!("canonical version {canonical_id} not found"))
+            })?;
+        if canonical_version.asset_id != asset.id {
+            return Err(AppError::SceneReferenceBroken("canonical asset mismatch".to_string()));
+        }
+        if canonical_version.status != "canonical" {
+            return Err(AppError::SceneReferenceBroken("canonical status not canonical".to_string()));
+        }
+        if !project_root.join(&canonical_version.file_path).exists() {
+            return Err(AppError::SceneReferenceBroken("canonical prop file missing".to_string()));
+        }
+
+        if pinned_id == canonical_id {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
+        }
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let current = scenes_repository::get_scene_prop(&tx, assignment_id)?;
+        if current.prop_asset_version_id != pinned_id {
+            if current.prop_asset_version_id == canonical_id {
+                return Err(AppError::SceneReferenceAlreadyCurrent);
+            }
+        }
+        scenes_repository::update_scene_prop_version(&tx, assignment_id, &canonical_id)?;
+        let now = Utc::now().to_rfc3339();
+        let event = SceneReferenceEvent {
+            id: Ulid::new().to_string(),
+            scene_id: scene_id.to_string(),
+            reference_kind: SceneReferenceKind::Prop,
+            assignment_id: Some(assignment_id.to_string()),
+            action: SceneReferenceAction::Upgrade,
+            from_version_id: Some(pinned_id.clone()),
+            to_version_id: Some(canonical_id.clone()),
+            created_at: now.clone(),
+        };
+        scenes_repository::insert_reference_event(&tx, &event)?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+
+        let mut conn2 = db::open_existing_connection(&project_root.join("project.db"))?;
+        crate::db::migrations::run_migrations(&mut conn2)?;
+        let updated = scenes_repository::get_scene_prop(&conn2, assignment_id)?;
+        let scene2 = scenes_repository::get_scene(&conn2, scene_id)?;
+        Self::resolve_prop_ref(&conn2, project_root, &updated.prop_asset_version_id, &scene2)
+    }
 }
 
 #[cfg(test)]
@@ -1059,5 +2053,475 @@ mod tests {
         // Should have at least pin and remove
         assert!(events.iter().any(|e| e.action == SceneReferenceAction::Pin && e.reference_kind == SceneReferenceKind::World && e.to_version_id.as_deref() == Some(v1.as_str())));
         assert!(events.iter().any(|e| e.action == SceneReferenceAction::Remove && e.reference_kind == SceneReferenceKind::World && e.from_version_id.as_deref() == Some(v1.as_str())));
+    }
+
+    // -----------------------------------------------------------------------
+    // Task 7: Reference health resolver + explicit upgrade
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolve_health_current_world() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [10, 20, 30, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        let w = resolved.world.expect("world should be Some");
+        assert_eq!(w.pinned_version_id, v1);
+        assert_eq!(w.health, SceneReferenceHealth::Current);
+        assert_eq!(w.current_canonical_version_id.as_deref(), Some(v1.as_str()));
+        assert_eq!(w.asset_id, world.world_plate_asset_id);
+        assert!(w.version_number >= 1);
+        assert_eq!(w.status, "canonical");
+        assert!(!w.file_path.is_empty());
+        // Resolver must not have mutated scene
+        let after = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(after.world_asset_version_id.as_deref(), Some(v1.as_str()));
+        // Calling again should be idempotent
+        let resolved2 = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(resolved2.world.unwrap().health, SceneReferenceHealth::Current);
+    }
+
+    #[test]
+    fn resolve_health_upgrade_available_world() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [10, 10, 10, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Promote V02
+        let src2 = f.write_png(&f.root.join("tmp_sources_world"), "world-v02.png", [20, 20, 20, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &world.world_plate_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        let w = resolved.world.unwrap();
+        assert_eq!(w.pinned_version_id, v1);
+        assert_eq!(w.health, SceneReferenceHealth::UpgradeAvailable);
+        assert_eq!(w.current_canonical_version_id.as_deref(), Some(v2.id.as_str()));
+        // Scene still pinned to old
+        let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(fetched.world_asset_version_id.as_deref(), Some(v1.as_str()));
+    }
+
+    #[test]
+    fn resolve_health_historical_world() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Clear canonical pointer to simulate historical (no current canonical)
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute(
+                "UPDATE assets SET canonical_version_id = NULL WHERE id = ?1",
+                rusqlite::params![world.world_plate_asset_id],
+            )
+            .unwrap();
+        }
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        let w = resolved.world.unwrap();
+        assert_eq!(w.pinned_version_id, v1);
+        assert_eq!(w.health, SceneReferenceHealth::Historical);
+        assert!(w.current_canonical_version_id.is_none());
+        // Pinned version still valid
+        assert_eq!(w.status, "canonical");
+    }
+
+    #[test]
+    fn resolve_health_broken_world_file_missing() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [9, 9, 9, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Delete underlying file
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            let ver = asset_repository::get_asset_version_by_id(&conn, &v1).unwrap().unwrap();
+            let path = f.root.join(&ver.file_path);
+            std::fs::remove_file(&path).unwrap();
+            assert!(!path.exists());
+        }
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        let w = resolved.world.unwrap();
+        assert_eq!(w.pinned_version_id, v1);
+        assert_eq!(w.health, SceneReferenceHealth::Broken);
+    }
+
+    #[test]
+    fn resolve_health_broken_world_owner_mismatch() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let _v1 = f.create_world_plate_canonical(&world, [1, 2, 3, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Corrupt reference to point to nonexistent version (broken)
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+            conn.execute(
+                "UPDATE scenes SET world_asset_version_id = 'nonexistent-bogus-id' WHERE id = ?1",
+                rusqlite::params![scene.id],
+            )
+            .unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        }
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        let w = resolved.world.unwrap();
+        assert_eq!(w.health, SceneReferenceHealth::Broken);
+        assert_eq!(w.pinned_version_id, "nonexistent-bogus-id");
+    }
+
+    #[test]
+    fn resolve_health_character_and_prop_mixed() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let wv = f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let character = f.create_character("Mara");
+        let (_a, look_v1) = f.create_look_canonical(&character.id, "MARA-LOOK", [2, 2, 2, 255]);
+        let (_a2, prop_v1) = f.create_prop_canonical("PROP-A", [3, 3, 3, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let char_assign =
+            SceneService::add_scene_character(&f.root, &scene.id, &character.id, &look_v1, None, None).unwrap();
+        let prop_assign = SceneService::add_scene_prop(&f.root, &scene.id, &prop_v1, None, None).unwrap();
+        // All current
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(resolved.world.unwrap().health, SceneReferenceHealth::Current);
+        assert_eq!(resolved.characters.len(), 1);
+        assert_eq!(resolved.characters[0].look.health, SceneReferenceHealth::Current);
+        assert!(resolved.characters[0].sheet.is_none());
+        assert_eq!(resolved.props.len(), 1);
+        assert_eq!(resolved.props[0].reference.health, SceneReferenceHealth::Current);
+        assert_eq!(resolved.props[0].assignment_id, prop_assign.id);
+        assert_eq!(resolved.characters[0].assignment_id, char_assign.id);
+        // Now promote a new world version only
+        let src2 = f.write_png(&f.root.join("tmp_sources_world"), "world-v02-2.png", [9, 9, 9, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &world.world_plate_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        let resolved2 = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(resolved2.world.unwrap().health, SceneReferenceHealth::UpgradeAvailable);
+        assert_eq!(resolved2.characters[0].look.health, SceneReferenceHealth::Current);
+        assert_eq!(resolved2.props[0].reference.health, SceneReferenceHealth::Current);
+        // Ensure resolver didn't mutate pins
+        let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(fetched.world_asset_version_id.as_deref(), Some(wv.as_str()));
+        let chars = SceneService::list_scene_characters(&f.root, &scene.id).unwrap();
+        assert_eq!(chars[0].look_asset_version_id, look_v1);
+    }
+
+    #[test]
+    fn upgrade_world_from_v01_to_v02_creates_event() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [10, 10, 10, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let src2 = f.write_png(&f.root.join("tmp_sources_world"), "world-v02-up.png", [20, 20, 20, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &world.world_plate_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        // Pre-check health
+        let pre = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(pre.world.unwrap().health, SceneReferenceHealth::UpgradeAvailable);
+        // Upgrade
+        let upgraded = SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap();
+        assert_eq!(upgraded.pinned_version_id, v2.id);
+        assert_eq!(upgraded.health, SceneReferenceHealth::Current);
+        assert_eq!(upgraded.current_canonical_version_id.as_deref(), Some(v2.id.as_str()));
+        // Scene now points to V02
+        let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(fetched.world_asset_version_id.as_deref(), Some(v2.id.as_str()));
+        // Event created
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let upgrade = events
+            .iter()
+            .find(|e| e.action == SceneReferenceAction::Upgrade && e.reference_kind == SceneReferenceKind::World)
+            .expect("upgrade event");
+        assert_eq!(upgrade.from_version_id.as_deref(), Some(v1.as_str()));
+        assert_eq!(upgrade.to_version_id.as_deref(), Some(v2.id.as_str()));
+        assert!(upgrade.assignment_id.is_none());
+        // After upgrade health current
+        let post = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(post.world.unwrap().health, SceneReferenceHealth::Current);
+    }
+
+    #[test]
+    fn upgrade_character_look_from_v01_to_v02() {
+        let f = Fixture::new();
+        let character = f.create_character("Mara");
+        let (asset_id, v1) = f.create_look_canonical(&character.id, "MARA-LOOK", [10, 20, 30, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        let assign = SceneService::add_scene_character(&f.root, &scene.id, &character.id, &v1, None, None).unwrap();
+        // Promote V02
+        let src2 = f.write_png(&f.root.join("tmp_sources_look"), "mara-look-v02-up.png", [40, 50, 60, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        let pre = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(pre.characters[0].look.health, SceneReferenceHealth::UpgradeAvailable);
+        let upgraded = SceneService::upgrade_scene_character_look_reference(&f.root, &scene.id, &assign.id).unwrap();
+        assert_eq!(upgraded.pinned_version_id, v2.id);
+        assert_eq!(upgraded.health, SceneReferenceHealth::Current);
+        // Verify assignment updated
+        let list = SceneService::list_scene_characters(&f.root, &scene.id).unwrap();
+        assert_eq!(list[0].look_asset_version_id, v2.id);
+        // Event
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let ev = events
+            .iter()
+            .find(|e| e.action == SceneReferenceAction::Upgrade && e.reference_kind == SceneReferenceKind::CharacterLook)
+            .unwrap();
+        assert_eq!(ev.from_version_id.as_deref(), Some(v1.as_str()));
+        assert_eq!(ev.to_version_id.as_deref(), Some(v2.id.as_str()));
+        assert_eq!(ev.assignment_id.as_deref(), Some(assign.id.as_str()));
+    }
+
+    #[test]
+    fn upgrade_character_sheet_from_v01_to_v02() {
+        let f = Fixture::new();
+        let character = f.create_character("Mara");
+        let (_look_asset, look_v) = f.create_look_canonical(&character.id, "MARA-LOOK", [1, 2, 3, 255]);
+        let (sheet_asset_id, sheet_v1) = f.create_sheet_canonical(&character.id, "MARA-SHEET", [4, 5, 6, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        let assign = SceneService::add_scene_character(
+            &f.root,
+            &scene.id,
+            &character.id,
+            &look_v,
+            Some(sheet_v1.as_str()),
+            None,
+        )
+        .unwrap();
+        // Promote sheet V02
+        let src2 = f.write_png(&f.root.join("tmp_sources_sheet"), "sheet-v02-up.png", [9, 9, 9, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &sheet_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        let pre = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(
+            pre.characters[0].sheet.as_ref().unwrap().health,
+            SceneReferenceHealth::UpgradeAvailable
+        );
+        let upgraded =
+            SceneService::upgrade_scene_character_sheet_reference(&f.root, &scene.id, &assign.id).unwrap();
+        assert_eq!(upgraded.pinned_version_id, v2.id);
+        assert_eq!(upgraded.health, SceneReferenceHealth::Current);
+        let list = SceneService::list_scene_characters(&f.root, &scene.id).unwrap();
+        assert_eq!(list[0].sheet_asset_version_id.as_deref(), Some(v2.id.as_str()));
+        // Look should remain unchanged
+        assert_eq!(list[0].look_asset_version_id, look_v);
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let ev = events
+            .iter()
+            .find(|e| e.reference_kind == SceneReferenceKind::CharacterSheet && e.action == SceneReferenceAction::Upgrade)
+            .unwrap();
+        assert_eq!(ev.from_version_id.as_deref(), Some(sheet_v1.as_str()));
+        assert_eq!(ev.to_version_id.as_deref(), Some(v2.id.as_str()));
+    }
+
+    #[test]
+    fn upgrade_prop_from_v01_to_v02() {
+        let f = Fixture::new();
+        let (asset_id, v1) = f.create_prop_canonical("PROP-A", [10, 20, 30, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        let assign = SceneService::add_scene_prop(&f.root, &scene.id, &v1, None, None).unwrap();
+        let src2 = f.write_png(&f.root.join("tmp_sources_prop"), "prop-v02-up.png", [20, 20, 20, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        let pre = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(pre.props[0].reference.health, SceneReferenceHealth::UpgradeAvailable);
+        let upgraded = SceneService::upgrade_scene_prop_reference(&f.root, &scene.id, &assign.id).unwrap();
+        assert_eq!(upgraded.pinned_version_id, v2.id);
+        assert_eq!(upgraded.health, SceneReferenceHealth::Current);
+        let list = SceneService::list_scene_props(&f.root, &scene.id).unwrap();
+        assert_eq!(list[0].prop_asset_version_id, v2.id);
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let ev = events
+            .iter()
+            .find(|e| e.reference_kind == SceneReferenceKind::Prop && e.action == SceneReferenceAction::Upgrade)
+            .unwrap();
+        assert_eq!(ev.from_version_id.as_deref(), Some(v1.as_str()));
+        assert_eq!(ev.to_version_id.as_deref(), Some(v2.id.as_str()));
+    }
+
+    #[test]
+    fn world_upgrade_does_not_change_other_refs() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let wv1 = f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let character = f.create_character("Mara");
+        let (_la, look_v1) = f.create_look_canonical(&character.id, "MARA-LOOK", [2, 2, 2, 255]);
+        let (_sa, sheet_v1) = f.create_sheet_canonical(&character.id, "MARA-SHEET", [3, 3, 3, 255]);
+        let (_pa, prop_v1) = f.create_prop_canonical("PROP-A", [4, 4, 4, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let char_assign = SceneService::add_scene_character(
+            &f.root,
+            &scene.id,
+            &character.id,
+            &look_v1,
+            Some(sheet_v1.as_str()),
+            None,
+        )
+        .unwrap();
+        let prop_assign = SceneService::add_scene_prop(&f.root, &scene.id, &prop_v1, None, None).unwrap();
+        // Promote world V02
+        let src2 = f.write_png(&f.root.join("tmp_sources_world"), "world-v02-iso.png", [9, 9, 9, 255]);
+        let wv2 = AssetService::import_asset_version(&f.root, &world.world_plate_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &wv2.id).unwrap();
+        // Capture before
+        let before_chars = SceneService::list_scene_characters(&f.root, &scene.id).unwrap();
+        let before_props = SceneService::list_scene_props(&f.root, &scene.id).unwrap();
+        // Upgrade world only
+        SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap();
+        // Verify world upgraded
+        let after_scene = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(after_scene.world_asset_version_id.as_deref(), Some(wv2.id.as_str()));
+        // Other refs unchanged
+        let after_chars = SceneService::list_scene_characters(&f.root, &scene.id).unwrap();
+        assert_eq!(after_chars[0].look_asset_version_id, before_chars[0].look_asset_version_id);
+        assert_eq!(
+            after_chars[0].sheet_asset_version_id,
+            before_chars[0].sheet_asset_version_id
+        );
+        assert_eq!(after_chars[0].id, char_assign.id);
+        let after_props = SceneService::list_scene_props(&f.root, &scene.id).unwrap();
+        assert_eq!(after_props[0].prop_asset_version_id, before_props[0].prop_asset_version_id);
+        assert_eq!(after_props[0].id, prop_assign.id);
+        // No extra upgrade events for other kinds
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let world_upgrades = events
+            .iter()
+            .filter(|e| e.reference_kind == SceneReferenceKind::World && e.action == SceneReferenceAction::Upgrade)
+            .count();
+        assert_eq!(world_upgrades, 1);
+        let look_upgrades = events
+            .iter()
+            .filter(|e| e.reference_kind == SceneReferenceKind::CharacterLook && e.action == SceneReferenceAction::Upgrade)
+            .count();
+        assert_eq!(look_upgrades, 0);
+        let prop_upgrades = events
+            .iter()
+            .filter(|e| e.reference_kind == SceneReferenceKind::Prop && e.action == SceneReferenceAction::Upgrade)
+            .count();
+        assert_eq!(prop_upgrades, 0);
+        // Verify wv1 vs wv2
+        assert_ne!(wv1, wv2.id);
+    }
+
+    #[test]
+    fn upgrade_noop_when_already_current() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Already current, resolve should be current
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(resolved.world.unwrap().health, SceneReferenceHealth::Current);
+        let err = SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap_err();
+        assert!(matches!(err, AppError::SceneReferenceAlreadyCurrent));
+        assert_eq!(err.code(), "SCENE_REFERENCE_ALREADY_CURRENT");
+        // Also for character
+        let character = f.create_character("Mara");
+        let (_a, look_v) = f.create_look_canonical(&character.id, "MARA-LOOK", [1, 1, 1, 255]);
+        let scene2 = SceneService::create_scene(&f.root, "Scene2", "Summary").unwrap();
+        let assign = SceneService::add_scene_character(&f.root, &scene2.id, &character.id, &look_v, None, None).unwrap();
+        let err2 = SceneService::upgrade_scene_character_look_reference(&f.root, &scene2.id, &assign.id).unwrap_err();
+        assert!(matches!(err2, AppError::SceneReferenceAlreadyCurrent));
+        // Prop
+        let (_pa, prop_v) = f.create_prop_canonical("PROP-B", [2, 2, 2, 255]);
+        let scene3 = SceneService::create_scene(&f.root, "Scene3", "Summary").unwrap();
+        let prop_assign = SceneService::add_scene_prop(&f.root, &scene3.id, &prop_v, None, None).unwrap();
+        let err3 = SceneService::upgrade_scene_prop_reference(&f.root, &scene3.id, &prop_assign.id).unwrap_err();
+        assert!(matches!(err3, AppError::SceneReferenceAlreadyCurrent));
+        // Ensure no extra events beyond initial pin
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let upgrades = events.iter().filter(|e| e.action == SceneReferenceAction::Upgrade).count();
+        assert_eq!(upgrades, 0);
+        // Also verify unrelated data unchanged (first scene still at v1)
+        let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(fetched.world_asset_version_id.as_deref(), Some(v1.as_str()));
+    }
+
+    #[test]
+    fn upgrade_fails_when_no_canonical() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        // Clear canonical
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute(
+                "UPDATE assets SET canonical_version_id = NULL WHERE id = ?1",
+                rusqlite::params![world.world_plate_asset_id],
+            )
+            .unwrap();
+        }
+        let resolved = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+        assert_eq!(resolved.world.unwrap().health, SceneReferenceHealth::Historical);
+        let err = SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap_err();
+        assert!(matches!(err, AppError::SceneReferenceCanonicalMissing(_)));
+        assert_eq!(err.code(), "SCENE_REFERENCE_CANONICAL_MISSING");
+        // Also char sheet no canonical
+        let character = f.create_character("Mara");
+        let (sheet_asset_id, sheet_v1) = f.create_sheet_canonical(&character.id, "MARA-SHEET", [1, 1, 1, 255]);
+        let (_a, look_v) = f.create_look_canonical(&character.id, "MARA-LOOK", [2, 2, 2, 255]);
+        let scene2 = SceneService::create_scene(&f.root, "Scene2", "Summary").unwrap();
+        let assign = SceneService::add_scene_character(
+            &f.root,
+            &scene2.id,
+            &character.id,
+            &look_v,
+            Some(sheet_v1.as_str()),
+            None,
+        )
+        .unwrap();
+        {
+            let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+            conn.execute(
+                "UPDATE assets SET canonical_version_id = NULL WHERE id = ?1",
+                rusqlite::params![sheet_asset_id],
+            )
+            .unwrap();
+        }
+        let err2 = SceneService::upgrade_scene_character_sheet_reference(&f.root, &scene2.id, &assign.id).unwrap_err();
+        assert!(matches!(err2, AppError::SceneReferenceCanonicalMissing(_)));
+    }
+
+    #[test]
+    fn resolver_never_mutates_even_when_upgrade_available() {
+        let f = Fixture::new();
+        let world = f.create_world("Station");
+        let v1 = f.create_world_plate_canonical(&world, [1, 1, 1, 255]);
+        let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
+        SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
+        let src2 = f.write_png(&f.root.join("tmp_sources_world"), "world-v02-never-mutate.png", [9, 9, 9, 255]);
+        let v2 = AssetService::import_asset_version(&f.root, &world.world_plate_asset_id, &src2, None).unwrap();
+        AssetService::promote_asset_version(&f.root, &v2.id).unwrap();
+        // Call resolver multiple times
+        for _ in 0..3 {
+            let r = SceneService::resolve_scene_references(&f.root, &scene.id).unwrap();
+            assert_eq!(r.world.unwrap().health, SceneReferenceHealth::UpgradeAvailable);
+            let fetched = SceneService::get_scene(&f.root, &scene.id).unwrap();
+            assert_eq!(fetched.world_asset_version_id.as_deref(), Some(v1.as_str()));
+        }
+        // No upgrade events were created by resolver
+        let conn = db::open_existing_connection(&f.root.join("project.db")).unwrap();
+        let events = scenes_repository::list_reference_events(&conn, &scene.id).unwrap();
+        let upgrade_events = events.iter().filter(|e| e.action == SceneReferenceAction::Upgrade).count();
+        assert_eq!(upgrade_events, 0);
+        // Now explicit upgrade does mutate
+        SceneService::upgrade_scene_world_reference(&f.root, &scene.id).unwrap();
+        let after = SceneService::get_scene(&f.root, &scene.id).unwrap();
+        assert_eq!(after.world_asset_version_id.as_deref(), Some(v2.id.as_str()));
     }
 }

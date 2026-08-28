@@ -258,6 +258,15 @@ pub enum AppError {
 
     #[error("Prop assignment was not found")]
     ScenePropNotFound,
+
+    #[error("Scene reference is already current")]
+    SceneReferenceAlreadyCurrent,
+
+    #[error("Scene reference has no canonical version: {0}")]
+    SceneReferenceCanonicalMissing(String),
+
+    #[error("Scene reference is broken: {0}")]
+    SceneReferenceBroken(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.
