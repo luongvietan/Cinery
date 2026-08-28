@@ -47,6 +47,13 @@ pub fn run() {
       workflow::commands::get_workflow_run,
       workflow::commands::list_workflow_runs,
       workflow::commands::list_workflow_characters,
+      providers::commands::list_providers,
+      providers::commands::get_provider_capabilities,
+      providers::commands::get_provider_configuration_status,
+      providers::commands::configure_provider,
+      providers::commands::remove_provider_credentials,
+      providers::commands::validate_provider_configuration,
+      providers::commands::list_provider_models,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

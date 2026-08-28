@@ -213,3 +213,35 @@ export interface WorkflowRunDetail {
   steps: WorkflowStepRecord[];
   events: WorkflowEventRecord[];
 }
+
+export type ProviderMediaType = "image" | "video";
+export type ProviderLifecycle =
+  | "queued"
+  | "submitted"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancellation_requested"
+  | "cancelled"
+  | "unknown";
+
+export interface ProviderCapabilities {
+  mediaTypes: ProviderMediaType[];
+  supportsSeed: boolean;
+  supportsNegativePrompt: boolean;
+  supportsReferenceImage: boolean;
+  supportsMultipleReferenceImages: boolean;
+  supportsImageToVideo: boolean;
+  supportsCancel: boolean;
+  supportsProgress: boolean;
+  supportedAspectRatios: string[];
+  supportedModels: string[];
+}
+
+export interface ProviderConfigurationStatus {
+  providerId: string;
+  enabled: boolean;
+  credentialConfigured: boolean;
+  credentialReference: string | null;
+  defaultModel: string | null;
+}

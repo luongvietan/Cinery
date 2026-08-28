@@ -53,3 +53,25 @@ fn approved_mock_execution_persists_attempt_job_and_candidate_artifact() {
     assert_eq!(job_count, 1);
     assert_eq!(asset_version_count, 1);
 }
+
+#[test]
+fn recovery_preserves_a_durable_remote_job_for_reconciliation() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.0.0",
+        "character.create_face_lock",
+        json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal"}),
+    ).unwrap();
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.execute("UPDATE workflow_runs SET status = 'running' WHERE id = ?1", [&created.run.id]).unwrap();
+    conn.execute("UPDATE workflow_steps SET status = 'running' WHERE workflow_run_id = ?1 AND step_definition_id = 'execute'", [&created.run.id]).unwrap();
+    conn.execute("INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id, provider_id, model_id, adapter_version, idempotency_key, status, provider_job_id, artifact_ids_json, started_at) VALUES ('execution-1', ?1, 'execute', 1, 'compiled', 'mock', 'mock-image-v1', 1, 'idempotency-1', 'running', 'remote-job-1', '[]', 'now')", [&created.run.id]).unwrap();
+    drop(conn);
+
+    ProjectService::open(&root).unwrap();
+    let recovered = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
+    assert_eq!(recovered.run.status, "running");
+    assert_eq!(recovered.steps.iter().find(|step| step.step_definition_id == "execute").unwrap().status, "running");
+}

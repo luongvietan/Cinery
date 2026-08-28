@@ -20,6 +20,21 @@ pub fn recover_interrupted_runs(project_root: &Path) -> Result<usize, AppError> 
     };
 
     for run_id in &run_ids {
+        let has_durable_provider_job: bool = conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM workflow_step_executions
+                    WHERE workflow_run_id = ?1
+                      AND provider_job_id IS NOT NULL
+                      AND status IN ('submitted', 'running', 'cancellation_requested', 'unknown')
+                )",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if has_durable_provider_job {
+            continue;
+        }
         let now = Utc::now().to_rfc3339();
         let payload = serde_json::json!({"code":"INTERRUPTED_DURING_STEP"}).to_string();
         let tx = conn

@@ -1,4 +1,6 @@
 import type {
+  ProviderCapabilities,
+  ProviderConfigurationStatus,
   SkillOperation,
   WorkflowCharacterOption,
   WorkflowRunDetail,
@@ -62,4 +64,32 @@ export function getWorkflowRun(projectRootPath: string, workflowRunId: string): 
 
 export function listWorkflowRuns(projectRootPath: string): Promise<WorkflowRunRecord[]> {
   return invokeCommand("list_workflow_runs", { projectRootPath });
+}
+
+export function listProviders(): Promise<string[]> {
+  return invokeCommand("list_providers");
+}
+
+export function getProviderCapabilities(providerId: string): Promise<ProviderCapabilities> {
+  return invokeCommand("get_provider_capabilities", { providerId });
+}
+
+export function getProviderConfigurationStatus(projectRootPath: string, providerId: string): Promise<ProviderConfigurationStatus> {
+  return invokeCommand("get_provider_configuration_status", { projectRootPath, providerId });
+}
+
+export function configureProvider(projectRootPath: string, config: Record<string, unknown>): Promise<ProviderConfigurationStatus> {
+  return invokeCommand("configure_provider", { projectRootPath, config });
+}
+
+export function removeProviderCredentials(projectRootPath: string, providerId: string): Promise<void> {
+  return invokeCommand("remove_provider_credentials", { projectRootPath, providerId });
+}
+
+export function validateProviderConfiguration(providerId: string): Promise<void> {
+  return invokeCommand("validate_provider_configuration", { providerId });
+}
+
+export function listProviderModels(providerId: string): Promise<string[]> {
+  return invokeCommand("list_provider_models", { providerId });
 }

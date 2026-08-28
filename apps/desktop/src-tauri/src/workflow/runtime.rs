@@ -11,7 +11,7 @@ use crate::workflow::model::{
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
 use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
-use crate::providers::repository::{create_attempt, persist_job};
+use crate::providers::repository::{create_attempt, next_attempt_number, persist_job, update_attempt_status};
 use crate::providers::service::ProviderService;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -458,15 +458,17 @@ fn execute_ready(
         )?
     } else {
         let compiled_request_id = compiled_request_id(&request_json);
+        let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+        let idempotency_key = ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
             conn,
             &detail.run.id,
             execute_step_id,
-            1,
+            attempt_number,
             &compiled_request_id,
             provider_id,
             model_id,
-            &format!("{}:{execute_step_id}:1", detail.run.id),
+            &idempotency_key,
         )?;
         let outcome = ProviderService::execute_compiled_request(
             &request,
@@ -474,13 +476,14 @@ fn execute_ready(
             &compiled_request_id,
             provider_id,
             model_id,
+            attempt_number,
         )?;
         persist_job(
             conn,
             &attempt.id,
             provider_id,
             &outcome.submission.job.provider_job_id,
-            "succeeded",
+            "submitted",
         )?;
         let asset_type = request.expected_output.asset_type.as_str();
         let owner_entity_id = request
@@ -497,6 +500,7 @@ fn execute_ready(
             asset_type,
             owner_entity_id,
         )?;
+        update_attempt_status(conn, &attempt.id, "succeeded", None)?;
         crate::workflow::execution::ExecutionResult {
             kind: provider_id.into(),
             artifact_path: project_root.join(version.file_path),

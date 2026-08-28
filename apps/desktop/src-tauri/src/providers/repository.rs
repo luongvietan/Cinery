@@ -247,6 +247,54 @@ pub fn find_active_attempt(
     .map_err(db_error)
 }
 
+pub fn list_provider_configs(conn: &Connection) -> Result<Vec<ProviderConfigRecord>, AppError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT provider_id, enabled, credential_reference, default_model, endpoint,
+                    request_timeout_seconds, polling_interval_seconds
+             FROM provider_configurations ORDER BY provider_id",
+        )
+        .map_err(db_error)?;
+    let result = statement
+        .query_map([], row_to_provider_config)
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error);
+    result
+}
+
+pub fn update_attempt_status(
+    conn: &Connection,
+    execution_id: &str,
+    status: &str,
+    normalized_error_json: Option<&str>,
+) -> Result<(), AppError> {
+    let completed_at = matches!(status, "succeeded" | "failed" | "cancelled")
+        .then(|| Utc::now().to_rfc3339());
+    conn.execute(
+        "UPDATE workflow_step_executions
+         SET status = ?1, normalized_error_json = ?2, completed_at = COALESCE(?3, completed_at)
+         WHERE id = ?4",
+        params![status, normalized_error_json, completed_at, execution_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn next_attempt_number(
+    conn: &Connection,
+    workflow_run_id: &str,
+    step_definition_id: &str,
+) -> Result<i64, AppError> {
+    conn.query_row(
+        "SELECT COALESCE(MAX(attempt_number), 0) + 1
+         FROM workflow_step_executions WHERE workflow_run_id = ?1 AND step_definition_id = ?2",
+        params![workflow_run_id, step_definition_id],
+        |row| row.get(0),
+    )
+    .map_err(db_error)
+}
+
 fn row_to_provider_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfigRecord> {
     Ok(ProviderConfigRecord {
         provider_id: row.get(0)?,

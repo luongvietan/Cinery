@@ -5,13 +5,14 @@ import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
+import { ProviderSettings } from "../providers/ProviderSettings";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets" | "workflows" | "canon";
+type PanelView = "none" | "assets" | "workflows" | "canon" | "providers";
 
 export function ProjectWorkspace({
   project,
@@ -70,6 +71,14 @@ export function ProjectWorkspace({
         >
           Workflows
         </button>
+        <button
+          type="button"
+          aria-pressed={panelView === "providers"}
+          className={panelView === "providers" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => { setPanelView("providers"); setSelectedAssetId(null); }}
+        >
+          Providers
+        </button>
       </nav>
       <section aria-label="Project workspace">
         {panelView === "assets" ? (
@@ -96,6 +105,7 @@ export function ProjectWorkspace({
           <WorkflowWorkspace projectRootPath={project.rootPath} />
         ) : null}
         {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} /> : null}
+        {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
       </section>
     </>
   );
