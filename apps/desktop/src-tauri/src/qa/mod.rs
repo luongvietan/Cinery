@@ -5,6 +5,7 @@ pub mod context;
 pub mod errors;
 pub mod models;
 pub mod normalizer;
+pub mod repair;
 pub mod repository;
 pub mod service;
 pub mod workflow;
