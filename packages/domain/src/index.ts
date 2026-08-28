@@ -6,6 +6,8 @@ export * from "./tbd";
 export * from "./skill";
 export * from "./workflow";
 export * from "./execution";
+export * from "./generation";
+export * from "./lineage";
 
 export interface AppCommandError {
   code: string;

@@ -204,6 +204,8 @@ impl AssetService {
             height: Some(inspected.height as i64),
             parent_version_id,
             created_at: Utc::now().to_rfc3339(),
+            origin: "imported".into(),
+            generation_artifact_id: None,
         };
 
         if let Err(err) = repository::insert_asset_version(&tx, &record) {

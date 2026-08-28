@@ -81,7 +81,9 @@ pub fn list_asset_versions(
     let mut stmt = conn
         .prepare(
             "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-             original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
+             original_filename, mime_type, byte_size, width, height, parent_version_id, created_at, \
+             CASE WHEN EXISTS (SELECT 1 FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id) THEN 'generated' ELSE 'imported' END, \
+             (SELECT ap.artifact_id FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id LIMIT 1) \
              FROM asset_versions WHERE asset_id = ?1 ORDER BY version_number DESC",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -107,7 +109,9 @@ pub fn get_asset_version_by_id(
 ) -> Result<Option<AssetVersionRecord>, AppError> {
     conn.query_row(
         "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
+         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at, \
+         CASE WHEN EXISTS (SELECT 1 FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id) THEN 'generated' ELSE 'imported' END, \
+         (SELECT ap.artifact_id FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id LIMIT 1) \
          FROM asset_versions WHERE id = ?1",
         params![version_id],
         row_to_asset_version_record,
@@ -127,7 +131,9 @@ pub fn find_version_by_hash(
 ) -> Result<Option<AssetVersionRecord>, AppError> {
     tx.query_row(
         "SELECT id, asset_id, version_number, status, file_path, thumbnail_path, sha256, \
-         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at \
+         original_filename, mime_type, byte_size, width, height, parent_version_id, created_at, \
+         CASE WHEN EXISTS (SELECT 1 FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id) THEN 'generated' ELSE 'imported' END, \
+         (SELECT ap.artifact_id FROM artifact_promotions ap WHERE ap.asset_version_id = asset_versions.id LIMIT 1) \
          FROM asset_versions WHERE asset_id = ?1 AND sha256 = ?2",
         params![asset_id, sha256],
         row_to_asset_version_record,
@@ -285,6 +291,8 @@ fn row_to_asset_version_record(row: &rusqlite::Row) -> rusqlite::Result<AssetVer
         height: row.get(11)?,
         parent_version_id: row.get(12)?,
         created_at: row.get(13)?,
+        origin: row.get(14)?,
+        generation_artifact_id: row.get(15)?,
     })
 }
 

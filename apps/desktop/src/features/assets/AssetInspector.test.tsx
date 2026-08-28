@@ -52,6 +52,8 @@ describe("AssetInspector", () => {
           id: "v2",
           versionNumber: 2,
           status: "candidate",
+          origin: "generated",
+          generationArtifactId: "artifact-1",
           ...baseVersion,
         },
         {
@@ -83,6 +85,8 @@ describe("AssetInspector", () => {
     expect(versions[1]).toHaveTextContent("v001");
     expect(versions[1]).toHaveTextContent("Canonical");
     expect(screen.getByText("Canonical: v001")).toBeInTheDocument();
+    expect(versions[0]).toHaveTextContent("GENERATED");
+    expect(versions[0]).toHaveTextContent("View generation details");
   });
 
   it("shows metadata and distinguishes no canonical from no versions", async () => {

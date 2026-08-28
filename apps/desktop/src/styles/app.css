@@ -594,6 +594,11 @@ section[aria-label^="Asset "] header {
   color: #991b1b;
 }
 
+.asset-version-badge--generated {
+  background: #e7f0ff;
+  color: #1d4ed8;
+}
+
 .asset-empty-state {
   font-size: 13px;
   color: var(--color-mid-gray);
@@ -642,6 +647,38 @@ section[aria-label^="Asset "] header {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-8);
+}
+
+.asset-generation-details {
+  padding: var(--space-16);
+  border: 1px solid var(--color-hairline);
+  background: var(--surface-sidebar);
+}
+
+.asset-generation-details h3 {
+  margin-top: 0;
+}
+
+.asset-generation-details dl {
+  display: grid;
+  gap: var(--space-8);
+  margin: 0;
+  font-size: 13px;
+}
+
+.asset-generation-details dl > div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: var(--space-12);
+}
+
+.asset-generation-details dt {
+  color: var(--color-mid-gray);
+}
+
+.asset-generation-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 section[aria-label^="Asset "] header p {
@@ -715,6 +752,280 @@ select:focus-visible {
   flex-direction: column;
   gap: var(--space-24);
   width: 100%;
+}
+
+/* P5 production workspace */
+.production-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  width: 100%;
+}
+
+.production-hero,
+.production-operation-card,
+.production-recent,
+.production-editor,
+.generation-results {
+  border: 1px solid var(--color-hairline);
+  background: var(--surface-card);
+}
+
+.production-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-24);
+  padding: var(--space-24);
+  background: var(--surface-sidebar);
+}
+
+.production-hero h2,
+.production-panel-header h2,
+.production-panel-header h3,
+.production-hero p,
+.production-panel-header p {
+  margin: var(--space-4) 0 0;
+}
+
+.production-kicker {
+  color: var(--color-ember);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.production-hero-mark {
+  color: var(--color-ember);
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.production-landing {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: var(--space-16);
+}
+
+.production-operation-card,
+.production-recent {
+  padding: var(--space-20);
+}
+
+.production-operation-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-20);
+  min-height: 180px;
+}
+
+.production-operation-card small,
+.production-help {
+  color: var(--color-mid-gray);
+  font-size: 13px;
+}
+
+.production-recent header,
+.production-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-16);
+  padding: var(--space-16) var(--space-20);
+  background: var(--surface-sidebar);
+  border-bottom: 1px solid var(--color-hairline);
+}
+
+.production-recent {
+  padding: 0;
+}
+
+.production-recent ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.production-recent li + li {
+  border-top: 1px solid var(--color-hairline);
+}
+
+.production-recent li button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--color-ink);
+  text-align: left;
+}
+
+.production-recent > p {
+  padding: 0 var(--space-20) var(--space-20);
+}
+
+.production-editor,
+.generation-results {
+  width: 100%;
+}
+
+.production-form {
+  display: grid;
+  gap: var(--space-16);
+  padding: var(--space-20);
+}
+
+.production-form > label,
+.production-form-grid label {
+  display: grid;
+  gap: var(--space-8);
+  color: var(--color-ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.production-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-12);
+}
+
+.production-form-actions,
+.generation-results-actions {
+  display: flex;
+  gap: var(--space-12);
+  align-items: center;
+}
+
+.production-secondary {
+  background: var(--surface-card);
+  color: var(--color-ink);
+  border: 1px solid var(--color-hairline);
+}
+
+.generation-results {
+  overflow: hidden;
+}
+
+.generation-result-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-12);
+  padding: var(--space-20);
+}
+
+.generation-result-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-8);
+  border: 1px solid var(--color-hairline);
+  background: var(--surface-sidebar);
+}
+
+.generation-result-card--selected {
+  border-color: var(--color-ember);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ember) 18%, transparent);
+}
+
+.generation-result-card img {
+  display: block;
+  aspect-ratio: 1;
+  width: 100%;
+  object-fit: cover;
+  background: var(--surface-canvas);
+}
+
+.generation-result-select {
+  width: 100%;
+  padding: var(--space-8);
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  color: var(--color-ink);
+}
+
+.generation-result-meta {
+  display: grid;
+  gap: var(--space-4);
+  margin: 0;
+  color: var(--color-mid-gray);
+  font-size: 11px;
+}
+
+.generation-result-meta div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+
+.generation-result-meta dt,
+.generation-result-meta dd {
+  margin: 0;
+}
+
+.generation-result-meta dd {
+  color: var(--color-ink-soft);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.generation-results-actions {
+  padding: 0 var(--space-20) var(--space-20);
+}
+
+.generation-promotion-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-24);
+  background: rgb(30 27 22 / 45%);
+  z-index: 10;
+}
+
+.generation-promotion-dialog {
+  display: grid;
+  gap: var(--space-16);
+  width: min(460px, 100%);
+  padding: var(--space-24);
+  border: 1px solid var(--color-hairline);
+  background: var(--surface-card);
+}
+
+.generation-promotion-dialog h2,
+.generation-promotion-dialog p {
+  margin: 0;
+}
+
+.generation-promotion-dialog label {
+  display: flex;
+  gap: var(--space-8);
+  align-items: center;
+  color: var(--color-ink-soft);
+}
+
+@media (max-width: 900px) {
+  .production-landing,
+  .generation-result-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .production-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .production-landing,
+  .generation-result-grid,
+  .production-form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .provider-settings {

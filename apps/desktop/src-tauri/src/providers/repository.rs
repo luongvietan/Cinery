@@ -63,6 +63,34 @@ mod tests {
         let result = create_attempt(&conn, "run", "execute", 2, "compiled", "mock", "model", "same-key");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn provider_attempt_records_materialized_artifact_ids() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p', 'Project', 'now', 'now', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at) VALUES ('run', 'p', 's', '1', 'o', 'running', '{}', 'now', 'now')",
+            [],
+        ).unwrap();
+        let attempt = create_attempt(&conn, "run", "execute", 1, "compiled", "mock", "model", "artifact-key").unwrap();
+
+        update_artifact_ids(
+            &conn,
+            &attempt.id,
+            &["artifact-1".into(), "artifact-2".into()],
+        ).unwrap();
+
+        let saved: String = conn.query_row(
+            "SELECT artifact_ids_json FROM workflow_step_executions WHERE id = ?1",
+            [&attempt.id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(saved, "[\"artifact-1\",\"artifact-2\"]");
+    }
 }
 use crate::error::AppError;
 use chrono::Utc;
@@ -276,6 +304,21 @@ pub fn update_attempt_status(
          SET status = ?1, normalized_error_json = ?2, completed_at = COALESCE(?3, completed_at)
          WHERE id = ?4",
         params![status, normalized_error_json, completed_at, execution_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn update_artifact_ids(
+    conn: &Connection,
+    execution_id: &str,
+    artifact_ids: &[String],
+) -> Result<(), AppError> {
+    let artifact_ids_json = serde_json::to_string(artifact_ids)
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    conn.execute(
+        "UPDATE workflow_step_executions SET artifact_ids_json = ?1 WHERE id = ?2",
+        params![artifact_ids_json, execution_id],
     )
     .map_err(db_error)?;
     Ok(())

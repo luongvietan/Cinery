@@ -25,6 +25,10 @@ export const ASSET_VERSION_STATUSES = [
 
 export type AssetVersionStatus = (typeof ASSET_VERSION_STATUSES)[number];
 
+export const ASSET_VERSION_ORIGINS = ["imported", "generated"] as const;
+
+export type AssetVersionOrigin = (typeof ASSET_VERSION_ORIGINS)[number];
+
 export interface Asset {
   id: string;
   projectId: string;
@@ -51,6 +55,8 @@ export interface AssetVersion {
   height: number | null;
   parentVersionId: string | null;
   createdAt: string;
+  origin?: AssetVersionOrigin;
+  generationArtifactId?: string | null;
 }
 
 export interface AssetSummary {

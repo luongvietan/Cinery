@@ -40,6 +40,8 @@ pub struct AssetVersionRecord {
     pub height: Option<i64>,
     pub parent_version_id: Option<String>,
     pub created_at: String,
+    pub origin: String,
+    pub generation_artifact_id: Option<String>,
 }
 
 /// Summary row for the asset sidebar: core asset fields plus version

@@ -17,7 +17,11 @@ impl MockImageProvider {
         Self {
             statuses: Arc::new(Mutex::new(statuses)),
             result: ProviderResult {
-                outputs: vec![ProviderOutput { uri: "mock://face-lock.png".into(), mime_type: "image/png".into(), filename: Some("face-lock.png".into()) }],
+                outputs: (1..=4).map(|ordinal| ProviderOutput {
+                    uri: format!("mock://face-lock-{ordinal}.png"),
+                    mime_type: "image/png".into(),
+                    filename: Some(format!("face-lock-{ordinal}.png")),
+                }).collect(),
                 provider_reported_model: Some("mock-image-v1".into()),
                 metadata: serde_json::json!({"fixture": true}),
             },
@@ -110,7 +114,8 @@ mod tests {
         assert_eq!(submission.lifecycle, ProviderLifecycle::Submitted);
         assert_eq!(provider.poll(&submission.job).unwrap().lifecycle, ProviderLifecycle::Succeeded);
         let result = provider.fetch_result(&submission.job).unwrap();
-        assert_eq!(result.outputs[0].uri, "mock://face-lock.png");
+        assert_eq!(result.outputs.len(), 4);
+        assert_eq!(result.outputs[0].uri, "mock://face-lock-1.png");
         assert_eq!(provider.cancel(&submission.job).unwrap().lifecycle, ProviderLifecycle::Cancelled);
         assert_eq!(provider.cancelled_jobs(), vec!["mock:run-1:execute:1"]);
     }
