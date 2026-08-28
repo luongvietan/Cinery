@@ -48,6 +48,28 @@ export function createVisualQaWorkflow(
   });
 }
 
+export function createVisualRepairWorkflow(
+  projectRootPath: string,
+  assetVersionId: string,
+  qaRunId: string,
+  providerId: string,
+  modelId: string,
+): Promise<WorkflowRunDetail> {
+  return invokeCommand("create_workflow_run", {
+    projectRootPath,
+    skillId: "visual-qa",
+    skillVersion: "1.0.0",
+    operationId: "asset.repair_failed_qa",
+    input: {
+      projectRootPath,
+      qaRunId,
+      providerId,
+      modelId,
+      qaAdapterId: providerId === "mock" ? "mock" : "openai",
+    },
+  });
+}
+
 export function advanceQaWorkflow(
   projectRootPath: string,
   workflowRunId: string,
@@ -71,11 +93,12 @@ export function approveQaWorkflow(
 export function rejectQaWorkflow(
   projectRootPath: string,
   workflowRunId: string,
+  stepDefinitionId = "approve-qa",
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("reject_workflow_step", {
     projectRootPath,
     workflowRunId,
-    stepDefinitionId: "approve-qa",
+    stepDefinitionId,
     note: "Visual QA cancelled before execution",
   });
 }

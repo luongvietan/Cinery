@@ -31,7 +31,7 @@ function disclosureFrom(workflow: WorkflowRunDetail): ExecutionDisclosure | null
       request?: { references?: unknown[] };
     };
     return {
-      location: value.executionLocation ?? "unknown",
+      location: value.executionLocation ?? (value.adapterId === "mock" ? "local" : "cloud:provider"),
       adapterId: value.adapterId ?? "unknown",
       modelId: value.modelId ?? "unknown",
       referenceCount: value.request?.references?.length ?? 0,
@@ -57,6 +57,7 @@ export function QaPanel({
   const [detail, setDetail] = useState<QaRunDetail | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [pendingWorkflow, setPendingWorkflow] = useState<WorkflowRunDetail | null>(null);
+  const [pendingOperation, setPendingOperation] = useState<"qa" | "repair">("qa");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [busyCheckId, setBusyCheckId] = useState<string | null>(null);
@@ -102,6 +103,30 @@ export function QaPanel({
     setError(null);
     try {
       const created = await api.createVisualQaWorkflow(projectRootPath, assetVersionId);
+      setPendingOperation("qa");
+      setPendingWorkflow(await api.advanceQaWorkflow(projectRootPath, created.run.id));
+    } catch (reason: unknown) {
+      setError(describeError(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runRepair() {
+    if (!detail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const providerId = detail.run.adapterId === "mock" ? "mock" : "openai";
+      const modelId = providerId === "mock" ? "mock-image-v1" : "gpt-image-1";
+      const created = await api.createVisualRepairWorkflow(
+        projectRootPath,
+        assetVersionId,
+        detail.run.id,
+        providerId,
+        modelId,
+      );
+      setPendingOperation("repair");
       setPendingWorkflow(await api.advanceQaWorkflow(projectRootPath, created.run.id));
     } catch (reason: unknown) {
       setError(describeError(reason));
@@ -115,7 +140,8 @@ export function QaPanel({
     setBusy(true);
     setError(null);
     try {
-      await api.approveQaWorkflow(projectRootPath, pendingWorkflow.run.id, "approve-qa");
+      const approvalStep = pendingOperation === "repair" ? "approve-repair" : "approve-qa";
+      await api.approveQaWorkflow(projectRootPath, pendingWorkflow.run.id, approvalStep);
       await api.advanceQaWorkflow(projectRootPath, pendingWorkflow.run.id);
       setPendingWorkflow(null);
       await load();
@@ -130,7 +156,11 @@ export function QaPanel({
     if (!pendingWorkflow) return;
     setBusy(true);
     try {
-      await api.rejectQaWorkflow(projectRootPath, pendingWorkflow.run.id);
+      await api.rejectQaWorkflow(
+        projectRootPath,
+        pendingWorkflow.run.id,
+        pendingOperation === "repair" ? "approve-repair" : "approve-qa",
+      );
       setPendingWorkflow(null);
       await load();
     } catch (reason: unknown) {
@@ -233,9 +263,11 @@ export function QaPanel({
             <button
               type="button"
               className="qa-repair-button"
-              disabled={!onRepair}
-              title={onRepair ? undefined : "Repair execution is not available yet"}
-              onClick={() => onRepair?.(detail.run.id)}
+              disabled={busy}
+              onClick={() => {
+                if (onRepair) onRepair(detail.run.id);
+                else void runRepair();
+              }}
             >
               Repair Failed Checks
             </button>
