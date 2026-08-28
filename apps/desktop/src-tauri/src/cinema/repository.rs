@@ -224,3 +224,54 @@ fn compilation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CinemaCompi
     })
 }
 
+/// Lists the characters cast into `scene_id`, in display order.
+pub fn list_scene_characters(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<SceneCharacterRecord>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scene_id, character_entity_id, look_asset_version_id, \
+             sheet_asset_version_id, display_order FROM scene_characters \
+             WHERE scene_id = ?1 ORDER BY display_order ASC, character_entity_id",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], |row| {
+            Ok(SceneCharacterRecord {
+                scene_id: row.get(0)?,
+                character_entity_id: row.get(1)?,
+                look_asset_version_id: row.get(2)?,
+                sheet_asset_version_id: row.get(3)?,
+                display_order: row.get(4)?,
+            })
+        })
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
+        .collect()
+}
+
+/// Lists the props pinned into `scene_id`, in display order.
+pub fn list_scene_props(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<ScenePropRecord>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT scene_id, prop_asset_version_id, display_order FROM scene_props \
+             WHERE scene_id = ?1 ORDER BY display_order ASC, prop_asset_version_id",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], |row| {
+            Ok(ScenePropRecord {
+                scene_id: row.get(0)?,
+                prop_asset_version_id: row.get(1)?,
+                display_order: row.get(2)?,
+            })
+        })
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
+        .collect()
+}
+
