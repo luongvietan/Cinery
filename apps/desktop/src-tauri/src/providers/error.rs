@@ -19,6 +19,7 @@ pub enum ProviderErrorKind {
     ArtifactValidationFailed,
     Cancelled,
     UnknownProviderError,
+    CredentialStore,
 }
 
 impl ProviderErrorKind {
