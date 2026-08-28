@@ -1,0 +1,120 @@
+use cinematic_desktop_lib::assets::service::AssetService;
+use cinematic_desktop_lib::canon::model::CanonEntityType;
+use cinematic_desktop_lib::canon::service::CanonService;
+use cinematic_desktop_lib::canon::tbd;
+use cinematic_desktop_lib::cinema::service::CinemaService;
+use cinematic_desktop_lib::cinema::tbd_guard;
+use cinematic_desktop_lib::db;
+use cinematic_desktop_lib::error::AppError;
+use cinematic_desktop_lib::project::service::ProjectService;
+use std::path::{Path, PathBuf};
+use tempfile::{tempdir, TempDir};
+
+fn project(name: &str) -> (TempDir, PathBuf) {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join(name);
+    ProjectService::create(&root, name).unwrap();
+    (temp, root)
+}
+
+fn test_image(root: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
+    let path = root.join(name);
+    let image: image::RgbaImage = image::ImageBuffer::from_pixel(32, 32, image::Rgba(pixel));
+    image.save(&path).unwrap();
+    path
+}
+
+fn canonical_version(root: &Path, asset_type: &str) -> String {
+    let asset = AssetService::create_asset(root, asset_type, "Plate", None).unwrap();
+    let source = test_image(root, "plate.png", [10, 20, 30, 255]);
+    let version = AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
+    AssetService::promote_asset_version(root, &version.id).unwrap();
+    version.id
+}
+
+/// Full compilable scene setup: locked-behavior character with a canonical
+/// look, one shot. Returns (root, scene_id, character_id).
+fn scene_with_character(keys: &[&str]) -> (TempDir, PathBuf, String, String) {
+    let (temp, root) = project("Red Door");
+    let character =
+        CanonService::create_entity(&root, CanonEntityType::Character, "Mara Keene").unwrap();
+    for key in keys {
+        let section = CanonService::upsert_section(
+            &root,
+            &character.id,
+            key,
+            serde_json::json!({ "text": format!("locked {key}") }),
+            None,
+        )
+        .unwrap();
+        CanonService::lock_section(&root, &section.id, None).unwrap();
+    }
+    let look = canonical_version(&root, "outfit");
+    let scene = CinemaService::create_scene(&root, "Scene 001", None, None).unwrap();
+    CinemaService::add_character_to_scene(&root, &scene.id, &character.id, &look, None).unwrap();
+    CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None).unwrap();
+    (temp, root, scene.id, character.id)
+}
+
+fn project_id(root: &PathBuf) -> String {
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    conn.query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn blocks_compilation_when_protected_tbd_open_for_scene_character() {
+    let (_temp, root, scene_id, character_id) =
+        scene_with_character(&["speech", "movement", "stillness"]);
+    tbd::create(
+        &root,
+        Some(&character_id),
+        None,
+        "What does Mara hide?",
+        None,
+        true,
+    )
+    .unwrap();
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let error = tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).unwrap_err();
+    assert!(matches!(error, AppError::WorkflowBlockedByProtectedTbd(_)));
+    assert!(error.to_string().contains("What does Mara hide?"));
+}
+
+#[test]
+fn blocks_on_project_scoped_protected_tbd() {
+    let (_temp, root, scene_id, _character) =
+        scene_with_character(&["speech", "movement", "stillness"]);
+    tbd::create(&root, None, None, "What is behind the red door?", None, true).unwrap();
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let error = tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).unwrap_err();
+    assert!(matches!(error, AppError::WorkflowBlockedByProtectedTbd(_)));
+}
+
+#[test]
+fn allows_compilation_when_no_protected_tbd_open() {
+    let (_temp, root, scene_id, _character) =
+        scene_with_character(&["speech", "movement", "stillness"]);
+
+    // Unprotected open TBDs and resolved protected TBDs do not block.
+    tbd::create(&root, None, None, "Unprotected question", None, false).unwrap();
+    let resolved =
+        tbd::create(&root, None, None, "Resolved protected question", None, true).unwrap();
+    tbd::resolve(&root, &resolved.id, "Answered in the story bible.").unwrap();
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    assert!(tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).is_ok());
+}
+
+#[test]
+fn tbd_on_unrelated_character_does_not_block() {
+    let (_temp, root, scene_id, _character) =
+        scene_with_character(&["speech", "movement", "stillness"]);
+    let other = CanonService::create_entity(&root, CanonEntityType::Character, "Other").unwrap();
+    tbd::create(&root, Some(&other.id), None, "Other arc question", None, true).unwrap();
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    assert!(tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).is_ok());
+}
