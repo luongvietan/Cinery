@@ -13,8 +13,10 @@ import {
   importAssetVersion,
   listAssets,
 } from "../assets/api";
+import { listSkillOperations, listWorkflowRuns } from "../workflows/api";
 
 vi.mock("../assets/api");
+vi.mock("../workflows/api");
 vi.mock("../assets/shell", () => ({
   openAssetFolder: vi.fn(),
   openProjectRelativePath: vi.fn(),
@@ -90,6 +92,17 @@ describe("ProjectWorkspace", () => {
     );
     vi.mocked(importAssetVersion).mockReset();
     vi.mocked(open).mockReset().mockResolvedValue("/tmp/second.png");
+    vi.mocked(listSkillOperations).mockReset().mockResolvedValue([]);
+    vi.mocked(listWorkflowRuns).mockReset().mockResolvedValue([]);
+  });
+
+  it("opens the project workflow workspace from primary navigation", async () => {
+    render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+
+    expect(await screen.findByRole("heading", { name: "Available operations" })).toBeInTheDocument();
+    expect(listWorkflowRuns).toHaveBeenCalledWith(project.rootPath);
   });
 
   it("resets the import button's in-flight state when switching assets mid-import", async () => {

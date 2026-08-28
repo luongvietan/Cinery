@@ -3,13 +3,14 @@ import type { ProjectSummary } from "@cinematic/domain";
 import { BackButton } from "../../components/BackButton";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
+import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets";
+type PanelView = "none" | "assets" | "workflows";
 
 export function ProjectWorkspace({
   project,
@@ -45,6 +46,16 @@ export function ProjectWorkspace({
         >
           Assets
         </button>
+        <button
+          type="button"
+          className={panelView === "workflows" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => {
+            setPanelView("workflows");
+            setSelectedAssetId(null);
+          }}
+        >
+          Workflows
+        </button>
       </nav>
       <section aria-label="Project workspace">
         {panelView === "assets" ? (
@@ -66,6 +77,9 @@ export function ProjectWorkspace({
               />
             ) : null}
           </>
+        ) : null}
+        {panelView === "workflows" ? (
+          <WorkflowWorkspace projectRootPath={project.rootPath} />
         ) : null}
       </section>
     </>
