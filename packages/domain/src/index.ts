@@ -11,6 +11,7 @@ export * from "./lineage";
 export * from "./cinema";
 export * from "./integration";
 export * from "./jobs/mod";
+export * from "./diagnostics";
 
 /**
  * Error contract for all app commands.

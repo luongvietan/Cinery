@@ -40,6 +40,16 @@ export interface RecoveryClassification {
 }
 
 /**
+ * Payload returned by the get_project_recovery_state command.
+ * Lists every incomplete job with its recovery classification.
+ */
+export interface ProjectRecoveryState {
+  projectId: string;
+  classifications: RecoveryClassification[];
+  hasIncompleteJobs: boolean;
+}
+
+/**
  * Union type for job classification input.
  * Handles all job types: workflow, provider, QA, repair, cinema.
  */

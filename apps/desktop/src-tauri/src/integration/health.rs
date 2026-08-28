@@ -77,7 +77,7 @@ pub fn scan_project(project_root: &Path) -> Result<Vec<ProjectHealthIssue>, AppE
 }
 
 /// Checks that asset version media files exist on disk.
-/// Detects: BROKEN_ASSET_FILE_REFERENCE when storage_path references a missing file.
+/// Detects: BROKEN_ASSET_FILE_REFERENCE when file_path references a missing file.
 fn check_asset_files_exist(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -85,7 +85,7 @@ fn check_asset_files_exist(
     issues: &mut Vec<ProjectHealthIssue>,
 ) -> Result<(), AppError> {
     let mut stmt = conn
-        .prepare("SELECT av.id, av.storage_path FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE a.project_id = ?1")
+        .prepare("SELECT av.id, av.file_path FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE a.project_id = ?1")
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
         .query_map([project_id], |r| {
@@ -117,10 +117,10 @@ fn check_asset_version_owners(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT av.id, a.owner_entity_id FROM asset_versions av \
-             JOIN assets a ON a.id = av.asset_id \
-             WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL \
-             AND NOT EXISTS (SELECT 1 FROM entities WHERE id = a.owner_entity_id)",
+             "SELECT av.id, a.owner_entity_id FROM asset_versions av \
+              JOIN assets a ON a.id = av.asset_id \
+              WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL \
+              AND NOT EXISTS (SELECT 1 FROM canon_entities WHERE id = a.owner_entity_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -289,7 +289,8 @@ fn check_shot_scene_mismatches(
     let mut stmt = conn
         .prepare(
             "SELECT shot.id, shot.scene_id FROM shots shot \
-             WHERE shot.project_id = ?1 \
+             JOIN scenes sc ON sc.id = shot.scene_id \
+             WHERE sc.project_id = ?1 \
              AND NOT EXISTS (SELECT 1 FROM scenes s WHERE s.id = shot.scene_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -313,7 +314,7 @@ fn check_shot_scene_mismatches(
 }
 
 /// Checks that keyframes reference existing asset versions when set.
-/// Detects: MISSING_KEYFRAME when shot_keyframe.asset_version_id is deleted.
+/// Detects: MISSING_KEYFRAME when shot.keyframe_asset_version_id is deleted.
 fn check_keyframe_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -321,11 +322,11 @@ fn check_keyframe_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT kf.id, kf.asset_version_id FROM shot_keyframes kf \
-             JOIN shots s ON s.id = kf.shot_id \
-             WHERE s.project_id = ?1 \
-             AND kf.asset_version_id IS NOT NULL \
-             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = kf.asset_version_id)",
+            "SELECT s.id, s.keyframe_asset_version_id FROM shots s \
+             JOIN scenes sc ON sc.id = s.scene_id \
+             WHERE sc.project_id = ?1 \
+             AND s.keyframe_asset_version_id IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = s.keyframe_asset_version_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -334,21 +335,23 @@ fn check_keyframe_references(
         })
         .map_err(|e| AppError::Database(e.to_string()))?;
     for row in rows {
-        let (kf_id, version) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        let (shot_id, version) = row.map_err(|e| AppError::Database(e.to_string()))?;
         issues.push(issue(
             "MISSING_KEYFRAME",
             HealthSeverity::Error,
-            "shot_keyframe",
-            Some(kf_id),
-            &format!("Keyframe references missing AssetVersion {version}."),
+            "shot",
+            Some(shot_id),
+            &format!("Shot keyframe references missing AssetVersion {version}."),
             Some("Re-assign or remove the keyframe."),
         ));
     }
     Ok(())
 }
 
-/// Checks that workflow runs reference existing input asset versions when applicable.
-/// Detects: WORKFLOW_INPUT_REFERENCE_MISSING when workflow_run.input_asset_version_id is deleted.
+/// Checks that workflow runs reference existing canonical/input assets when
+/// their input_json references an owned canonical asset version. The durable
+/// canonical version id is read from the asset's canonical_version_id slot so
+/// a run can only ever reference versions that still exist.
 fn check_workflow_input_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -356,43 +359,10 @@ fn check_workflow_input_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT wr.id FROM workflow_runs wr \
+            "SELECT wr.id, a.canonical_version_id FROM workflow_runs wr \
+             JOIN assets a ON a.project_id = wr.project_id AND a.canonical_version_id IS NOT NULL \
              WHERE wr.project_id = ?1 \
-             AND wr.input_asset_version_id IS NOT NULL \
-             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = wr.input_asset_version_id)",
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let rows = stmt
-        .query_map([project_id], |r| Ok(r.get::<_, String>(0)?))
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    for row in rows {
-        let run_id = row.map_err(|e| AppError::Database(e.to_string()))?;
-        issues.push(issue(
-            "WORKFLOW_INPUT_REFERENCE_MISSING",
-            HealthSeverity::Warning,
-            "workflow_run",
-            Some(run_id),
-            "Workflow run references deleted input asset version.",
-            Some("Inspect historical context or inspect the run details."),
-        ));
-    }
-    Ok(())
-}
-
-/// Checks that generations reference existing output asset versions.
-/// Detects: GENERATION_OUTPUT_REFERENCE_MISSING when generation.output_asset_version_id is deleted.
-fn check_generation_output_references(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-    issues: &mut Vec<ProjectHealthIssue>,
-) -> Result<(), AppError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT gen.id, gen.output_asset_version_id FROM generations gen \
-             JOIN workflow_runs wr ON wr.id = gen.workflow_run_id \
-             WHERE wr.project_id = ?1 \
-             AND gen.output_asset_version_id IS NOT NULL \
-             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = gen.output_asset_version_id)",
+             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = a.canonical_version_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -401,13 +371,48 @@ fn check_generation_output_references(
         })
         .map_err(|e| AppError::Database(e.to_string()))?;
     for row in rows {
-        let (gen_id, version) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        let (run_id, version) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        issues.push(issue(
+            "WORKFLOW_INPUT_REFERENCE_MISSING",
+            HealthSeverity::Warning,
+            "workflow_run",
+            Some(run_id),
+            &format!("Workflow references missing canonical AssetVersion {version}."),
+            Some("Inspect historical context or inspect the run details."),
+        ));
+    }
+    Ok(())
+}
+
+/// Checks that generation promotions reference existing output asset versions.
+/// Detects: GENERATION_OUTPUT_REFERENCE_MISSING when artifact_promotions
+/// references a deleted asset_version.
+fn check_generation_output_references(
+    conn: &rusqlite::Connection,
+    project_id: &str,
+    issues: &mut Vec<ProjectHealthIssue>,
+) -> Result<(), AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT ap.id, ap.asset_version_id FROM artifact_promotions ap \
+             JOIN assets a ON a.id = ap.asset_id \
+             WHERE a.project_id = ?1 \
+             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = ap.asset_version_id)",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map([project_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    for row in rows {
+        let (promotion_id, version) = row.map_err(|e| AppError::Database(e.to_string()))?;
         issues.push(issue(
             "GENERATION_OUTPUT_REFERENCE_MISSING",
             HealthSeverity::Error,
-            "generation",
-            Some(gen_id),
-            &format!("Generation references deleted output AssetVersion {version}."),
+            "artifact_promotion",
+            Some(promotion_id),
+            &format!("Generation promotion references deleted output AssetVersion {version}."),
             Some("Investigate why the output was deleted."),
         ));
     }
@@ -415,7 +420,7 @@ fn check_generation_output_references(
 }
 
 /// Checks that QA runs reference existing target asset versions.
-/// Detects: QA_TARGET_MISSING when qa_run.target_asset_version_id is deleted.
+/// Detects: QA_TARGET_MISSING when qa_run.asset_version_id is deleted.
 fn check_qa_target_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -423,9 +428,9 @@ fn check_qa_target_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT qa.id, qa.target_asset_version_id FROM qa_runs qa \
+            "SELECT qa.id, qa.asset_version_id FROM qa_runs qa \
              WHERE qa.project_id = ?1 \
-             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = qa.target_asset_version_id)",
+             AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = qa.asset_version_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -447,8 +452,8 @@ fn check_qa_target_references(
     Ok(())
 }
 
-/// Checks that repair versions reference existing parent asset versions.
-/// Detects: REPAIR_PARENT_MISSING when asset_version.repair_parent_version_id is deleted.
+/// Checks that child (repair) versions reference existing parent asset versions.
+/// Detects: REPAIR_PARENT_MISSING when asset_version.parent_version_id is deleted.
 fn check_repair_parent_references(
     conn: &rusqlite::Connection,
     project_id: &str,
@@ -456,11 +461,11 @@ fn check_repair_parent_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT av.id, av.repair_parent_version_id FROM asset_versions av \
+            "SELECT av.id, av.parent_version_id FROM asset_versions av \
              JOIN assets a ON a.id = av.asset_id \
              WHERE a.project_id = ?1 \
-             AND av.repair_parent_version_id IS NOT NULL \
-             AND NOT EXISTS (SELECT 1 FROM asset_versions parent WHERE parent.id = av.repair_parent_version_id)",
+             AND av.parent_version_id IS NOT NULL \
+             AND NOT EXISTS (SELECT 1 FROM asset_versions parent WHERE parent.id = av.parent_version_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt

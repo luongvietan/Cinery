@@ -56,7 +56,7 @@ export const JobsPanel: React.FC<JobsPanelProps> = ({ projectRootPath }) => {
     return null;
   }
 
-  if (!state.has_incomplete_jobs) {
+  if (!state.hasIncompleteJobs) {
     return (
       <div className={styles.container}>
         <p className={styles.allClear}>All jobs completed. Project is ready to use.</p>
@@ -75,7 +75,7 @@ export const JobsPanel: React.FC<JobsPanelProps> = ({ projectRootPath }) => {
 
       <div className={styles.jobsList}>
         {state.classifications.map((classification) => (
-          <JobCard key={classification.job_id} classification={classification} />
+          <JobCard key={classification.jobId} classification={classification} />
         ))}
       </div>
     </div>
@@ -106,8 +106,8 @@ const JobCard: React.FC<JobCardProps> = ({ classification }) => {
         }}
       >
         <div className={styles.jobCardTitle}>
-          <span className={styles.jobType}>{classification.job_type}</span>
-          <span className={styles.jobId}>{classification.job_id}</span>
+          <span className={styles.jobType}>{classification.jobType}</span>
+          <span className={styles.jobId}>{classification.jobId}</span>
           <span className={`${styles.disposition} ${styles[`disposition-${classification.disposition}`]}`}>
             {classification.disposition.replace(/_/g, " ")}
           </span>
@@ -118,10 +118,10 @@ const JobCard: React.FC<JobCardProps> = ({ classification }) => {
       {expanded && (
         <div className={styles.jobCardContent}>
           <ErrorPanel
-            jobType={classification.job_type}
+            jobType={classification.jobType}
             explanation={classification.explanation}
-            userAction={classification.user_action}
-            preservedFailureInfo={classification.preserved_failure_info}
+            userAction={classification.userAction}
+            preservedFailureInfo={classification.preservedFailureInfo}
           />
         </div>
       )}

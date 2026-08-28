@@ -1755,3 +1755,15 @@ select:focus-visible {
 .project-overview__step--blocked > span { color: var(--color-danger); }
 .project-overview__health { display: flex; gap: var(--space-20); padding: var(--space-12) var(--space-24); color: var(--color-mid-gray); font-size: 12px; background: var(--surface-sidebar); }
 @media (max-width: 620px) { .project-overview__header { align-items: stretch; flex-direction: column; } .project-overview__health { flex-direction: column; gap: var(--space-4); } }
+
+.diagnostics-panel { border: 1px solid var(--color-hairline); background: var(--surface-card); }
+.diagnostics-panel code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.diagnostics-panel > p, .diagnostics-result > p { padding: var(--space-12) var(--space-20); margin: 0; color: var(--color-mid-gray); }
+.diagnostics-error { color: var(--color-danger); }
+.diagnostics-actions { display: flex; gap: var(--space-8); padding: var(--space-12) var(--space-20); border-bottom: 1px solid var(--color-hairline); }
+.diagnostics-file-list { list-style: none; margin: 0; padding: 0; }
+.diagnostics-file-list li { border-bottom: 1px solid var(--color-hairline); }
+.diagnostics-file-list li:last-child { border-bottom: none; }
+.diagnostics-file-list summary { padding: var(--space-12) var(--space-20); cursor: pointer; font-weight: 600; }
+.diagnostics-file-list summary:focus-visible { outline: 2px solid var(--color-info); outline-offset: -2px; }
+.diagnostics-file-list pre { margin: 0; padding: 0 var(--space-20) var(--space-16); overflow-x: auto; font-size: 12px; line-height: 1.5; color: var(--color-ink-soft); white-space: pre-wrap; overflow-wrap: anywhere; }

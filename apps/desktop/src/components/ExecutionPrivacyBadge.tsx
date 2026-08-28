@@ -57,7 +57,7 @@ export function PrivacyBadgeDisplay({
 }: PrivacyBadgeDisplayProps): ReactNode {
   if (!location) return null;
 
-  const normalizedLocation =
+  const normalizedLocation: "local" | `cloud:${string}` =
     location === "local" ? "local" : location.startsWith("cloud:") ? (location as `cloud:${string}`) : `cloud:${location}`;
 
   return (

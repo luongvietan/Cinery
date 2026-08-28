@@ -83,6 +83,9 @@ pub fn run() {
       cinema::commands::get_cinema_compilation,
       cinema::commands::list_cinema_compilations,
       recovery::commands::get_project_recovery_state,
+      diagnostics::commands::export_diagnostics,
+      diagnostics::commands::get_diagnostics_folder,
+      diagnostics::commands::append_diagnostics_log,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

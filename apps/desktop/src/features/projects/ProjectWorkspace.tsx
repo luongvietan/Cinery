@@ -7,6 +7,7 @@ import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { ProductionWorkspace } from "../production/ProductionWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
+import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel";
 import { ProjectOverview } from "../overview/ProjectOverview";
 import { CinemaWorkspace } from "../cinema/CinemaWorkspace";
 
@@ -15,7 +16,7 @@ interface ProjectWorkspaceProps {
   onCloseProject: () => void;
 }
 
-type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers" | "cinema";
+type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers" | "cinema" | "diagnostics";
 
 export function ProjectWorkspace({
   project,
@@ -108,6 +109,14 @@ export function ProjectWorkspace({
         >
           Providers
         </button>
+        <button
+          type="button"
+          aria-pressed={panelView === "diagnostics"}
+          className={panelView === "diagnostics" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => { setPanelView("diagnostics"); setSelectedAssetId(null); }}
+        >
+          Diagnostics
+        </button>
       </nav>
       <section aria-label="Project workspace">
         {panelView === "overview" ? (
@@ -142,6 +151,7 @@ export function ProjectWorkspace({
         ) : null}
         {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} initialTab={overviewAction?.id === "resolve_protected_tbd" ? "TBDs" : "Story"} /> : null}
         {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
+        {panelView === "diagnostics" ? <DiagnosticsPanel projectRootPath={project.rootPath} /> : null}
         {panelView === "cinema" ? <CinemaWorkspace projectRootPath={project.rootPath} action={overviewAction} /> : null}
       </section>
     </>
