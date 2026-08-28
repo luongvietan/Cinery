@@ -443,14 +443,19 @@ fn execute_ready(
     tx.commit().map_err(db_error)?;
     let input: Value = serde_json::from_str(&detail.run.input_json)
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let configured_default = ProviderService::configured_default(project_root)?;
     let provider_id = input
         .get("providerId")
         .and_then(Value::as_str)
-        .unwrap_or("dry_run");
+        .map(str::to_string)
+        .or_else(|| configured_default.as_ref().map(|(provider, _)| provider.clone()))
+        .unwrap_or_else(|| "dry_run".into());
     let model_id = input
         .get("modelId")
         .and_then(Value::as_str)
-        .unwrap_or(if provider_id == "dry_run" { "dry-run-v1" } else { "mock-image-v1" });
+        .map(str::to_string)
+        .or_else(|| configured_default.as_ref().and_then(|(_, model)| (provider_id != "dry_run").then_some(model.clone())))
+        .unwrap_or_else(|| if provider_id == "dry_run" { "dry-run-v1".into() } else { "mock-image-v1".into() });
     let result = if provider_id == "dry_run" {
         DryRunExecutor.execute(
             &request,
@@ -466,20 +471,20 @@ fn execute_ready(
             execute_step_id,
             attempt_number,
             &compiled_request_id,
-            provider_id,
-            model_id,
+            &provider_id,
+            &model_id,
             &idempotency_key,
         )?;
         append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.queued", Some(&serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number})))?;
-        let outcome = match ProviderService::execute_compiled_request(
+        let submission = match ProviderService::submit_compiled_request(
             &request,
             execute_step_id,
             &compiled_request_id,
-            provider_id,
-            model_id,
+            &provider_id,
+            &model_id,
             attempt_number,
         ) {
-            Ok(outcome) => outcome,
+            Ok(submission) => submission,
             Err(error) => {
                 let error_json = serde_json::json!({"message": error.to_string()}).to_string();
                 let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
@@ -490,11 +495,27 @@ fn execute_ready(
         persist_job(
             conn,
             &attempt.id,
-            provider_id,
-            &outcome.submission.job.provider_job_id,
+            &provider_id,
+            &submission.submission.job.provider_job_id,
             "submitted",
         )?;
-        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.submitted", Some(&serde_json::json!({"providerJobId": outcome.submission.job.provider_job_id})))?;
+        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.submitted", Some(&serde_json::json!({"providerJobId": submission.submission.job.provider_job_id})))?;
+        let (status, provider_result) = match ProviderService::finish_submission(&submission) {
+            Ok(result) => result,
+            Err(error) => {
+                let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                let _ = append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.failed", Some(&serde_json::json!({"error": error.to_string()})));
+                return Err(error);
+            }
+        };
+        let outcome = crate::providers::service::ProviderExecutionOutcome {
+            provider_id: provider_id.clone(),
+            adapter_version: submission.adapter_version,
+            submission: submission.submission,
+            status,
+            result: provider_result,
+        };
         let asset_type = request.expected_output.asset_type.as_str();
         let owner_entity_id = request
             .expected_output
@@ -513,7 +534,7 @@ fn execute_ready(
         update_attempt_status(conn, &attempt.id, "succeeded", None)?;
         append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"artifactPath": version.file_path})))?;
         crate::workflow::execution::ExecutionResult {
-            kind: provider_id.into(),
+            kind: provider_id,
             artifact_path: project_root.join(version.file_path),
             request,
         }

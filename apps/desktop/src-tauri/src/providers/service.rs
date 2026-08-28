@@ -1,3 +1,4 @@
+use super::adapter::GenerationProvider;
 use super::error::{ProviderError, ProviderErrorKind};
 use super::model::*;
 use super::openai::OpenAiImageProvider;
@@ -7,6 +8,7 @@ use crate::workflow::execution::ExecutionRequest;
 use crate::db;
 use crate::project::repository::read_project;
 use std::path::Path;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +26,13 @@ pub struct ProviderExecutionOutcome {
     pub submission: ProviderSubmission,
     pub status: ProviderJobStatus,
     pub result: ProviderResult,
+}
+
+pub struct ProviderSubmissionHandle {
+    pub provider_id: String,
+    pub adapter_version: u32,
+    pub provider: Arc<dyn GenerationProvider>,
+    pub submission: ProviderSubmission,
 }
 
 pub struct ProviderService;
@@ -57,6 +66,15 @@ impl ProviderService {
             credential_reference,
             default_model: config.and_then(|record| record.default_model),
         })
+    }
+
+    pub fn configured_default(project_root: &Path) -> Result<Option<(String, String)>, AppError> {
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        read_project(&conn)?;
+        Ok(super::repository::list_provider_configs(&conn)?
+            .into_iter()
+            .find(|config| config.enabled && config.default_model.as_deref().is_some())
+            .and_then(|config| config.default_model.map(|model| (config.provider_id, model))))
     }
 
     pub fn configure(
@@ -124,6 +142,19 @@ impl ProviderService {
         model_id: &str,
         attempt_number: i64,
     ) -> Result<ProviderExecutionOutcome, AppError> {
+        let handle = Self::submit_compiled_request(request, step_id, compiled_request_id, provider_id, model_id, attempt_number)?;
+        let (status, result) = Self::finish_submission(&handle)?;
+        Ok(ProviderExecutionOutcome { provider_id: handle.provider_id, adapter_version: handle.adapter_version, submission: handle.submission, status, result })
+    }
+
+    pub fn submit_compiled_request(
+        request: &ExecutionRequest,
+        step_id: &str,
+        compiled_request_id: &str,
+        provider_id: &str,
+        model_id: &str,
+        attempt_number: i64,
+    ) -> Result<ProviderSubmissionHandle, AppError> {
         let mut registry = ProviderRegistry::builtin();
         if provider_id == "openai" {
             let token = std::env::var("OPENAI_API_KEY").map_err(|_| {
@@ -155,6 +186,19 @@ impl ProviderService {
                 ))
             })?;
         let submission = provider.submit(&provider_request).map_err(provider_error)?;
+        Ok(ProviderSubmissionHandle {
+            provider_id: provider_id.into(),
+            adapter_version: provider.adapter_version(),
+            provider,
+            submission,
+        })
+    }
+
+    pub fn finish_submission(
+        handle: &ProviderSubmissionHandle,
+    ) -> Result<(ProviderJobStatus, ProviderResult), AppError> {
+        let provider = &handle.provider;
+        let submission = &handle.submission;
         let mut status = provider.poll(&submission.job).map_err(provider_error)?;
         for _ in 0..16 {
             if matches!(status.lifecycle, ProviderLifecycle::Succeeded | ProviderLifecycle::Failed | ProviderLifecycle::Cancelled | ProviderLifecycle::Unknown) {
@@ -165,17 +209,11 @@ impl ProviderService {
         if !matches!(status.lifecycle, ProviderLifecycle::Succeeded) {
             return Err(AppError::ProviderExecution(format!(
                 "provider {} ended in {:?}",
-                provider_id, status.lifecycle
+                handle.provider_id, status.lifecycle
             )));
         }
         let result = provider.fetch_result(&submission.job).map_err(provider_error)?;
-        Ok(ProviderExecutionOutcome {
-            provider_id: provider_id.into(),
-            adapter_version: provider.adapter_version(),
-            submission,
-            status,
-            result,
-        })
+        Ok((status, result))
     }
 }
 
