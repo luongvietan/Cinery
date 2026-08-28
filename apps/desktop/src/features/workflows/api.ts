@@ -82,6 +82,9 @@ export function configureProvider(projectRootPath: string, config: Record<string
   return invokeCommand("configure_provider", { projectRootPath, config });
 }
 
+export function saveProviderCredential(projectRootPath: string, providerId: string, secret: string, defaultModel: string | null): Promise<ProviderConfigurationStatus> {
+  return invokeCommand("save_provider_credential", { projectRootPath, providerId, secret, defaultModel });
+}
 export function removeProviderCredentials(projectRootPath: string, providerId: string): Promise<void> {
   return invokeCommand("remove_provider_credentials", { projectRootPath, providerId });
 }

@@ -56,6 +56,7 @@ pub fn run() {
       providers::commands::list_providers,
       providers::commands::get_provider_capabilities,
       providers::commands::get_provider_configuration_status,
+      providers::commands::save_provider_credential,
       providers::commands::configure_provider,
       providers::commands::remove_provider_credentials,
       providers::commands::validate_provider_configuration,

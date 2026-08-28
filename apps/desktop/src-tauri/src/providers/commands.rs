@@ -2,7 +2,8 @@ use super::model::ProviderCapabilities;
 use super::repository::ProviderConfigRecord;
 use super::registry::ProviderRegistry;
 use super::service::{ProviderConfigurationStatus, ProviderService};
-use crate::error::AppCommandError;
+use super::credential_store::KeyringCredentialStore;
+use crate::error::{AppCommandError, AppError};
 use crate::db;
 use crate::project::service::validate_root_path;
 use crate::project::repository::read_project;
@@ -10,6 +11,14 @@ use crate::workflow::model::WorkflowRunDetail;
 use crate::workflow::repository::WorkflowRepository;
 use crate::workflow::runtime::WorkflowRuntime;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+/// The process-wide credential store. Tests inject their own store through
+/// the service API directly; the Tauri command surface always uses the real
+/// OS-backed vault.
+fn command_credential_store() -> Arc<KeyringCredentialStore> {
+    ProviderService::default_credential_store()
+}
 
 #[tauri::command]
 pub fn list_providers() -> Result<Vec<String>, AppCommandError> {
@@ -25,7 +34,15 @@ pub fn get_provider_capabilities(provider_id: String) -> Result<ProviderCapabili
 #[tauri::command]
 pub fn get_provider_configuration_status(project_root_path: String, provider_id: String) -> Result<ProviderConfigurationStatus, AppCommandError> {
     validate_root_path(&project_root_path)?;
-    ProviderService::configuration_status(&PathBuf::from(project_root_path), &provider_id).map_err(Into::into)
+    ProviderService::configuration_status(&PathBuf::from(project_root_path), command_credential_store().as_ref(), &provider_id).map_err(Into::into)
+}
+
+/// Accepts a secret at the command boundary. The secret is written to the OS
+/// credential vault and never persisted or echoed back.
+#[tauri::command]
+pub fn save_provider_credential(project_root_path: String, provider_id: String, secret: String, default_model: Option<String>) -> Result<ProviderConfigurationStatus, AppCommandError> {
+    validate_root_path(&project_root_path)?;
+    ProviderService::save_credential(&PathBuf::from(project_root_path), command_credential_store().as_ref(), &provider_id, &secret, default_model.as_deref()).map_err(Into::into)
 }
 
 #[tauri::command]
@@ -37,12 +54,19 @@ pub fn configure_provider(project_root_path: String, config: ProviderConfigRecor
 #[tauri::command]
 pub fn remove_provider_credentials(project_root_path: String, provider_id: String) -> Result<(), AppCommandError> {
     validate_root_path(&project_root_path)?;
-    ProviderService::remove_credential_reference(&PathBuf::from(project_root_path), &provider_id).map_err(Into::into)
+    ProviderService::remove_credential(&PathBuf::from(project_root_path), command_credential_store().as_ref(), &provider_id).map_err(Into::into)
 }
 
 #[tauri::command]
-pub fn validate_provider_configuration(provider_id: String) -> Result<(), AppCommandError> {
-    ProviderService::validate_configuration(&provider_id).map_err(Into::into)
+pub fn validate_provider_configuration(project_root_path: String, provider_id: String) -> Result<(), AppCommandError> {
+    validate_root_path(&project_root_path)?;
+    let root = PathBuf::from(project_root_path);
+    // Local providers are always valid; vault-backed providers must resolve.
+    if provider_id == "mock" || provider_id == "dry_run" {
+        ProviderRegistry::builtin().get(&provider_id).map_err(|error| AppError::ProviderExecution(error.message))?;
+        return Ok(());
+    }
+    ProviderService::resolve_credential(&root, command_credential_store().as_ref(), &provider_id).map(|_| ()).map_err(Into::into)
 }
 
 #[tauri::command]

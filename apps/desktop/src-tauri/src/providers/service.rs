@@ -1,4 +1,7 @@
 use super::adapter::GenerationProvider;
+use super::credential_store::{
+    credential_account, credential_reference, CredentialStore, KeyringCredentialStore,
+};
 use super::error::{ProviderError, ProviderErrorKind};
 use super::model::*;
 use super::openai::OpenAiImageProvider;
@@ -10,14 +13,35 @@ use crate::project::repository::read_project;
 use std::path::Path;
 use std::sync::Arc;
 
+/// Default OpenAI image model per the provider keychain spec.
+pub const OPENAI_DEFAULT_MODEL: &str = "gpt-image-2";
+
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderConfigurationStatus {
     pub provider_id: String,
     pub enabled: bool,
     pub credential_configured: bool,
-    pub credential_reference: Option<String>,
     pub default_model: Option<String>,
+    pub models: Vec<String>,
+}
+
+/// A resolved, ephemeral secret handed to a provider adapter at execution
+/// time. Never serialized, logged, or persisted.
+#[derive(Clone)]
+pub struct ResolvedProviderCredential {
+    pub provider_id: String,
+    pub account: String,
+    pub secret: String,
+}
+
+/// Legacy environment-reference prefix used by pre-keychain configurations.
+const LEGACY_ENV_PREFIX: &str = "env://";
+
+fn credential_store_error(action: &str) -> AppError {
+    AppError::ProviderConfiguration(format!(
+        "the operating system credential vault failed during {action}; no credential was changed"
+    ))
 }
 
 pub struct ProviderExecutionOutcome {
@@ -38,39 +62,219 @@ pub struct ProviderSubmissionHandle {
 pub struct ProviderService;
 
 impl ProviderService {
-    pub fn list_provider_ids() -> Vec<String> {
-        let mut ids = ProviderRegistry::builtin().ids();
-        if std::env::var_os("OPENAI_API_KEY").is_some() {
-            ids.push("openai".into());
-        }
-        ids
+    /// Shared credential store used by the production command surface.
+    pub fn default_credential_store() -> Arc<KeyringCredentialStore> {
+        Arc::new(KeyringCredentialStore::new())
     }
 
-    pub fn configuration_status(
-        project_root: &Path,
-        provider_id: &str,
-    ) -> Result<ProviderConfigurationStatus, AppError> {
+    pub fn list_provider_ids() -> Vec<String> {
+        ProviderRegistry::builtin().ids()
+    }
+
+    fn open_project_conn(project_root: &Path) -> Result<rusqlite::Connection, AppError> {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         read_project(&conn)?;
+        Ok(conn)
+    }
+
+    fn project_id(conn: &rusqlite::Connection) -> Result<String, AppError> {
+        Ok(read_project(conn)?.id)
+    }
+
+    /// Reads the effective credential configuration for one provider:
+    /// - `keyring://` references are verified against the vault;
+    /// - `env://` legacy references migrate into the vault when the variable
+    ///   exists and are reported unconfigured otherwise;
+    /// - always-local providers (mock, dry_run) are configured by default.
+    pub fn configuration_status<S: CredentialStore + ?Sized>(
+        project_root: &Path,
+        credentials: &S,
+        provider_id: &str,
+    ) -> Result<ProviderConfigurationStatus, AppError> {
+        let conn = Self::open_project_conn(project_root)?;
+        let project_id = Self::project_id(&conn)?;
         let config = super::repository::get_provider_config(&conn, provider_id)?;
-        let credential_reference = config.as_ref().and_then(|record| record.credential_reference.clone());
-        let credential_configured = credential_reference
-            .as_deref()
-            .and_then(|reference| std::env::var_os(reference))
-            .is_some()
-            || (provider_id == "mock" || provider_id == "dry_run");
+        let models = Self::models(provider_id)?;
+
+        let always_configured = provider_id == "mock" || provider_id == "dry_run";
+        let mut credential_configured = always_configured;
+        let mut default_model = config.as_ref().and_then(|record| record.default_model.clone());
+
+        if let Some(record) = &config {
+            match record.credential_reference.as_deref() {
+                Some(reference) if reference.starts_with("keyring://") => {
+                    let account = credential_account(&project_id, provider_id);
+                    if reference == credential_reference(&account) {
+                        let secret =
+                            resolve_configured_secret_impl(credentials, &account)?;
+                        credential_configured = secret.is_some();
+                    }
+                }
+                Some(reference) if reference.starts_with(LEGACY_ENV_PREFIX) => {
+                    let variable = reference.trim_start_matches(LEGACY_ENV_PREFIX);
+                    if let Ok(secret) = std::env::var(variable) {
+                        if !secret.trim().is_empty() {
+                            // Migrate into the vault and replace the stored
+                            // reference. The environment variable itself is
+                            // never persisted anywhere.
+                            let account = credential_account(&project_id, provider_id);
+                            credentials
+                                .set_secret(&account, &secret)
+                                .map_err(|_| credential_store_error("migrating a legacy credential"))?;
+                            super::repository::upsert_provider_config(
+                                &conn,
+                                &super::repository::ProviderConfigRecord {
+                                    provider_id: provider_id.into(),
+                                    enabled: record.enabled,
+                                    credential_reference: Some(credential_reference(&account)),
+                                    default_model: record.default_model.clone(),
+                                    endpoint: record.endpoint.clone(),
+                                    request_timeout_seconds: record.request_timeout_seconds,
+                                    polling_interval_seconds: record.polling_interval_seconds,
+                                },
+                            )?;
+                            credential_configured = true;
+                            if default_model.is_none() && provider_id == "openai" {
+                                default_model = Some(OPENAI_DEFAULT_MODEL.into());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if credential_configured && default_model.is_none() && provider_id == "openai" {
+            default_model = Some(OPENAI_DEFAULT_MODEL.into());
+        }
+
         Ok(ProviderConfigurationStatus {
             provider_id: provider_id.into(),
             enabled: config.as_ref().map(|record| record.enabled).unwrap_or(true),
             credential_configured,
-            credential_reference,
-            default_model: config.and_then(|record| record.default_model),
+            default_model,
+            models,
+        })
+    }
+
+    /// Saves a secret at the command boundary: vault first, database second,
+    /// with compensating vault cleanup when the database write fails.
+    pub fn save_credential<S: CredentialStore + ?Sized>(
+        project_root: &Path,
+        credentials: &S,
+        provider_id: &str,
+        secret: &str,
+        default_model: Option<&str>,
+    ) -> Result<ProviderConfigurationStatus, AppError> {
+        let secret = secret.trim();
+        if secret.is_empty() {
+            return Err(AppError::ProviderConfiguration(
+                "the credential value must not be empty".into(),
+            ));
+        }
+        let conn = Self::open_project_conn(project_root)?;
+        let project_id = Self::project_id(&conn)?;
+        let account = credential_account(&project_id, provider_id);
+
+        let previous = credentials
+            .get_secret(&account)
+            .map_err(|_| credential_store_error("reading the prior credential"))?;
+        credentials
+            .set_secret(&account, secret)
+            .map_err(|_| credential_store_error("saving the credential"))?;
+
+        let reference = credential_reference(&account);
+        let existing = super::repository::get_provider_config(&conn, provider_id)?;
+        let record = super::repository::ProviderConfigRecord {
+            provider_id: provider_id.into(),
+            enabled: existing.as_ref().map(|record| record.enabled).unwrap_or(true),
+            credential_reference: Some(reference),
+            default_model: default_model
+                .map(str::to_string)
+                .or_else(|| existing.as_ref().and_then(|record| record.default_model.clone()))
+                .or_else(|| (provider_id == "openai").then(|| OPENAI_DEFAULT_MODEL.into())),
+            endpoint: existing.as_ref().and_then(|record| record.endpoint.clone()),
+            request_timeout_seconds: existing
+                .as_ref()
+                .map(|record| record.request_timeout_seconds)
+                .unwrap_or(60),
+            polling_interval_seconds: existing
+                .as_ref()
+                .map(|record| record.polling_interval_seconds)
+                .unwrap_or(3),
+        };
+        if let Err(db_error) = super::repository::upsert_provider_config(&conn, &record) {
+            // Compensate: restore the prior vault value or delete the entry.
+            let restore = previous.as_deref();
+            let _ = match restore {
+                Some(value) => credentials.set_secret(&account, value),
+                None => credentials.delete_secret(&account),
+            };
+            return Err(db_error);
+        }
+        drop(conn);
+        Self::configuration_status(project_root, credentials, provider_id)
+    }
+
+    /// Removes a credential: database reference first, vault second. A vault
+    /// cleanup failure is surfaced as an orphaned-secret error while the
+    /// provider stays disabled (no DB reference => not configured).
+    pub fn remove_credential<S: CredentialStore + ?Sized>(
+        project_root: &Path,
+        credentials: &S,
+        provider_id: &str,
+    ) -> Result<(), AppError> {
+        let conn = Self::open_project_conn(project_root)?;
+        let project_id = Self::project_id(&conn)?;
+        let account = credential_account(&project_id, provider_id);
+
+        let existing = super::repository::get_provider_config(&conn, provider_id)?;
+        if let Some(record) = existing {
+            let cleared = super::repository::ProviderConfigRecord {
+                credential_reference: None,
+                ..record
+            };
+            super::repository::upsert_provider_config(&conn, &cleared)?;
+        }
+        drop(conn);
+
+        credentials
+            .delete_secret(&account)
+            .map_err(|_| {
+                AppError::ProviderConfiguration(
+                    "the credential reference was removed but the vault entry could not be \
+                     deleted; an orphaned secret remains in the credential vault and the \
+                     provider stays disabled until it is removed"
+                        .into(),
+                )
+            })
+    }
+
+    /// Resolves the ephemeral secret for execution. Fails as a configuration
+    /// error (never a provider attempt) when the credential is unavailable.
+    pub fn resolve_credential<S: CredentialStore + ?Sized>(
+        project_root: &Path,
+        credentials: &S,
+        provider_id: &str,
+    ) -> Result<ResolvedProviderCredential, AppError> {
+        let conn = Self::open_project_conn(project_root)?;
+        let project_id = Self::project_id(&conn)?;
+        let account = credential_account(&project_id, provider_id);
+        let secret = resolve_configured_secret_impl(credentials, &account)?
+            .ok_or_else(|| {
+                AppError::ProviderConfiguration(format!(
+                    "provider {provider_id} has no credential configured for this project"
+                ))
+            })?;
+        Ok(ResolvedProviderCredential {
+            provider_id: provider_id.into(),
+            account,
+            secret,
         })
     }
 
     pub fn configured_default(project_root: &Path) -> Result<Option<(String, String)>, AppError> {
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        read_project(&conn)?;
+        let conn = Self::open_project_conn(project_root)?;
         Ok(super::repository::list_provider_configs(&conn)?
             .into_iter()
             .find(|config| config.enabled && config.default_model.as_deref().is_some())
@@ -81,15 +285,29 @@ impl ProviderService {
         project_root: &Path,
         config: &super::repository::ProviderConfigRecord,
     ) -> Result<ProviderConfigurationStatus, AppError> {
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        read_project(&conn)?;
-        super::repository::upsert_provider_config(&conn, config)?;
-        Self::configuration_status(project_root, &config.provider_id)
+        let conn = Self::open_project_conn(project_root)?;
+        // Guard: configuration updates must never (re)introduce a plaintext
+        // environment reference as a credential path.
+        let mut sanitized = config.clone();
+        if let Some(reference) = &sanitized.credential_reference {
+            if reference.starts_with(LEGACY_ENV_PREFIX) {
+                sanitized.credential_reference = None;
+            }
+        }
+        super::repository::upsert_provider_config(&conn, &sanitized)?;
+        drop(conn);
+        let models = Self::models(&sanitized.provider_id)?;
+        Ok(ProviderConfigurationStatus {
+            provider_id: sanitized.provider_id,
+            enabled: sanitized.enabled,
+            credential_configured: sanitized.credential_reference.is_some(),
+            default_model: sanitized.default_model,
+            models,
+        })
     }
 
     pub fn remove_credential_reference(project_root: &Path, provider_id: &str) -> Result<(), AppError> {
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        read_project(&conn)?;
+        let conn = Self::open_project_conn(project_root)?;
         let mut config = super::repository::get_provider_config(&conn, provider_id)?.unwrap_or(super::repository::ProviderConfigRecord {
             provider_id: provider_id.into(), enabled: true, credential_reference: None, default_model: None, endpoint: None, request_timeout_seconds: 60, polling_interval_seconds: 3,
         });
@@ -107,7 +325,7 @@ impl ProviderService {
 
     pub fn models(provider_id: &str) -> Result<Vec<String>, AppError> {
         if provider_id == "openai" {
-            return Ok(vec!["gpt-image-1".into()]);
+            return Ok(vec![OPENAI_DEFAULT_MODEL.into()]);
         }
         Ok(ProviderRegistry::builtin().get(provider_id).map_err(provider_error)?.capabilities().supported_models)
     }
@@ -165,6 +383,7 @@ impl ProviderService {
                 token,
             ));
         }
+
         let provider = registry.get(provider_id).map_err(provider_error)?;
         let provider_request = ProviderExecutionRequest::from_execution_request(
             &request.provenance.workflow_run_id,
@@ -215,6 +434,15 @@ impl ProviderService {
         let result = provider.fetch_result(&submission.job).map_err(provider_error)?;
         Ok((status, result))
     }
+}
+
+fn resolve_configured_secret_impl<S: CredentialStore + ?Sized>(
+    credentials: &S,
+    account: &str,
+) -> Result<Option<String>, AppError> {
+    credentials
+        .get_secret(account)
+        .map_err(|_| credential_store_error("reading the credential"))
 }
 
 fn provider_error(error: ProviderError) -> AppError {
