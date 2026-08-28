@@ -90,6 +90,22 @@ pub enum AssetType {
     Audio,
 }
 
+impl AssetType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::FaceLock => "face_lock",
+            Self::Outfit => "outfit",
+            Self::CharacterSheet => "character_sheet",
+            Self::WorldPlate => "world_plate",
+            Self::ShotKeyframe => "shot_keyframe",
+            Self::PropPlate => "prop_plate",
+            Self::Image => "image",
+            Self::Video => "video",
+            Self::Audio => "audio",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssetVersionStatus {
@@ -101,6 +117,21 @@ pub enum AssetVersionStatus {
     Approved,
     Canonical,
     Superseded,
+}
+
+impl AssetVersionStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Generated => "generated",
+            Self::Candidate => "candidate",
+            Self::QaFailed => "qa_failed",
+            Self::Repairing => "repairing",
+            Self::Approved => "approved",
+            Self::Canonical => "canonical",
+            Self::Superseded => "superseded",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

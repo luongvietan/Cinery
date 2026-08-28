@@ -1,0 +1,331 @@
+use crate::canon::model::CanonEntityType;
+use crate::error::AppError;
+use crate::workflow::model::{
+    CanonSnapshotRef, CanonSnapshotStatus, CanonTbdSnapshot, PrerequisiteReport,
+    WorkflowContextSnapshot, WorkflowProjectRef, WorkflowSkillRef,
+};
+use chrono::Utc;
+use rusqlite::{params, Connection};
+use serde_json::{json, Value};
+use std::fs;
+use std::path::Path;
+
+pub fn resolve_character_face_lock_context(
+    conn: &Connection,
+    project_id: &str,
+    skill_id: &str,
+    skill_version: &str,
+    operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let character_id = input
+        .get("characterEntityId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::WorkflowInputInvalid("characterEntityId must be a non-empty string".into())
+        })?;
+    let (story_name, entity_type): (String, String) = conn
+        .query_row(
+            "SELECT name, type FROM canon_entities WHERE project_id = ?1 AND id = ?2",
+            params![project_id, character_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::CanonEntityNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if entity_type != CanonEntityType::Character.as_str() {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "selected entity is not a character".into(),
+        ));
+    }
+
+    let mut canon = Vec::new();
+    let mut role_tag = None;
+    let mut visual_summary = None;
+    let mut permanent_visual_locks = Vec::new();
+    let mut statement = conn
+        .prepare("SELECT id, section_key, value_json, revision, status FROM canon_sections WHERE canon_entity_id = ?1 AND status = 'locked' ORDER BY section_key")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([character_id], |row| {
+            let value_json: String = row.get(2)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                value_json,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (section_id, section_key, value_json, revision, status) = row.map_err(db_error)?;
+        let value: Value = serde_json::from_str(&value_json)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        canon.push(CanonSnapshotRef {
+            entity_id: character_id.to_string(),
+            entity_type: CanonEntityType::Character,
+            section_id,
+            section_key: section_key.clone(),
+            revision,
+            status: CanonSnapshotStatus::Locked,
+            value: value.clone(),
+        });
+        match section_key.as_str() {
+            "role_tag" => {
+                role_tag = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            "visual_summary" => {
+                visual_summary = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            "visual_locks" => {
+                if let Some(values) = value.get("locks").and_then(Value::as_array) {
+                    permanent_visual_locks = values.clone();
+                }
+            }
+            _ => {}
+        }
+        let _ = status;
+    }
+
+    let protected_tbds = load_protected_tbds(conn, project_id)?;
+    let detailed_visual_spec = input.get("visualSpec").cloned().unwrap_or(Value::Null);
+    let baseline_wardrobe = input
+        .get("baselineWardrobe")
+        .cloned()
+        .unwrap_or(Value::String(String::new()));
+    let resolved_context = json!({
+        "character": {
+            "entityId": character_id,
+            "storyName": story_name,
+            "roleTag": role_tag,
+            "visualSummary": visual_summary,
+            "permanentVisualLocks": permanent_visual_locks,
+        },
+        "detailedVisualSpec": detailed_visual_spec,
+        "baselineWardrobe": baseline_wardrobe,
+        "referencePlateRules": {
+            "background": "flat 18% neutral gray field",
+            "lighting": "flat shadowless neutral illumination",
+            "castShadow": false,
+            "contactShadow": false,
+            "cinematicDepthOfField": false,
+            "biologicalRealism": true,
+        }
+    });
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: skill_id.to_string(),
+            skill_version: skill_version.to_string(),
+            operation_id: operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report,
+        canon,
+        assets: Vec::new(),
+        protected_tbds,
+        resolved_context,
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
+fn load_protected_tbds(
+    conn: &Connection,
+    project_id: &str,
+) -> Result<Vec<CanonTbdSnapshot>, AppError> {
+    let mut statement = conn.prepare("SELECT id, canon_entity_id, section_key, topic, note, protected, status, resolution_text, created_at, updated_at, resolved_at FROM canon_tbds WHERE project_id = ?1 AND protected = 1 AND status = 'open' ORDER BY id").map_err(db_error)?;
+    let result = statement
+        .query_map([project_id], |row| {
+            Ok(CanonTbdSnapshot {
+                id: row.get(0)?,
+                project_id: project_id.to_string(),
+                canon_entity_id: row.get(1)?,
+                section_key: row.get(2)?,
+                topic: row.get(3)?,
+                note: row.get(4)?,
+                protected: row.get::<_, i64>(5)? != 0,
+                status: crate::workflow::model::CanonTbdStatus::Open,
+                resolution_text: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                resolved_at: row.get(10)?,
+            })
+        })
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error);
+    result
+}
+
+pub fn write_snapshot_atomically(
+    path: &Path,
+    snapshot: &WorkflowContextSnapshot,
+) -> Result<(), AppError> {
+    let parent = path.parent().ok_or_else(|| {
+        AppError::WorkflowArtifactWriteFailed("snapshot has no parent directory".into())
+    })?;
+    fs::create_dir_all(parent)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
+    let temp = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(snapshot)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
+    fs::write(&temp, bytes)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
+    fs::rename(&temp, path)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))
+}
+
+fn db_error(error: rusqlite::Error) -> AppError {
+    AppError::Database(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrations::run_migrations;
+    use crate::workflow::model::PrerequisiteReport;
+
+    fn fixture() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute("INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p', 'Red Door', 'now', 'now', 1)", []).unwrap();
+        conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('mara', 'p', 'character', 'Mara', 'mara', 'now', 'now')", []).unwrap();
+        for (id, key, value, status, revision) in [
+            (
+                "s1",
+                "role_tag",
+                serde_json::json!({"text":"Protagonist"}),
+                "locked",
+                2,
+            ),
+            (
+                "s2",
+                "visual_summary",
+                serde_json::json!({"text":"Angular face, dark hair."}),
+                "locked",
+                3,
+            ),
+            (
+                "s3",
+                "visual_locks",
+                serde_json::json!({"locks":[{"id":"scar","key":"right_eyebrow_scar","description":"Small healed scar.","severity":"required","validatorHint":null}]}),
+                "locked",
+                4,
+            ),
+            (
+                "s4",
+                "psychology",
+                serde_json::json!({"text":"Draft psychology"}),
+                "draft",
+                5,
+            ),
+        ] {
+            conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at) VALUES (?1, 'mara', ?2, ?3, ?4, ?5, 'now', 'now')", params![id, key, value.to_string(), status, revision]).unwrap();
+        }
+        conn
+    }
+
+    fn input() -> Value {
+        json!({
+            "projectRootPath":"C:/projects/red-door",
+            "characterEntityId":"mara",
+            "visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},
+            "baselineWardrobe":"charcoal crew neck"
+        })
+    }
+
+    #[test]
+    fn snapshots_only_locked_sections_and_preserves_visual_locks() {
+        let conn = fixture();
+        let snapshot = resolve_character_face_lock_context(
+            &conn,
+            "p",
+            "character-builder",
+            "1.0.0",
+            "character.create_face_lock",
+            &input(),
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.canon.len(), 3);
+        assert!(snapshot
+            .canon
+            .iter()
+            .all(|section| section.section_key != "psychology"));
+        assert_eq!(
+            snapshot
+                .canon
+                .iter()
+                .find(|section| section.section_key == "visual_locks")
+                .unwrap()
+                .revision,
+            4
+        );
+        assert_eq!(
+            snapshot.resolved_context["character"]["roleTag"],
+            "Protagonist"
+        );
+        assert_eq!(
+            snapshot.resolved_context["character"]["visualSummary"],
+            "Angular face, dark hair."
+        );
+        assert_eq!(
+            snapshot.resolved_context["character"]["permanentVisualLocks"][0]["key"],
+            "right_eyebrow_scar"
+        );
+    }
+
+    #[test]
+    fn snapshot_value_does_not_change_after_current_canon_mutates() {
+        let conn = fixture();
+        let snapshot = resolve_character_face_lock_context(
+            &conn,
+            "p",
+            "character-builder",
+            "1.0.0",
+            "character.create_face_lock",
+            &input(),
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE canon_sections SET value_json = '{\"locks\":[]}', revision = 5 WHERE id = 's3'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            snapshot
+                .canon
+                .iter()
+                .find(|section| section.section_key == "visual_locks")
+                .unwrap()
+                .revision,
+            4
+        );
+        assert_eq!(
+            snapshot.resolved_context["character"]["permanentVisualLocks"][0]["key"],
+            "right_eyebrow_scar"
+        );
+    }
+}

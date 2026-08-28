@@ -24,6 +24,15 @@ pub fn run() {
       assets::commands::get_asset_with_versions,
       assets::commands::import_asset_version,
       assets::commands::promote_asset_version,
+      skills::commands::list_skill_operations,
+      workflow::commands::create_workflow_run,
+      workflow::commands::advance_workflow_run,
+      workflow::commands::approve_workflow_step,
+      workflow::commands::reject_workflow_step,
+      workflow::commands::cancel_workflow_run,
+      workflow::commands::get_workflow_run,
+      workflow::commands::list_workflow_runs,
+      workflow::commands::list_workflow_characters,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

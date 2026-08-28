@@ -42,6 +42,11 @@ export const WORKFLOW_EVENT_TYPES = [
 ] as const;
 export type WorkflowEventType = (typeof WORKFLOW_EVENT_TYPES)[number];
 
+export interface WorkflowCharacterOption {
+  id: string;
+  name: string;
+}
+
 export interface PrerequisiteCheck {
   id: string;
   prerequisite: Prerequisite;
@@ -161,3 +166,50 @@ export const workflowContextSnapshotSchema = z
     capturedAt: z.string().datetime({ offset: true }),
   })
   .strict();
+
+export interface WorkflowRunRecord {
+  id: string;
+  projectId: string;
+  skillId: string;
+  skillVersion: string;
+  operationId: string;
+  status: WorkflowRunStatus;
+  inputJson: string;
+  prerequisiteReportJson: string | null;
+  contextSnapshotJson: string | null;
+  currentStepIndex: number;
+  failureCode: string | null;
+  failureMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface WorkflowStepRecord {
+  id: string;
+  workflowRunId: string;
+  stepDefinitionId: string;
+  stepIndex: number;
+  stepType: string;
+  status: WorkflowStepStatus;
+  inputJson: string | null;
+  outputJson: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface WorkflowEventRecord {
+  id: string;
+  workflowRunId: string;
+  sequence: number;
+  eventType: WorkflowEventType;
+  stepDefinitionId: string | null;
+  payloadJson: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowRunDetail {
+  run: WorkflowRunRecord;
+  steps: WorkflowStepRecord[];
+  events: WorkflowEventRecord[];
+}

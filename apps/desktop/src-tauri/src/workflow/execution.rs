@@ -81,6 +81,7 @@ mod tests {
 }
 use crate::skills::model::ExpectedOutputDefinition;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 fn deserialize_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
@@ -169,4 +170,12 @@ pub struct ExecutionProvenance {
     pub skill_id: String,
     pub skill_version: String,
     pub operation_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionResult {
+    pub kind: String,
+    pub artifact_path: PathBuf,
+    pub request: ExecutionRequest,
 }

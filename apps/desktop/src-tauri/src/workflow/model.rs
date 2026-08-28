@@ -250,7 +250,15 @@ pub struct WorkflowSkillRef {
     pub operation_id: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowCharacterOption {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowRunRecord {
     pub id: String,
     pub project_id: String,
@@ -269,7 +277,8 @@ pub struct WorkflowRunRecord {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowStepRecord {
     pub id: String,
     pub workflow_run_id: String,
@@ -283,7 +292,8 @@ pub struct WorkflowStepRecord {
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowEventRecord {
     pub id: String,
     pub workflow_run_id: String,
@@ -294,7 +304,8 @@ pub struct WorkflowEventRecord {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkflowRunDetail {
     pub run: WorkflowRunRecord,
     pub steps: Vec<WorkflowStepRecord>,

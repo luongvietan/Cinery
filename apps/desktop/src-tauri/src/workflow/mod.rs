@@ -1,3 +1,11 @@
 pub mod execution;
+pub mod context;
+pub mod commands;
+pub mod artifacts;
+pub mod compiler;
+pub mod executor;
 pub mod model;
+pub mod prerequisites;
+pub mod recovery;
 pub mod repository;
+pub mod runtime;

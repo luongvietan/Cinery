@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::project::model::{ProjectRecord, ProjectSummary};
 use crate::project::paths::{self, PROJECT_SCHEMA_VERSION};
 use crate::project::repository;
+use crate::workflow::recovery::recover_interrupted_runs;
 use chrono::Utc;
 use std::collections::HashSet;
 use std::fs;
@@ -80,7 +81,11 @@ impl ProjectService {
             return Err(AppError::ProjectIdentityMismatch);
         }
 
-        Ok(to_summary(record, root))
+        let summary = to_summary(record, root);
+        drop(conn);
+        recover_interrupted_runs(root)?;
+
+        Ok(summary)
     }
 }
 
