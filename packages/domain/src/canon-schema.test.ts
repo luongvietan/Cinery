@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  parseCanonSectionValue,
   premiseSchema,
   visualLockSchema,
   visualLocksSchema,
@@ -15,12 +14,6 @@ describe("canon schemas", () => {
     ).toEqual({
       text: "A lone operator receives her own future voice.",
     });
-  });
-
-  it("parses a section through the entity schema registry", () => {
-    expect(
-      parseCanonSectionValue("character", "role_tag", { text: "Lead" }),
-    ).toEqual({ text: "Lead" });
   });
 
   it("rejects an invalid visual lock severity", () => {

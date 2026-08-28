@@ -73,10 +73,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = conn.execute(
-            "INSERT INTO children (id, parent_id) VALUES (1, 999)",
-            [],
-        );
+        let result = conn.execute("INSERT INTO children (id, parent_id) VALUES (1, 999)", []);
 
         assert!(
             result.is_err(),

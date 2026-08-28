@@ -120,7 +120,11 @@ pub fn validate_root_path(value: &str) -> Result<(), AppError> {
 
 fn snapshot_entries(root: &Path) -> HashSet<PathBuf> {
     fs::read_dir(root)
-        .map(|entries| entries.filter_map(|entry| entry.ok().map(|e| e.path())).collect())
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok().map(|e| e.path()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -131,7 +135,11 @@ fn snapshot_entries(root: &Path) -> HashSet<PathBuf> {
 /// - If `root` already existed, it is never deleted; only entries that
 ///   were not present in `pre_existing_entries` are removed, since those
 ///   are the ones this attempt introduced.
-fn cleanup_partial_create(root: &Path, existed_before: bool, pre_existing_entries: &HashSet<PathBuf>) {
+fn cleanup_partial_create(
+    root: &Path,
+    existed_before: bool,
+    pre_existing_entries: &HashSet<PathBuf>,
+) {
     if !root.exists() {
         return;
     }

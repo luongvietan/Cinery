@@ -71,8 +71,7 @@ pub fn write_manifest(root: &Path, project_id: &str) -> Result<(), AppError> {
         schema_version: PROJECT_SCHEMA_VERSION,
     };
 
-    let yaml =
-        serde_yaml::to_string(&manifest).map_err(|e| AppError::FileSystem(e.to_string()))?;
+    let yaml = serde_yaml::to_string(&manifest).map_err(|e| AppError::FileSystem(e.to_string()))?;
 
     let tmp_path = root.join(MANIFEST_TMP_FILE_NAME);
     let final_path = root.join(MANIFEST_FILE_NAME);

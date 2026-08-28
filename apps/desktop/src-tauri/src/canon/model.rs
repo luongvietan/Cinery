@@ -81,8 +81,8 @@ pub struct CanonSectionRevisionRecord {
 }
 
 /// Row shape stored in a project's `canon_tbds` table.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CanonTbdRecord {
     pub id: String,
     pub project_id: String,
@@ -96,4 +96,11 @@ pub struct CanonTbdRecord {
     pub created_at: String,
     pub updated_at: String,
     pub resolved_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CanonSingletonsDto {
+    pub story: CanonEntityRecord,
+    pub production_rules: CanonEntityRecord,
 }

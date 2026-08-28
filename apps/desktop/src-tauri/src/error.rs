@@ -70,8 +70,8 @@ pub enum AppError {
     #[error("Unknown canon section for this entity type")]
     UnknownCanonSection,
 
-    #[error("Canon section value does not match its schema: {0}")]
-    InvalidCanonSectionValue(String),
+    #[error("Canon section value does not match its schema")]
+    InvalidCanonSectionValue,
 
     #[error("Locked canon sections must be unlocked before editing")]
     CanonSectionLocked,
@@ -234,3 +234,4 @@ mod tests {
         assert_eq!(AppError::Database("boom".to_string()).code(), "DATABASE");
     }
 }
+

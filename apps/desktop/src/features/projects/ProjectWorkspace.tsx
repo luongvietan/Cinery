@@ -4,13 +4,14 @@ import { BackButton } from "../../components/BackButton";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
+import { CanonWorkspace } from "../canon/CanonWorkspace";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets" | "workflows";
+type PanelView = "none" | "assets" | "workflows" | "canon";
 
 export function ProjectWorkspace({
   project,
@@ -49,6 +50,17 @@ export function ProjectWorkspace({
         </button>
         <button
           type="button"
+          aria-pressed={panelView === "canon"}
+          className={panelView === "canon" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => {
+            setPanelView("canon");
+            setSelectedAssetId(null);
+          }}
+        >
+          Canon
+        </button>
+        <button
+          type="button"
           aria-pressed={panelView === "workflows"}
           className={panelView === "workflows" ? "nav-button nav-button--active" : "nav-button"}
           onClick={() => {
@@ -83,6 +95,7 @@ export function ProjectWorkspace({
         {panelView === "workflows" ? (
           <WorkflowWorkspace projectRootPath={project.rootPath} />
         ) : null}
+        {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} /> : null}
       </section>
     </>
   );
