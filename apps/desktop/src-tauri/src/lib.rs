@@ -71,6 +71,18 @@ pub fn run() {
       worlds::commands::get_world,
       worlds::commands::list_worlds_detailed,
       worlds::commands::get_world_detailed,
+      scenes::commands::create_scene,
+      scenes::commands::list_scenes,
+      scenes::commands::get_scene,
+      scenes::commands::update_scene_details,
+      scenes::commands::assign_scene_world,
+      scenes::commands::clear_scene_world,
+      scenes::commands::add_scene_character,
+      scenes::commands::remove_scene_character,
+      scenes::commands::list_scene_characters,
+      scenes::commands::add_scene_prop,
+      scenes::commands::remove_scene_prop,
+      scenes::commands::list_scene_props,
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

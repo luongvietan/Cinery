@@ -216,6 +216,48 @@ pub enum AppError {
 
     #[error("TBD not applicable reason is required: {0}")]
     TbdNotApplicableReasonRequired(String),
+
+    #[error("Scene was not found")]
+    SceneNotFound,
+
+    #[error("Scene title must not be empty")]
+    InvalidSceneTitle,
+
+    #[error("Scene summary is invalid: {0}")]
+    InvalidSceneSummary(String),
+
+    #[error("World plate has no canonical version: {0}")]
+    SceneWorldPlateNotCanonical(String),
+
+    #[error("Character look asset version is not canonical")]
+    SceneCharacterLookNotCanonical,
+
+    #[error("Character look is not owned by the given character")]
+    SceneCharacterLookNotOwned,
+
+    #[error("Character already assigned to this scene")]
+    SceneCharacterAlreadyExists,
+
+    #[error("Character assignment was not found")]
+    SceneCharacterNotFound,
+
+    #[error("Character sheet asset version is not canonical")]
+    SceneCharacterSheetNotCanonical,
+
+    #[error("Character sheet is not owned by the given character")]
+    SceneCharacterSheetNotOwned,
+
+    #[error("Prop plate asset version is not canonical")]
+    ScenePropNotCanonical,
+
+    #[error("Prop plate asset type must be prop_plate")]
+    ScenePropInvalidType,
+
+    #[error("Prop already assigned to this scene")]
+    ScenePropAlreadyExists,
+
+    #[error("Prop assignment was not found")]
+    ScenePropNotFound,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

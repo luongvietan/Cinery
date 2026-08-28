@@ -1,0 +1,421 @@
+use crate::error::AppError;
+use crate::scenes::model::{
+    Scene, SceneCharacterAssignment, ScenePropAssignment, SceneReferenceEvent,
+};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
+
+fn row_to_scene(row: &rusqlite::Row) -> rusqlite::Result<Scene> {
+    Ok(Scene {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        ordinal: row.get(2)?,
+        title: row.get(3)?,
+        summary: row.get(4)?,
+        world_id: row.get(5)?,
+        world_asset_version_id: row.get(6)?,
+        keyframe_asset_id: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
+}
+
+fn row_to_character(row: &rusqlite::Row) -> rusqlite::Result<SceneCharacterAssignment> {
+    Ok(SceneCharacterAssignment {
+        id: row.get(0)?,
+        scene_id: row.get(1)?,
+        character_entity_id: row.get(2)?,
+        look_asset_version_id: row.get(3)?,
+        sheet_asset_version_id: row.get(4)?,
+        notes: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+fn row_to_prop(row: &rusqlite::Row) -> rusqlite::Result<ScenePropAssignment> {
+    Ok(ScenePropAssignment {
+        id: row.get(0)?,
+        scene_id: row.get(1)?,
+        prop_asset_version_id: row.get(2)?,
+        label: row.get(3)?,
+        notes: row.get(4)?,
+        created_at: row.get(5)?,
+    })
+}
+
+fn row_to_event(row: &rusqlite::Row) -> rusqlite::Result<SceneReferenceEvent> {
+    let kind_str: String = row.get(2)?;
+    let action_str: String = row.get(4)?;
+    Ok(SceneReferenceEvent {
+        id: row.get(0)?,
+        scene_id: row.get(1)?,
+        reference_kind: kind_str.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                2,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            )
+        })?,
+        assignment_id: row.get(3)?,
+        action: action_str.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(
+                4,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            )
+        })?,
+        from_version_id: row.get(5)?,
+        to_version_id: row.get(6)?,
+        created_at: row.get(7)?,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Scene CRUD
+// ---------------------------------------------------------------------------
+
+pub fn insert_scene(tx: &Transaction<'_>, scene: &Scene) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO scenes (id, project_id, ordinal, title, summary, world_id, world_asset_version_id, keyframe_asset_id, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            scene.id,
+            scene.project_id,
+            scene.ordinal,
+            scene.title,
+            scene.summary,
+            scene.world_id,
+            scene.world_asset_version_id,
+            scene.keyframe_asset_id,
+            scene.created_at,
+            scene.updated_at,
+        ],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+pub fn get_scene(conn: &Connection, scene_id: &str) -> Result<Scene, AppError> {
+    conn.query_row(
+        "SELECT id, project_id, ordinal, title, summary, world_id, world_asset_version_id, keyframe_asset_id, created_at, updated_at FROM scenes WHERE id = ?1",
+        params![scene_id],
+        row_to_scene,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))?
+    .ok_or(AppError::SceneNotFound)
+}
+
+pub fn list_scenes(conn: &Connection, project_id: &str) -> Result<Vec<Scene>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, ordinal, title, summary, world_id, world_asset_version_id, keyframe_asset_id, created_at, updated_at FROM scenes WHERE project_id = ?1 ORDER BY ordinal ASC",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![project_id], row_to_scene)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut scenes = Vec::new();
+    for row in rows {
+        scenes.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+    }
+    Ok(scenes)
+}
+
+pub fn next_ordinal(tx: &Transaction<'_>, project_id: &str) -> Result<i64, AppError> {
+    tx.query_row(
+        "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM scenes WHERE project_id = ?1",
+        params![project_id],
+        |row| row.get(0),
+    )
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+pub fn update_scene_details(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    title: &str,
+    summary: &str,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scenes SET title = ?1, summary = ?2, updated_at = ?3 WHERE id = ?4",
+            params![title, summary, updated_at, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    Ok(())
+}
+
+pub fn update_scene_world(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    world_id: Option<&str>,
+    world_asset_version_id: Option<&str>,
+    updated_at: &str,
+) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "UPDATE scenes SET world_id = ?1, world_asset_version_id = ?2, updated_at = ?3 WHERE id = ?4",
+            params![world_id, world_asset_version_id, updated_at, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Scene Characters
+// ---------------------------------------------------------------------------
+
+pub fn insert_scene_character(
+    tx: &Transaction<'_>,
+    assignment: &SceneCharacterAssignment,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO scene_characters (id, scene_id, character_entity_id, look_asset_version_id, sheet_asset_version_id, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            assignment.id,
+            assignment.scene_id,
+            assignment.character_entity_id,
+            assignment.look_asset_version_id,
+            assignment.sheet_asset_version_id,
+            assignment.notes,
+            assignment.created_at,
+            assignment.updated_at,
+        ],
+    )
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("UNIQUE constraint failed") && msg.contains("scene_characters") {
+            AppError::SceneCharacterAlreadyExists
+        } else {
+            AppError::Database(msg)
+        }
+    })?;
+    Ok(())
+}
+
+pub fn list_scene_characters(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<SceneCharacterAssignment>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scene_id, character_entity_id, look_asset_version_id, sheet_asset_version_id, notes, created_at, updated_at FROM scene_characters WHERE scene_id = ?1 ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], row_to_character)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+    }
+    Ok(out)
+}
+
+pub fn get_scene_character(
+    conn: &Connection,
+    assignment_id: &str,
+) -> Result<SceneCharacterAssignment, AppError> {
+    conn.query_row(
+        "SELECT id, scene_id, character_entity_id, look_asset_version_id, sheet_asset_version_id, notes, created_at, updated_at FROM scene_characters WHERE id = ?1",
+        params![assignment_id],
+        row_to_character,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))?
+    .ok_or(AppError::SceneCharacterNotFound)
+}
+
+pub fn find_scene_character_by_scene_and_character(
+    conn: &Connection,
+    scene_id: &str,
+    character_entity_id: &str,
+) -> Result<Option<SceneCharacterAssignment>, AppError> {
+    conn.query_row(
+        "SELECT id, scene_id, character_entity_id, look_asset_version_id, sheet_asset_version_id, notes, created_at, updated_at FROM scene_characters WHERE scene_id = ?1 AND character_entity_id = ?2",
+        params![scene_id, character_entity_id],
+        row_to_character,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+pub fn delete_scene_character(tx: &Transaction<'_>, assignment_id: &str) -> Result<(), AppError> {
+    let changed = tx
+        .execute(
+            "DELETE FROM scene_characters WHERE id = ?1",
+            params![assignment_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::SceneCharacterNotFound);
+    }
+    Ok(())
+}
+
+pub fn delete_scene_character_by_scene_and_character(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    character_entity_id: &str,
+) -> Result<SceneCharacterAssignment, AppError> {
+    let existing = {
+        // Need to query inside transaction connection
+        tx.query_row(
+            "SELECT id, scene_id, character_entity_id, look_asset_version_id, sheet_asset_version_id, notes, created_at, updated_at FROM scene_characters WHERE scene_id = ?1 AND character_entity_id = ?2",
+            params![scene_id, character_entity_id],
+            row_to_character,
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or(AppError::SceneCharacterNotFound)?
+    };
+    tx.execute(
+        "DELETE FROM scene_characters WHERE id = ?1",
+        params![existing.id],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(existing)
+}
+
+// ---------------------------------------------------------------------------
+// Scene Props
+// ---------------------------------------------------------------------------
+
+pub fn insert_scene_prop(
+    tx: &Transaction<'_>,
+    assignment: &ScenePropAssignment,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO scene_props (id, scene_id, prop_asset_version_id, label, notes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            assignment.id,
+            assignment.scene_id,
+            assignment.prop_asset_version_id,
+            assignment.label,
+            assignment.notes,
+            assignment.created_at,
+        ],
+    )
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("UNIQUE constraint failed") && msg.contains("scene_props") {
+            AppError::ScenePropAlreadyExists
+        } else {
+            AppError::Database(msg)
+        }
+    })?;
+    Ok(())
+}
+
+pub fn list_scene_props(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<ScenePropAssignment>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scene_id, prop_asset_version_id, label, notes, created_at FROM scene_props WHERE scene_id = ?1 ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], row_to_prop)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+    }
+    Ok(out)
+}
+
+pub fn find_scene_prop_by_version(
+    conn: &Connection,
+    scene_id: &str,
+    prop_asset_version_id: &str,
+) -> Result<Option<ScenePropAssignment>, AppError> {
+    conn.query_row(
+        "SELECT id, scene_id, prop_asset_version_id, label, notes, created_at FROM scene_props WHERE scene_id = ?1 AND prop_asset_version_id = ?2",
+        params![scene_id, prop_asset_version_id],
+        row_to_prop,
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))
+}
+
+pub fn delete_scene_prop(tx: &Transaction<'_>, assignment_id: &str) -> Result<(), AppError> {
+    let changed = tx
+        .execute("DELETE FROM scene_props WHERE id = ?1", params![assignment_id])
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if changed == 0 {
+        return Err(AppError::ScenePropNotFound);
+    }
+    Ok(())
+}
+
+pub fn delete_scene_prop_by_version(
+    tx: &Transaction<'_>,
+    scene_id: &str,
+    prop_asset_version_id: &str,
+) -> Result<ScenePropAssignment, AppError> {
+    let existing = tx
+        .query_row(
+            "SELECT id, scene_id, prop_asset_version_id, label, notes, created_at FROM scene_props WHERE scene_id = ?1 AND prop_asset_version_id = ?2",
+            params![scene_id, prop_asset_version_id],
+            row_to_prop,
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or(AppError::ScenePropNotFound)?;
+    tx.execute("DELETE FROM scene_props WHERE id = ?1", params![existing.id])
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(existing)
+}
+
+// ---------------------------------------------------------------------------
+// Reference Events
+// ---------------------------------------------------------------------------
+
+pub fn insert_reference_event(
+    tx: &Transaction<'_>,
+    event: &SceneReferenceEvent,
+) -> Result<(), AppError> {
+    tx.execute(
+        "INSERT INTO scene_reference_events (id, scene_id, reference_kind, assignment_id, action, from_version_id, to_version_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            event.id,
+            event.scene_id,
+            event.reference_kind.as_str(),
+            event.assignment_id,
+            event.action.as_str(),
+            event.from_version_id,
+            event.to_version_id,
+            event.created_at,
+        ],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+pub fn list_reference_events(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Vec<SceneReferenceEvent>, AppError> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, scene_id, reference_kind, assignment_id, action, from_version_id, to_version_id, created_at FROM scene_reference_events WHERE scene_id = ?1 ORDER BY created_at ASC, id ASC",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let rows = stmt
+        .query_map(params![scene_id], row_to_event)
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| AppError::Database(e.to_string()))?);
+    }
+    Ok(out)
+}
