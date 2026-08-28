@@ -2,11 +2,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CinemaWorkspace } from "./CinemaWorkspace";
-import { addSceneCharacter, compileCinema, createScene, createShot, getScene, listScenes } from "./api";
+import { compileCinema, getScene, listScenes, stageScene } from "./api";
 import { listAssets } from "../assets/api";
 import { listCanonEntities } from "../canon/api";
 
-vi.mock("./api", () => ({ addSceneCharacter: vi.fn(), compileCinema: vi.fn(), createScene: vi.fn(), createShot: vi.fn(), getScene: vi.fn(), listScenes: vi.fn() }));
+vi.mock("./api", () => ({ compileCinema: vi.fn(), getScene: vi.fn(), listScenes: vi.fn(), stageScene: vi.fn() }));
 vi.mock("../assets/api", () => ({ listAssets: vi.fn() }));
 vi.mock("../canon/api", () => ({ listCanonEntities: vi.fn() }));
 
@@ -21,9 +21,7 @@ describe("CinemaWorkspace", () => {
     ]);
     vi.mocked(listCanonEntities).mockReset().mockResolvedValue([{ id: "mara", projectId: "project-1", type: "character", name: "Mara", slug: "mara", createdAt: "now", updatedAt: "now" }]);
     vi.mocked(listScenes).mockReset().mockResolvedValue([]);
-    vi.mocked(createScene).mockReset().mockResolvedValue({ id: "scene-001", projectId: "project-1", title: "Scene 001", worldAssetVersionId: "world-v1", canonNotes: null, createdAt: "now", updatedAt: "now" });
-    vi.mocked(addSceneCharacter).mockReset().mockResolvedValue({ scene: { id: "scene-001" }, characters: [], props: [], shots: [] } as never);
-    vi.mocked(createShot).mockReset().mockResolvedValue({ id: "shot-001" } as never);
+    vi.mocked(stageScene).mockReset().mockResolvedValue({ id: "scene-001", projectId: "project-1", title: "Scene 001", worldAssetVersionId: "world-v1", canonNotes: null, createdAt: "now", updatedAt: "now" });
     vi.mocked(getScene).mockReset();
     vi.mocked(compileCinema).mockReset();
   });
@@ -34,9 +32,7 @@ describe("CinemaWorkspace", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Stage Scene" }));
 
     expect(await screen.findByText("Scene 001 staged")).toBeInTheDocument();
-    expect(createScene).toHaveBeenCalledWith(root, "Scene 001", "world-v1");
-    expect(addSceneCharacter).toHaveBeenCalledWith(root, "scene-001", "mara", "look-v1", "sheet-v1");
-    expect(createShot).toHaveBeenCalledWith(root, "scene-001", "Establish the scene");
+    expect(stageScene).toHaveBeenCalledWith(root, "Scene 001", "world-v1", "mara", "look-v1", "sheet-v1");
   });
 
   it("compiles the scoped ready scene using its persisted shot duration", async () => {

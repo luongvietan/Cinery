@@ -448,7 +448,7 @@ fn later_uncompiled_scene_remains_the_next_production_action_after_an_older_comp
 }
 
 #[test]
-fn superseded_scene_reference_remains_recorded_as_ready_history() {
+fn superseded_scene_reference_is_stale_and_does_not_offer_invalid_compile() {
     let fixture = ProjectFixture::new();
     let ready = fixture.ready_scene();
     let updated = fixture.image("mara-look-revision.png", [99, 5, 6, 255]);
@@ -458,15 +458,9 @@ fn superseded_scene_reference_remains_recorded_as_ready_history() {
     AssetService::promote_asset_version(&fixture.root, &replacement.id).unwrap();
 
     let overview = get_project_overview(&fixture.root).unwrap();
-    let scene_step = overview
-        .readiness
-        .steps
-        .iter()
-        .find(|step| step.id == "scene")
-        .unwrap();
-    assert_eq!(scene_step.status, ReadinessStatus::Complete);
-    assert_eq!(
-        overview.readiness.next_action.unwrap().title,
-        "Cinema Compilation"
-    );
+    let scene = &overview.scene_readiness[0];
+    assert_eq!(scene.status, ReadinessStatus::Blocked);
+    assert!(scene.detail.contains("superseded"));
+    assert_eq!(scene.action.as_ref().unwrap().id, "restage_scene");
+    assert_eq!(overview.readiness.next_action.unwrap().id, "resolve_protected_tbd");
 }

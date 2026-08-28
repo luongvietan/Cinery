@@ -40,6 +40,26 @@ pub fn create_scene(
 }
 
 #[tauri::command]
+pub fn stage_scene(
+    project_root_path: String,
+    title: String,
+    world_asset_version_id: String,
+    character_entity_id: String,
+    look_asset_version_id: String,
+    sheet_asset_version_id: String,
+) -> Result<SceneRecord, AppCommandError> {
+    CinemaService::stage_scene(
+        root_path(&project_root_path)?,
+        &title,
+        &world_asset_version_id,
+        &character_entity_id,
+        &look_asset_version_id,
+        &sheet_asset_version_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
 pub fn list_scenes(project_root_path: String) -> Result<Vec<SceneRecord>, AppCommandError> {
     CinemaService::list_scenes(root_path(&project_root_path)?).map_err(AppCommandError::from)
 }

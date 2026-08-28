@@ -3,7 +3,7 @@ import type { AssetSummary, OverviewAction, SceneRecord } from "@cinematic/domai
 import { describeError } from "../../lib/errors";
 import { listAssets } from "../assets/api";
 import { listCanonEntities } from "../canon/api";
-import { addSceneCharacter, compileCinema, createScene, createShot, getScene, listScenes } from "./api";
+import { compileCinema, getScene, listScenes, stageScene as stageSceneCommand } from "./api";
 
 export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: string; action: OverviewAction | null }) {
   const [assets, setAssets] = useState<AssetSummary[]>([]);
@@ -29,9 +29,7 @@ export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: 
       const look = assets.find((item) => item.type === "outfit" && item.ownerEntityId === character?.id && item.canonicalVersionId);
       const sheet = assets.find((item) => item.type === "character_sheet" && item.ownerEntityId === character?.id && item.canonicalVersionId);
       if (!character || !world?.canonicalVersionId || !look?.canonicalVersionId || !sheet?.canonicalVersionId) throw new Error("A canonical world, look, and sheet are required to stage a scene.");
-      const scene = await createScene(projectRootPath, `Scene ${String(scenes.length + 1).padStart(3, "0")}`, world.canonicalVersionId);
-      await addSceneCharacter(projectRootPath, scene.id, character.id, look.canonicalVersionId, sheet.canonicalVersionId);
-      await createShot(projectRootPath, scene.id, "Establish the scene");
+      const scene = await stageSceneCommand(projectRootPath, `Scene ${String(scenes.length + 1).padStart(3, "0")}`, world.canonicalVersionId, character.id, look.canonicalVersionId, sheet.canonicalVersionId);
       setNotice(`${scene.title} staged`); await load();
     } catch (reason) { setError(describeError(reason)); } finally { setBusy(false); }
   }
@@ -50,7 +48,7 @@ export function CinemaWorkspace({ projectRootPath, action }: { projectRootPath: 
   return <section className="cinema-workspace" aria-label="Scene and cinema workspace">
     <header><span className="production-kicker">Production / Cinema</span><h2>Scenes & Cinema</h2><p>Stage exact canonical references, then compile durable provider-neutral prompts.</p></header>
     {error ? <p role="alert">{error}</p> : null}{notice ? <p role="status">{notice}</p> : null}
-    {action?.id === "scene" ? <button type="button" disabled={busy} onClick={() => void stageScene()}>Stage Scene</button> : null}
+    {action?.id === "scene" || action?.id === "restage_scene" ? <button type="button" disabled={busy} onClick={() => void stageScene()}>{action.id === "restage_scene" ? "Restage Scene" : "Stage Scene"}</button> : null}
     <ul>{scopedScene.map((scene) => <li key={scene.id}><strong>{scene.title}</strong><button type="button" disabled={busy} onClick={() => void compile(scene)}>Compile {scene.title}</button></li>)}</ul>
   </section>;
 }

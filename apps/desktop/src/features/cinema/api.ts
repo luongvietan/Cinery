@@ -13,6 +13,10 @@ export function createScene(projectRootPath: string, title: string, worldAssetVe
   return invokeCommand("create_scene", { projectRootPath, title, worldAssetVersionId, canonNotes: null });
 }
 
+export function stageScene(projectRootPath: string, title: string, worldAssetVersionId: string, characterEntityId: string, lookAssetVersionId: string, sheetAssetVersionId: string): Promise<SceneRecord> {
+  return invokeCommand("stage_scene", { projectRootPath, title, worldAssetVersionId, characterEntityId, lookAssetVersionId, sheetAssetVersionId });
+}
+
 export function addSceneCharacter(projectRootPath: string, sceneId: string, characterEntityId: string, lookAssetVersionId: string, sheetAssetVersionId: string): Promise<SceneDetail> {
   return invokeCommand("add_scene_character", { projectRootPath, sceneId, characterEntityId, lookAssetVersionId, sheetAssetVersionId });
 }

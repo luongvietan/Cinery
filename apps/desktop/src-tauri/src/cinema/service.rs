@@ -32,6 +32,65 @@ pub struct CanonicalVersion {
 pub struct CinemaService;
 
 impl CinemaService {
+    /// Stages a complete scene atomically from exact canonical references.
+    /// Any validation or persistence failure rolls back the scene, cast, and
+    /// initial shot together so retry cannot leave duplicate partial scenes.
+    pub fn stage_scene(
+        project_root: &Path,
+        title: &str,
+        world_asset_version_id: &str,
+        character_entity_id: &str,
+        look_asset_version_id: &str,
+        sheet_asset_version_id: &str,
+    ) -> Result<SceneRecord, AppError> {
+        let title = validate_title(title)?;
+        let intent = validate_intent("Establish the scene")?;
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let tx = conn.transaction().map_err(|e| AppError::Database(e.to_string()))?;
+        ensure_canonical_version(&tx, &project.id, world_asset_version_id, &["world_plate"])?;
+        let entity = canon_repository::get_entity(&tx, character_entity_id)?;
+        if entity.project_id != project.id || entity.entity_type != "character" {
+            return Err(AppError::CanonEntityNotFound);
+        }
+        ensure_canonical_version(&tx, &project.id, look_asset_version_id, &["outfit", "character_sheet"])?;
+        ensure_canonical_version(&tx, &project.id, sheet_asset_version_id, &["character_sheet"])?;
+
+        let now = Utc::now().to_rfc3339();
+        let scene = SceneRecord {
+            id: Ulid::new().to_string(),
+            project_id: project.id,
+            title,
+            world_asset_version_id: Some(world_asset_version_id.to_string()),
+            canon_notes: None,
+            created_at: now.clone(),
+            updated_at: now.clone(),
+        };
+        repository::create_scene(&tx, &scene)?;
+        repository::add_scene_character(&tx, &SceneCharacterRecord {
+            scene_id: scene.id.clone(),
+            character_entity_id: character_entity_id.to_string(),
+            look_asset_version_id: look_asset_version_id.to_string(),
+            sheet_asset_version_id: Some(sheet_asset_version_id.to_string()),
+            display_order: 0,
+        })?;
+        repository::create_shot(&tx, &ShotRecord {
+            id: Ulid::new().to_string(),
+            scene_id: scene.id.clone(),
+            ordering: 0,
+            duration_seconds: 4.0,
+            keyframe_asset_version_id: None,
+            intent,
+            action: None,
+            camera: None,
+            generated_video_asset_version_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        })?;
+        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(scene)
+    }
+
     /// Creates a scene with a validated title (1-160 chars after trimming).
     pub fn create_scene(
         project_root: &Path,
