@@ -764,22 +764,22 @@ fn execute_visual_repair_ready(
     if let Some(mock_response) = input.get("qaMockResponse") {
         qa_input["mockResponse"] = mock_response.clone();
     }
-    if let Ok(qa_workflow) = Self::create_run(
+    if let Ok(qa_workflow) = WorkflowRuntime::create_run(
         project_root,
         "visual-qa",
         "1.0.0",
         "asset.run_visual_qa",
         qa_input,
     ) {
-        if let Ok(waiting) = Self::advance_run(project_root, &qa_workflow.run.id) {
+        if let Ok(waiting) = WorkflowRuntime::advance_run(project_root, &qa_workflow.run.id) {
             if waiting.run.status == "waiting_for_approval" {
-                let _ = Self::approve_run_step(
+                let _ = WorkflowRuntime::approve_run_step(
                     project_root,
                     &qa_workflow.run.id,
                     "approve-qa",
                     Some("Automatic post-repair QA evaluation".into()),
                 )
-                .and_then(|_| Self::advance_run(project_root, &qa_workflow.run.id).map(|_| ()));
+                .and_then(|_| WorkflowRuntime::advance_run(project_root, &qa_workflow.run.id).map(|_| ()));
             }
             if let Ok(runs) = crate::qa::repository::list_runs_for_asset_version(
                 conn,

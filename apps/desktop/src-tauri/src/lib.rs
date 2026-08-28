@@ -6,8 +6,10 @@ pub mod generation;
 pub mod project;
 pub mod providers;
 pub mod qa;
+pub mod scenes;
 pub mod skills;
 pub mod workflow;
+pub mod worlds;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
