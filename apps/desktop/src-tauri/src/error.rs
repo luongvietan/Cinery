@@ -159,6 +159,12 @@ pub enum AppError {
 
     #[error("Workflow step was interrupted: {0}")]
     InterruptedDuringStep(String),
+
+    #[error("Provider configuration is invalid: {0}")]
+    ProviderConfiguration(String),
+
+    #[error("Provider execution failed: {0}")]
+    ProviderExecution(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

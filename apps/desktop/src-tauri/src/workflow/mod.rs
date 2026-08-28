@@ -4,6 +4,7 @@ pub mod commands;
 pub mod artifacts;
 pub mod compiler;
 pub mod executor;
+pub mod ingestion;
 pub mod model;
 pub mod prerequisites;
 pub mod recovery;

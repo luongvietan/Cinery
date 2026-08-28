@@ -11,9 +11,12 @@ use crate::workflow::model::{
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
 use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
+use crate::providers::repository::{create_attempt, persist_job};
+use crate::providers::service::ProviderService;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 pub struct WorkflowRuntime;
@@ -393,7 +396,6 @@ fn execute_ready(
         (
             Some(crate::workflow::model::WorkflowStepDefinition::Execute {
                 id,
-                executor_kind: crate::workflow::model::ExecutorKind::DryRun,
                 ..
             }),
             Some(crate::workflow::model::WorkflowStepDefinition::Complete { id: complete_id }),
@@ -439,10 +441,68 @@ fn execute_ready(
         &started_at,
     )?;
     tx.commit().map_err(db_error)?;
-    let result = DryRunExecutor.execute(
-        &request,
-        &workflow_artifact_dir(project_root, &detail.run.id),
-    )?;
+    let input: Value = serde_json::from_str(&detail.run.input_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let provider_id = input
+        .get("providerId")
+        .and_then(Value::as_str)
+        .unwrap_or("dry_run");
+    let model_id = input
+        .get("modelId")
+        .and_then(Value::as_str)
+        .unwrap_or(if provider_id == "dry_run" { "dry-run-v1" } else { "mock-image-v1" });
+    let result = if provider_id == "dry_run" {
+        DryRunExecutor.execute(
+            &request,
+            &workflow_artifact_dir(project_root, &detail.run.id),
+        )?
+    } else {
+        let compiled_request_id = compiled_request_id(&request_json);
+        let attempt = create_attempt(
+            conn,
+            &detail.run.id,
+            execute_step_id,
+            1,
+            &compiled_request_id,
+            provider_id,
+            model_id,
+            &format!("{}:{execute_step_id}:1", detail.run.id),
+        )?;
+        let outcome = ProviderService::execute_compiled_request(
+            &request,
+            execute_step_id,
+            &compiled_request_id,
+            provider_id,
+            model_id,
+        )?;
+        persist_job(
+            conn,
+            &attempt.id,
+            provider_id,
+            &outcome.submission.job.provider_job_id,
+            "succeeded",
+        )?;
+        let asset_type = request.expected_output.asset_type.as_str();
+        let owner_entity_id = request
+            .expected_output
+            .owner_entity_input_ref
+            .as_deref()
+            .and_then(|reference| input.get(reference))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let version = crate::workflow::ingestion::persist_provider_result(
+            project_root,
+            &detail.run.id,
+            &outcome.result,
+            asset_type,
+            owner_entity_id,
+        )?;
+        crate::workflow::execution::ExecutionResult {
+            kind: provider_id.into(),
+            artifact_path: project_root.join(version.file_path),
+            request,
+        }
+    };
     let result_json =
         serde_json::to_string(&result).map_err(|error| AppError::Database(error.to_string()))?;
     let complete_index = execute_index + 1;
@@ -502,6 +562,12 @@ fn execute_ready(
     )?;
     tx.commit().map_err(db_error)?;
     WorkflowRepository::get_run(conn, project_id, &detail.run.id)
+}
+
+fn compiled_request_id(request_json: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(request_json.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn start_run(conn: &mut Connection, run_id: &str, emit_started: bool) -> Result<(), AppError> {
