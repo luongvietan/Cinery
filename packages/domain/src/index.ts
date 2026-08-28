@@ -9,6 +9,7 @@ export * from "./execution";
 export * from "./generation";
 export * from "./lineage";
 export * from "./cinema";
+export * from "./integration";
 
 export interface AppCommandError {
   code: string;

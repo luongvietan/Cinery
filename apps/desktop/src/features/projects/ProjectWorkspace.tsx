@@ -7,19 +7,20 @@ import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { ProductionWorkspace } from "../production/ProductionWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
+import { ProjectOverview } from "../overview/ProjectOverview";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "none" | "assets" | "workflows" | "production" | "canon" | "providers";
+type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers";
 
 export function ProjectWorkspace({
   project,
   onCloseProject,
 }: ProjectWorkspaceProps) {
-  const [panelView, setPanelView] = useState<PanelView>("none");
+  const [panelView, setPanelView] = useState<PanelView>("overview");
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [assetRefreshKey, setAssetRefreshKey] = useState(0);
 
@@ -28,7 +29,7 @@ export function ProjectWorkspace({
   }
 
   function handleAssetsPanelBack() {
-    setPanelView("none");
+    setPanelView("overview");
     setSelectedAssetId(null);
   }
 
@@ -42,6 +43,14 @@ export function ProjectWorkspace({
         </div>
       </header>
       <nav>
+        <button
+          type="button"
+          aria-pressed={panelView === "overview"}
+          className={panelView === "overview" ? "nav-button nav-button--active" : "nav-button"}
+          onClick={() => { setPanelView("overview"); setSelectedAssetId(null); }}
+        >
+          Overview
+        </button>
         <button
           type="button"
           aria-pressed={panelView === "assets"}
@@ -93,6 +102,9 @@ export function ProjectWorkspace({
         </button>
       </nav>
       <section aria-label="Project workspace">
+        {panelView === "overview" ? (
+          <ProjectOverview projectRootPath={project.rootPath} onNavigate={setPanelView} />
+        ) : null}
         {panelView === "assets" ? (
           <>
             <AssetList

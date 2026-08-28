@@ -4,6 +4,7 @@ pub mod cinema;
 pub mod db;
 pub mod error;
 pub mod generation;
+pub mod integration;
 pub mod project;
 pub mod providers;
 pub mod qa;
@@ -65,6 +66,7 @@ pub fn run() {
       qa::commands::list_qa_runs,
       qa::commands::get_qa_run,
       qa::commands::review_qa_check,
+      integration::commands::get_project_overview,
       cinema::commands::create_scene,
       cinema::commands::list_scenes,
       cinema::commands::get_scene,
