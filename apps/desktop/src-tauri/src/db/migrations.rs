@@ -32,6 +32,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 5,
         sql: include_str!("../../migrations/0005_workflow_runtime.sql"),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("../../migrations/0006_provider_integrations.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -173,6 +177,27 @@ mod tests {
             "workflow_steps",
             "workflow_events",
             "workflow_approvals",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn provider_migration_creates_required_tables() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for table in [
+            "provider_configurations",
+            "workflow_step_executions",
+            "provider_jobs",
         ] {
             let exists: i64 = conn
                 .query_row(

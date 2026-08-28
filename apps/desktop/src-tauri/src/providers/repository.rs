@@ -1,0 +1,284 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrations::run_migrations;
+    use rusqlite::Connection;
+
+    #[test]
+    fn provider_storage_survives_reopen_and_keeps_attempts_immutable() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p', 'Project', 'now', 'now', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at) VALUES ('run-1', 'p', 's', '1', 'o', 'ready_for_execution', '{}', 'now', 'now')",
+            [],
+        ).unwrap();
+
+        let config = ProviderConfigRecord {
+            provider_id: "openai".into(),
+            enabled: true,
+            credential_reference: Some("OPENAI_API_KEY".into()),
+            default_model: Some("gpt-image-1".into()),
+            endpoint: None,
+            request_timeout_seconds: 30,
+            polling_interval_seconds: 2,
+        };
+        upsert_provider_config(&conn, &config).unwrap();
+        assert_eq!(get_provider_config(&conn, "openai").unwrap(), Some(config));
+
+        let attempt = create_attempt(
+            &conn,
+            "run-1",
+            "execute",
+            1,
+            "compiled-1",
+            "openai",
+            "gpt-image-1",
+            "run-1:execute:1",
+        )
+        .unwrap();
+        assert_eq!(attempt.attempt_number, 1);
+        persist_job(&conn, &attempt.id, "openai", "job-1", "submitted").unwrap();
+        let active = find_active_attempt(&conn, "run-1", "execute").unwrap().unwrap();
+        assert_eq!(active.provider_job_id.as_deref(), Some("job-1"));
+    }
+
+    #[test]
+    fn duplicate_idempotency_key_is_rejected() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p', 'Project', 'now', 'now', 1)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at) VALUES ('run', 'p', 's', '1', 'o', 'ready_for_execution', '{}', 'now', 'now')",
+            [],
+        ).unwrap();
+
+        create_attempt(&conn, "run", "execute", 1, "compiled", "mock", "model", "same-key").unwrap();
+        let result = create_attempt(&conn, "run", "execute", 2, "compiled", "mock", "model", "same-key");
+        assert!(result.is_err());
+    }
+}
+use crate::error::AppError;
+use chrono::Utc;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderConfigRecord {
+    pub provider_id: String,
+    pub enabled: bool,
+    pub credential_reference: Option<String>,
+    pub default_model: Option<String>,
+    pub endpoint: Option<String>,
+    pub request_timeout_seconds: i64,
+    pub polling_interval_seconds: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionAttemptRecord {
+    pub id: String,
+    pub workflow_run_id: String,
+    pub step_definition_id: String,
+    pub attempt_number: i64,
+    pub compiled_request_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub adapter_version: i64,
+    pub idempotency_key: String,
+    pub status: String,
+    pub provider_job_id: Option<String>,
+    pub normalized_error_json: Option<String>,
+    pub artifact_ids_json: String,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
+pub fn upsert_provider_config(
+    conn: &Connection,
+    config: &ProviderConfigRecord,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO provider_configurations
+         (provider_id, enabled, credential_reference, default_model, endpoint,
+          request_timeout_seconds, polling_interval_seconds, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+         ON CONFLICT(provider_id) DO UPDATE SET
+           enabled = excluded.enabled,
+           credential_reference = excluded.credential_reference,
+           default_model = excluded.default_model,
+           endpoint = excluded.endpoint,
+           request_timeout_seconds = excluded.request_timeout_seconds,
+           polling_interval_seconds = excluded.polling_interval_seconds,
+           updated_at = excluded.updated_at",
+        params![
+            config.provider_id,
+            config.enabled,
+            config.credential_reference,
+            config.default_model,
+            config.endpoint,
+            config.request_timeout_seconds,
+            config.polling_interval_seconds,
+            now,
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn get_provider_config(
+    conn: &Connection,
+    provider_id: &str,
+) -> Result<Option<ProviderConfigRecord>, AppError> {
+    conn.query_row(
+        "SELECT provider_id, enabled, credential_reference, default_model, endpoint,
+                request_timeout_seconds, polling_interval_seconds
+         FROM provider_configurations WHERE provider_id = ?1",
+        [provider_id],
+        row_to_provider_config,
+    )
+    .optional()
+    .map_err(db_error)
+}
+
+pub fn create_attempt(
+    conn: &Connection,
+    workflow_run_id: &str,
+    step_definition_id: &str,
+    attempt_number: i64,
+    compiled_request_id: &str,
+    provider_id: &str,
+    model_id: &str,
+    idempotency_key: &str,
+) -> Result<ExecutionAttemptRecord, AppError> {
+    let record = ExecutionAttemptRecord {
+        id: ulid::Ulid::new().to_string(),
+        workflow_run_id: workflow_run_id.into(),
+        step_definition_id: step_definition_id.into(),
+        attempt_number,
+        compiled_request_id: compiled_request_id.into(),
+        provider_id: provider_id.into(),
+        model_id: model_id.into(),
+        adapter_version: 1,
+        idempotency_key: idempotency_key.into(),
+        status: "queued".into(),
+        provider_job_id: None,
+        normalized_error_json: None,
+        artifact_ids_json: "[]".into(),
+        started_at: Utc::now().to_rfc3339(),
+        completed_at: None,
+    };
+    conn.execute(
+        "INSERT INTO workflow_step_executions
+         (id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id,
+          provider_id, model_id, adapter_version, idempotency_key, status,
+          provider_job_id, normalized_error_json, artifact_ids_json, started_at, completed_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            record.id,
+            record.workflow_run_id,
+            record.step_definition_id,
+            record.attempt_number,
+            record.compiled_request_id,
+            record.provider_id,
+            record.model_id,
+            record.adapter_version,
+            record.idempotency_key,
+            record.status,
+            record.provider_job_id,
+            record.normalized_error_json,
+            record.artifact_ids_json,
+            record.started_at,
+            record.completed_at,
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(record)
+}
+
+pub fn persist_job(
+    conn: &Connection,
+    execution_id: &str,
+    provider_id: &str,
+    provider_job_id: &str,
+    status: &str,
+) -> Result<(), AppError> {
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO provider_jobs
+         (id, execution_id, provider_id, provider_job_id, status, submitted_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![ulid::Ulid::new().to_string(), execution_id, provider_id, provider_job_id, status, now],
+    )
+    .map_err(db_error)?;
+    conn.execute(
+        "UPDATE workflow_step_executions SET provider_job_id = ?1, status = ?2 WHERE id = ?3",
+        params![provider_job_id, status, execution_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn find_active_attempt(
+    conn: &Connection,
+    workflow_run_id: &str,
+    step_definition_id: &str,
+) -> Result<Option<ExecutionAttemptRecord>, AppError> {
+    conn.query_row(
+        "SELECT id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id,
+                provider_id, model_id, adapter_version, idempotency_key, status,
+                provider_job_id, normalized_error_json, artifact_ids_json, started_at, completed_at
+         FROM workflow_step_executions
+         WHERE workflow_run_id = ?1 AND step_definition_id = ?2
+           AND status IN ('queued', 'submitted', 'running', 'cancellation_requested', 'unknown')
+         ORDER BY attempt_number DESC LIMIT 1",
+        params![workflow_run_id, step_definition_id],
+        row_to_execution_attempt,
+    )
+    .optional()
+    .map_err(db_error)
+}
+
+fn row_to_provider_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfigRecord> {
+    Ok(ProviderConfigRecord {
+        provider_id: row.get(0)?,
+        enabled: row.get::<_, i64>(1)? != 0,
+        credential_reference: row.get(2)?,
+        default_model: row.get(3)?,
+        endpoint: row.get(4)?,
+        request_timeout_seconds: row.get(5)?,
+        polling_interval_seconds: row.get(6)?,
+    })
+}
+
+fn row_to_execution_attempt(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExecutionAttemptRecord> {
+    Ok(ExecutionAttemptRecord {
+        id: row.get(0)?,
+        workflow_run_id: row.get(1)?,
+        step_definition_id: row.get(2)?,
+        attempt_number: row.get(3)?,
+        compiled_request_id: row.get(4)?,
+        provider_id: row.get(5)?,
+        model_id: row.get(6)?,
+        adapter_version: row.get(7)?,
+        idempotency_key: row.get(8)?,
+        status: row.get(9)?,
+        provider_job_id: row.get(10)?,
+        normalized_error_json: row.get(11)?,
+        artifact_ids_json: row.get(12)?,
+        started_at: row.get(13)?,
+        completed_at: row.get(14)?,
+    })
+}
+
+fn db_error(error: rusqlite::Error) -> AppError {
+    AppError::Database(error.to_string())
+}
