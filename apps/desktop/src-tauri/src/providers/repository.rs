@@ -295,6 +295,25 @@ pub fn next_attempt_number(
     .map_err(db_error)
 }
 
+pub fn latest_attempt(
+    conn: &Connection,
+    workflow_run_id: &str,
+    step_definition_id: &str,
+) -> Result<Option<ExecutionAttemptRecord>, AppError> {
+    conn.query_row(
+        "SELECT id, workflow_run_id, step_definition_id, attempt_number, compiled_request_id,
+                provider_id, model_id, adapter_version, idempotency_key, status,
+                provider_job_id, normalized_error_json, artifact_ids_json, started_at, completed_at
+         FROM workflow_step_executions
+         WHERE workflow_run_id = ?1 AND step_definition_id = ?2
+         ORDER BY attempt_number DESC LIMIT 1",
+        params![workflow_run_id, step_definition_id],
+        row_to_execution_attempt,
+    )
+    .optional()
+    .map_err(db_error)
+}
+
 fn row_to_provider_config(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProviderConfigRecord> {
     Ok(ProviderConfigRecord {
         provider_id: row.get(0)?,
