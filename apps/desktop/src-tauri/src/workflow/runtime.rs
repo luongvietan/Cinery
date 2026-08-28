@@ -52,6 +52,7 @@ impl WorkflowRuntime {
         match operation.input_schema_id.as_str() {
             "create_face_lock" => validate_face_lock_input(&input)?,
             "run_visual_qa" => validate_visual_qa_input(&input)?,
+            "repair_failed_qa" => validate_visual_repair_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -174,6 +175,16 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "visual_qa_repair_context" => {
+                            let context = crate::qa::repair_workflow::resolve(
+                                &conn,
+                                project_root,
+                                &project.id,
+                                &input,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
                     };
                     complete_context_step(
@@ -219,6 +230,19 @@ impl WorkflowRuntime {
                                 project_root,
                                 &context,
                             ))
+                            .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "visual_qa_repair_v1" => {
+                            let context: crate::qa::repair_workflow::RepairWorkflowContext =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            serde_json::to_string(
+                                &crate::qa::repair_workflow::compile_request(
+                                    workflow_run_id,
+                                    &context,
+                                )?,
+                            )
                             .map_err(|error| AppError::Database(error.to_string()))?
                         }
                         _ => return Err(AppError::WorkflowCompilerNotFound(compiler_id.clone())),
@@ -546,6 +570,322 @@ fn execute_visual_qa_ready(
     WorkflowRepository::get_run(conn, project_id, &detail.run.id)
 }
 
+fn execute_visual_repair_ready(
+    conn: &mut Connection,
+    project_root: &Path,
+    project_id: &str,
+    detail: WorkflowRunDetail,
+    operation: &crate::skills::model::SkillOperation,
+) -> Result<WorkflowRunDetail, AppError> {
+    let execute_index = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "execute" && step.status == "pending")
+        .map(|step| step.step_index)
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("execute step is missing".into()))?;
+    let request_json = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "compile_request")
+        .and_then(|step| step.output_json.clone())
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("compiled request is missing".into()))?;
+    let request: crate::workflow::execution::ExecutionRequest =
+        serde_json::from_str(&request_json)
+            .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let context: crate::qa::repair_workflow::RepairWorkflowContext =
+        serde_json::from_str(&load_context(conn, &detail.run.id)?)
+            .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let (execute_step_id, complete_step_id) = match (
+        operation.workflow.get(execute_index as usize),
+        operation.workflow.get(execute_index as usize + 1),
+    ) {
+        (
+            Some(crate::workflow::model::WorkflowStepDefinition::Execute { id, .. }),
+            Some(crate::workflow::model::WorkflowStepDefinition::Complete { id: complete_id }),
+        ) => (id.as_str(), complete_id.as_str()),
+        _ => {
+            return Err(AppError::WorkflowRunInconsistent(
+                "repair execute/complete definitions are missing".into(),
+            ))
+        }
+    };
+    let input: Value = serde_json::from_str(&detail.run.input_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let provider_id = input
+        .get("providerId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::WorkflowInputInvalid("providerId is required".into()))?;
+    let model_id = input
+        .get("modelId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| AppError::WorkflowInputInvalid("modelId is required".into()))?;
+
+    let started_at = Utc::now().to_rfc3339();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    tx.execute(
+        "UPDATE workflow_runs SET status = 'running', updated_at = ?1 WHERE id = ?2",
+        params![started_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    mark_step(&tx, &detail.run.id, execute_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(execute_step_id),
+        None,
+        &started_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_started",
+        Some(execute_step_id),
+        Some(
+            &serde_json::json!({
+                "sourceQaRunId": context.compiled.plan.source_qa_run_id,
+                "providerId": provider_id,
+                "modelId": model_id,
+            })
+            .to_string(),
+        ),
+        &started_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+
+    let compiled_hash = compiled_request_id(&request_json);
+    let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+    let idempotency_key =
+        ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
+    let attempt = create_attempt(
+        conn,
+        &detail.run.id,
+        execute_step_id,
+        attempt_number,
+        &compiled_hash,
+        provider_id,
+        model_id,
+        &idempotency_key,
+    )?;
+    append_audit_event(
+        conn,
+        Some(&attempt.id),
+        &detail.run.id,
+        "provider.execution.queued",
+        Some(&serde_json::json!({
+            "providerId": provider_id,
+            "modelId": model_id,
+            "attemptNumber": attempt_number,
+            "task": "visual_repair",
+        })),
+    )?;
+    let submission = match ProviderService::submit_compiled_request(
+        &request,
+        execute_step_id,
+        &compiled_hash,
+        provider_id,
+        model_id,
+        attempt_number,
+    ) {
+        Ok(submission) => submission,
+        Err(error) => {
+            let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+            let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+            let _ = append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.failed",
+                Some(&serde_json::json!({"error": error.to_string()})),
+            );
+            return Err(error);
+        }
+    };
+    persist_job(
+        conn,
+        &attempt.id,
+        provider_id,
+        &submission.submission.job.provider_job_id,
+        "submitted",
+    )?;
+    let (status, provider_result) = match ProviderService::finish_submission(&submission) {
+        Ok(result) => result,
+        Err(error) => {
+            let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+            let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+            let _ = append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.failed",
+                Some(&serde_json::json!({"error": error.to_string()})),
+            );
+            return Err(error);
+        }
+    };
+    let child = crate::workflow::ingestion::persist_repair_provider_result(
+        project_root,
+        &detail.run.id,
+        &provider_result,
+        &context.compiled.plan.source_asset_id,
+        &context.compiled.plan.source_asset_version_id,
+    )?;
+    let completed_at = Utc::now().to_rfc3339();
+    crate::qa::repair_workflow::record_repair(
+        conn,
+        &crate::qa::repair_workflow::RepairProvenanceInput {
+            project_id,
+            workflow_run_id: &detail.run.id,
+            child_asset_version_id: &child.id,
+            provider_id,
+            adapter_version: submission.adapter_version,
+            model_id,
+            provider_job_id: &submission.submission.job.provider_job_id,
+            compiled_request: &request,
+            context: &context,
+            created_at: &completed_at,
+        },
+    )?;
+    let qa_adapter_id = input
+        .get("qaAdapterId")
+        .and_then(Value::as_str)
+        .unwrap_or("openai");
+    let mut qa_input = serde_json::json!({
+        "projectRootPath": project_root.to_string_lossy(),
+        "assetVersionId": child.id.clone(),
+        "adapterId": qa_adapter_id,
+        "expectations": [],
+    });
+    if let Some(model_id) = input.get("qaModelId").and_then(Value::as_str) {
+        qa_input["modelId"] = Value::String(model_id.into());
+    }
+    if let Some(mock_response) = input.get("qaMockResponse") {
+        qa_input["mockResponse"] = mock_response.clone();
+    }
+    if let Ok(qa_workflow) = WorkflowRuntime::create_run(
+        project_root,
+        "visual-qa",
+        "1.0.0",
+        "asset.run_visual_qa",
+        qa_input,
+    ) {
+        if let Ok(waiting) = WorkflowRuntime::advance_run(project_root, &qa_workflow.run.id) {
+            if waiting.run.status == "waiting_for_approval" {
+                let _ = WorkflowRuntime::approve_run_step(
+                    project_root,
+                    &qa_workflow.run.id,
+                    "approve-qa",
+                    Some("Automatic post-repair QA evaluation".into()),
+                )
+                .and_then(|_| WorkflowRuntime::advance_run(project_root, &qa_workflow.run.id).map(|_| ()));
+            }
+            if let Ok(runs) = crate::qa::repository::list_runs_for_asset_version(
+                conn,
+                project_id,
+                &child.id,
+            ) {
+                if let Some(child_qa) = runs
+                    .iter()
+                    .find(|run| run.workflow_run_id.as_deref() == Some(qa_workflow.run.id.as_str()))
+                {
+                    let _ = crate::qa::repair_workflow::link_follow_up_qa(
+                        conn,
+                        &detail.run.id,
+                        &child_qa.id,
+                        &qa_workflow.run.id,
+                    );
+                }
+            }
+        }
+    }
+    update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+    append_audit_event(
+        conn,
+        Some(&attempt.id),
+        &detail.run.id,
+        "provider.execution.completed",
+        Some(&serde_json::json!({
+            "childAssetVersionId": child.id,
+            "providerJobId": submission.submission.job.provider_job_id,
+            "lifecycle": status.lifecycle,
+        })),
+    )?;
+
+    let result = crate::workflow::execution::ExecutionResult {
+        kind: provider_id.into(),
+        artifact_path: project_root.join(&child.file_path),
+        result_set_id: None,
+        artifact_ids: Vec::new(),
+        request,
+    };
+    let result_json =
+        serde_json::to_string(&result).map_err(|error| AppError::Database(error.to_string()))?;
+    let complete_index = execute_index + 1;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    mark_step(
+        &tx,
+        &detail.run.id,
+        execute_index,
+        "completed",
+        Some(&result_json),
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_completed",
+        Some(execute_step_id),
+        Some(&serde_json::json!({"childAssetVersionId": child.id}).to_string()),
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(execute_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "completed", None)?;
+    tx.execute(
+        "UPDATE workflow_runs
+         SET status = 'completed', current_step_index = ?1, completed_at = ?2, updated_at = ?2
+         WHERE id = ?3",
+        params![complete_index + 1, completed_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "run_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+    WorkflowRepository::get_run(conn, project_id, &detail.run.id)
+}
+
 fn execute_ready(
     conn: &mut Connection,
     project_root: &Path,
@@ -555,6 +895,9 @@ fn execute_ready(
 ) -> Result<WorkflowRunDetail, AppError> {
     if operation.id == "asset.run_visual_qa" {
         return execute_visual_qa_ready(conn, project_id, detail, operation);
+    }
+    if operation.id == "asset.repair_failed_qa" {
+        return execute_visual_repair_ready(conn, project_root, project_id, detail, operation);
     }
     let execute_index = detail
         .steps
@@ -1102,6 +1445,30 @@ fn validate_visual_qa_input(input: &Value) -> Result<(), AppError> {
     }
     Ok(())
 }
+
+fn validate_visual_repair_input(input: &Value) -> Result<(), AppError> {
+    for key in ["projectRootPath", "qaRunId", "providerId", "modelId"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    for forbidden in ["apiKey", "bearerToken", "credential", "secret"] {
+        if input.get(forbidden).is_some() {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{forbidden} must not be stored in workflow input"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(error.to_string())
 }

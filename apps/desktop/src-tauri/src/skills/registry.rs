@@ -190,7 +190,9 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             WorkflowStepDefinition::ResolveContext { resolver_id, .. }
                 if !matches!(
                     resolver_id.as_str(),
-                    "character_face_lock_context" | "visual_qa_context"
+                    "character_face_lock_context"
+                        | "visual_qa_context"
+                        | "visual_qa_repair_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -198,7 +200,10 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                 )))
             }
             WorkflowStepDefinition::CompileRequest { compiler_id, .. }
-                if !matches!(compiler_id.as_str(), "character_face_lock_v1" | "visual_qa_v1") =>
+                if !matches!(
+                    compiler_id.as_str(),
+                    "character_face_lock_v1" | "visual_qa_v1" | "visual_qa_repair_v1"
+                ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
                     "unknown compiler: {compiler_id}"

@@ -31,6 +31,7 @@ pub struct ProviderCapabilities {
     pub supports_seed: bool,
     pub supports_negative_prompt: bool,
     pub supports_reference_image: bool,
+    pub supports_image_edit: bool,
     pub supports_multiple_reference_images: bool,
     pub supports_image_to_video: bool,
     pub supports_cancel: bool,
@@ -49,6 +50,9 @@ impl ProviderCapabilities {
         }
         if !request.references.is_empty() && !self.supports_reference_image {
             return Err("reference images are not supported".into());
+        }
+        if request.task == ExecutionTask::VisualRepair && !self.supports_image_edit {
+            return Err("image editing is not supported".into());
         }
         if request.references.len() > 1 && !self.supports_multiple_reference_images {
             return Err("multiple reference images are not supported".into());
@@ -266,6 +270,7 @@ mod tests {
             supports_seed: false,
             supports_negative_prompt: true,
             supports_reference_image: false,
+            supports_image_edit: false,
             supports_multiple_reference_images: false,
             supports_image_to_video: false,
             supports_cancel: false,

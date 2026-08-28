@@ -103,6 +103,7 @@ pub enum ExecutionTask {
     CharacterSheet,
     WorldPlate,
     ShotKeyframe,
+    VisualRepair,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

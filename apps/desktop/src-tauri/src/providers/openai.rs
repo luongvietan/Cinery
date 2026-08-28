@@ -109,6 +109,7 @@ impl GenerationProvider for OpenAiImageProvider {
             supports_seed: false,
             supports_negative_prompt: false,
             supports_reference_image: false,
+            supports_image_edit: false,
             supports_multiple_reference_images: false,
             supports_image_to_video: false,
             supports_cancel: false,

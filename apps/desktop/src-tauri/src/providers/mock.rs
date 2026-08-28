@@ -54,6 +54,7 @@ impl GenerationProvider for MockImageProvider {
             supports_seed: true,
             supports_negative_prompt: false,
             supports_reference_image: true,
+            supports_image_edit: true,
             supports_multiple_reference_images: true,
             supports_image_to_video: false,
             supports_cancel: true,

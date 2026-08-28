@@ -96,6 +96,43 @@ pub fn persist_provider_result(
     }
 }
 
+pub fn persist_repair_provider_result(
+    project_root: &Path,
+    run_id: &str,
+    result: &ProviderResult,
+    asset_id: &str,
+    parent_version_id: &str,
+) -> Result<AssetVersionRecord, AppError> {
+    let output = result.outputs.first().ok_or_else(|| {
+        AppError::WorkflowArtifactWriteFailed("provider returned no repair output".into())
+    })?;
+    let bytes = load_output_bytes(&output.uri, &output.mime_type)?;
+    if bytes.is_empty() {
+        return Err(AppError::WorkflowArtifactWriteFailed(
+            "provider repair output is empty".into(),
+        ));
+    }
+    let extension = extension_for_mime(&output.mime_type).ok_or_else(|| {
+        AppError::WorkflowArtifactWriteFailed(format!(
+            "unsupported provider output MIME type {}",
+            output.mime_type
+        ))
+    })?;
+    let output_dir = workflow_artifact_dir(project_root, run_id);
+    fs::create_dir_all(&output_dir)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
+    let source_path = output_dir.join(format!("repair-provider-output.{extension}"));
+    fs::write(&source_path, &bytes)
+        .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
+
+    AssetService::import_asset_version(
+        project_root,
+        asset_id,
+        &source_path,
+        Some(parent_version_id.into()),
+    )
+}
+
 fn load_output_bytes(uri: &str, mime_type: &str) -> Result<Vec<u8>, AppError> {
     if uri.starts_with("mock://") || uri.starts_with("dry-run://") {
         let image: RgbaImage = ImageBuffer::from_pixel(64, 64, Rgba([128, 128, 128, 255]));
