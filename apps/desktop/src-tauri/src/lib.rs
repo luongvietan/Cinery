@@ -3,6 +3,7 @@ pub mod canon;
 pub mod db;
 pub mod error;
 pub mod project;
+pub mod providers;
 pub mod skills;
 pub mod workflow;
 
