@@ -48,6 +48,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 9,
         sql: include_str!("../../migrations/0009_artifact_lineage.sql"),
     },
+    Migration {
+        version: 10,
+        sql: include_str!("../../migrations/0010_visual_qa.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -293,6 +297,75 @@ mod tests {
                  (id, project_id, workflow_run_id, workflow_step_key, provider_attempt_id,
                   media_kind, requested_output_count, created_at)
                  VALUES ('result-2', 'project-1', 'run-1', 'execute', 'attempt-1', 'image', 4, 'now')",
+                [],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn visual_qa_migration_creates_durable_version_scoped_history() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for table in ["qa_runs", "qa_checks"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
+
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version)
+             VALUES ('project-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
+             VALUES ('asset-1', 'project-1', 'image', 'Candidate', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions
+             (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
+              original_filename, mime_type, byte_size, created_at)
+             VALUES ('version-1', 'asset-1', 1, 'candidate', 'candidate.png', 'thumb.png',
+                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                     'candidate.png', 'image/png', 1, 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO qa_runs
+             (id, project_id, asset_id, asset_version_id, status, execution_location,
+              check_plan_json, context_snapshot_json, created_at)
+             VALUES ('qa-1', 'project-1', 'asset-1', 'version-1', 'queued', 'local',
+                     '{}', '{}', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO qa_checks
+             (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+              observed, reason, review_status, created_at)
+             VALUES ('row-1', 'qa-1', 'artifact:watermark', 'watermark',
+                     'artifact_detection', '{}', 'pass', '', '', 'unreviewed', 'now')",
+            [],
+        )
+        .unwrap();
+
+        assert!(conn
+            .execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  observed, reason, review_status, created_at)
+                 VALUES ('row-2', 'qa-1', 'artifact:watermark', 'watermark',
+                         'artifact_detection', '{}', 'fail', '', '', 'unreviewed', 'now')",
                 [],
             )
             .is_err());

@@ -183,6 +183,15 @@ pub enum AppError {
 
     #[error("Generated artifact is not promotable")]
     GenerationArtifactNotPromotable,
+
+    #[error("QA run was not found")]
+    QaRunNotFound,
+
+    #[error("QA check was not found")]
+    QaCheckNotFound,
+
+    #[error("Visual QA data is invalid: {0}")]
+    InvalidQaData(String),
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

@@ -5,6 +5,7 @@ pub mod error;
 pub mod generation;
 pub mod project;
 pub mod providers;
+pub mod qa;
 pub mod skills;
 pub mod workflow;
 
