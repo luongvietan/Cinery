@@ -30,6 +30,7 @@ export function CharacterBuilderOperation({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await onSubmit({
+      projectRootPath,
       characterEntityId,
       sourceAssetVersionId,
       visualSpec,
