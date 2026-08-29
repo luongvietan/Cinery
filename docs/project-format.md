@@ -1,6 +1,6 @@
 # Project Format
 
-**MVP IMPLEMENTED.** Every project is a plain directory on disk. There is no
+**MVP RELEASE CANDIDATE.** Every project is a plain directory on disk. There is no
 server and no cloud dependency for local work; only the cloud execution
 steps themselves require network access.
 

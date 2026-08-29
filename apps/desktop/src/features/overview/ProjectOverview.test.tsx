@@ -81,7 +81,7 @@ describe("ProjectOverview", () => {
           action: {
             id: "cinema_compilation",
             title: "Cinema Compilation",
-            destination: "cinema",
+            destination: "scenes",
             characterEntityId: null,
             sceneId: "scene-002",
           },
@@ -95,7 +95,7 @@ describe("ProjectOverview", () => {
     expect(onNavigate).toHaveBeenCalledWith({
       id: "cinema_compilation",
       title: "Cinema Compilation",
-      destination: "cinema",
+      destination: "scenes",
       characterEntityId: null,
       sceneId: "scene-002",
     });
@@ -105,7 +105,7 @@ describe("ProjectOverview", () => {
     vi.mocked(getProjectOverview).mockResolvedValue({
       ...overview,
       sceneReadiness: [
-        { sceneId: "scene-002", title: "Scene 002", status: "pending", detail: "Needs compilation.", action: { id: "cinema_compilation", title: "Cinema Compilation", destination: "cinema", characterEntityId: null, sceneId: "scene-002" } },
+        { sceneId: "scene-002", title: "Scene 002", status: "pending", detail: "Needs compilation.", action: { id: "cinema_compilation", title: "Cinema Compilation", destination: "scenes", characterEntityId: null, sceneId: "scene-002" } },
         { sceneId: "scene-001", title: "Scene 001", status: "complete", detail: "Compiled.", action: null },
       ],
     });

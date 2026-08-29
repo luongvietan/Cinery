@@ -17,7 +17,7 @@ describe("WorkflowWorkspace", () => {
         inputSchemaId: "create_face_lock",
         prerequisites: [],
         tbdGuards: [],
-        workflow: [{ id: "validate-input", type: "validate_input" }],
+        workflow: [{ id: "validate-input", type: "validate_input" } as never],
         expectedOutput: null,
       },
     ]);
@@ -61,10 +61,6 @@ describe("WorkflowWorkspace", () => {
 });
 
 describe("WorkflowWorkspace operation routing (regression)", () => {
-  function mockOperations(operations: Parameters<typeof listSkillOperations.mockResolvedValue>[0]) {
-    vi.mocked(listSkillOperations).mockResolvedValue(operations);
-  }
-
   const qaOperation = {
     id: "asset.run_visual_qa",
     name: "Run Visual QA",
@@ -73,13 +69,13 @@ describe("WorkflowWorkspace operation routing (regression)", () => {
     inputSchemaId: "run_visual_qa",
     prerequisites: [],
     tbdGuards: [],
-    workflow: [{ id: "validate-input", type: "validate_input" }],
+    workflow: [{ id: "validate-input", type: "validate_input" } as never],
     expectedOutput: null,
   };
 
   it("does not open a character form for QA operations and never submits the wrong skill", async () => {
     const user = userEvent.setup();
-    mockOperations([qaOperation]);
+    vi.mocked(listSkillOperations).mockResolvedValue([qaOperation]);
     render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
 
     const opButton = await screen.findByRole("button", { name: /Run Visual QA/ });
@@ -94,7 +90,7 @@ describe("WorkflowWorkspace operation routing (regression)", () => {
 
   it("keeps unknown operations from submitting any skill", async () => {
     const user = userEvent.setup();
-    mockOperations([
+    vi.mocked(listSkillOperations).mockResolvedValue([
       {
         ...qaOperation,
         id: "mystery.some_operation",

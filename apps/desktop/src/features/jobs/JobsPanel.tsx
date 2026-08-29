@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../lib/tauri";
 import type { RecoveryClassification, ProjectRecoveryState } from "@cinematic/domain";
 import { ErrorPanel } from "./ErrorPanel";
 import styles from "./JobsPanel.module.css";
@@ -22,7 +22,7 @@ export const JobsPanel: React.FC<JobsPanelProps> = ({ projectRootPath }) => {
     setLoading(true);
     setError(null);
 
-    invoke<ProjectRecoveryState>("get_project_recovery_state", {
+    invokeCommand<ProjectRecoveryState>("get_project_recovery_state", {
       projectRootPath,
     })
       .then((result) => {

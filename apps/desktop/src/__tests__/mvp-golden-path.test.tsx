@@ -55,6 +55,15 @@ vi.mock("../features/qa/api", () => ({
   listQaRuns: vi.fn().mockResolvedValue([]),
   getQaRun: vi.fn().mockResolvedValue(null),
 }));
+vi.mock("../features/jobs/JobsPanel", () => ({
+  JobsPanel: () => null,
+}));
+vi.mock("../features/production/api", () => ({
+  routeProductionIntent: vi.fn().mockResolvedValue(null),
+  listGenerationResults: vi.fn().mockResolvedValue([]),
+  getGeneratedArtifact: vi.fn().mockResolvedValue(null),
+  promoteGeneratedArtifact: vi.fn(),
+}));
 vi.mock("../features/canon/healthApi", () => ({
   getProjectHealth: vi.fn().mockResolvedValue([]),
 }));

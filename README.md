@@ -91,11 +91,9 @@ The current release covers the full MVP chain described in
   with code-validated prerequisites, optional LLM classification behind a
   hard code-validation boundary, and an AI Director bar in the Production
   workspace.
-- **ComfyUI stub (§14.2):** local ComfyUI HTTP adapter that fails clearly
-  when the endpoint is unreachable.
-- **Direct video generation slice (Post-MVP V1.3 stub):** a persisted
-  cinema compilation can drive a `cinema.generate_video` workflow through
-  the `mock-video` provider into a candidate `video/mp4` asset version.
+- **Video generation and ComfyUI:** not implemented. Media-type and
+  capability plumbing exists, but no video adapter, no `cinema.generate_video`
+  workflow, and no ComfyUI adapter are registered.
 - **Python AI worker (§5.5 placeholder):** `services/ai-worker/` speaks
   JSON-RPC 2.0 over stdio (`ping`, `health`); AI responsibilities are
   post-MVP.

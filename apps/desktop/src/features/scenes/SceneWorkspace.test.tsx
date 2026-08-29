@@ -27,6 +27,16 @@ vi.mock("./api", () => ({
   upgradeSceneCharacterLookReference: vi.fn(),
   upgradeSceneCharacterSheetReference: vi.fn(),
   upgradeScenePropReference: vi.fn(),
+  listShots: vi.fn().mockResolvedValue([]),
+  createShot: vi.fn(),
+  updateShot: vi.fn(),
+  deleteShot: vi.fn(),
+  reorderShots: vi.fn(),
+  setShotKeyframe: vi.fn(),
+  getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-1", ready: true, blockers: [] }),
+  listCinemaCompilations: vi.fn().mockResolvedValue([]),
+  compileCinema: vi.fn(),
+  ensureSceneKeyframeAsset: vi.fn(),
 }));
 vi.mock("../worlds/api", () => ({
   listWorldsDetailed: vi.fn(),
@@ -221,7 +231,7 @@ describe("SceneWorkspace", () => {
     expect(screen.getByText("PROPS")).toBeInTheDocument();
     expect(screen.getByText("TBD DECISIONS")).toBeInTheDocument();
     expect(screen.getByText("READINESS")).toBeInTheDocument();
-    expect(screen.getByText("KEYFRAME")).toBeInTheDocument();
+    expect(screen.getByText("SHOTS")).toBeInTheDocument();
     // readiness indicator in list should be READY
     expect(screen.getByText("READY")).toBeInTheDocument();
   });
