@@ -38,12 +38,16 @@ impl CommandHarness {
     }
 
     pub fn new_asset(&self, asset_type: &str, label: &str) -> String {
-        AssetService::create_asset(&self.root, asset_type, label, None).unwrap().id
+        AssetService::create_asset(&self.root, asset_type, label, None)
+            .unwrap()
+            .id
     }
 
     /// Imports a candidate version from a fixture image (fixture setup).
     pub fn import_version(&self, asset_id: &str, source: &Path) -> String {
-        AssetService::import_asset_version(&self.root, asset_id, source, None).unwrap().id
+        AssetService::import_asset_version(&self.root, asset_id, source, None)
+            .unwrap()
+            .id
     }
 
     pub fn reopen(&self) {

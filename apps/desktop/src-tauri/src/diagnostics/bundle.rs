@@ -219,7 +219,8 @@ fn recent_workflows_json(conn: &Connection, project_id: &str) -> Result<Value, A
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let mut workflows = Vec::new();
-    for (id, operation_id, status, failure_code, failure_message, created_at, completed_at) in rows {
+    for (id, operation_id, status, failure_code, failure_message, created_at, completed_at) in rows
+    {
         let duration_ms = completed_at
             .as_deref()
             .and_then(|end| parse_duration_ms(&created_at, end));
@@ -272,7 +273,8 @@ fn provider_runs_json(conn: &Connection, workflow_run_id: &str) -> Result<Vec<Va
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let mut runs = Vec::new();
-    for (id, step, attempt, provider_id, model_id, status, error_json, started_at, completed_at) in rows
+    for (id, step, attempt, provider_id, model_id, status, error_json, started_at, completed_at) in
+        rows
     {
         let duration_ms = completed_at
             .as_deref()
@@ -322,7 +324,16 @@ fn qa_runs_json(conn: &Connection, workflow_run_id: &str) -> Result<Vec<Value>, 
         .map_err(|e| AppError::Database(e.to_string()))?;
 
     let mut runs = Vec::new();
-    for (id, status, overall_status, adapter_id, error_code, created_at, started_at, completed_at) in rows
+    for (
+        id,
+        status,
+        overall_status,
+        adapter_id,
+        error_code,
+        created_at,
+        started_at,
+        completed_at,
+    ) in rows
     {
         let duration_ms = started_at
             .as_deref()
@@ -442,15 +453,37 @@ mod tests {
     fn bundle_is_redacted_and_media_free() {
         let (temp, root) = fixture_project();
         let secret = "sk-test-secret-abcdef123456";
-        log_event(&root, "providers", "run_failed", Some("run-1"), &format!("call failed auth {secret}")).unwrap();
+        log_event(
+            &root,
+            "providers",
+            "run_failed",
+            Some("run-1"),
+            &format!("call failed auth {secret}"),
+        )
+        .unwrap();
 
         // A stray media file in the project must not appear in the bundle.
-        std::fs::write(temp.path().join("diag-project").join("assets").join("leak.png"), b"binary").unwrap();
+        std::fs::write(
+            temp.path()
+                .join("diag-project")
+                .join("assets")
+                .join("leak.png"),
+            b"binary",
+        )
+        .unwrap();
 
         let bundle = export_bundle(&root).unwrap();
         for file in &bundle.files {
-            assert!(!file.content.contains(secret), "{} leaked secret", file.name);
-            assert!(!file.content.contains("leak.png"), "{} leaked media path", file.name);
+            assert!(
+                !file.content.contains(secret),
+                "{} leaked secret",
+                file.name
+            );
+            assert!(
+                !file.content.contains("leak.png"),
+                "{} leaked media path",
+                file.name
+            );
         }
     }
 
@@ -477,7 +510,9 @@ mod tests {
             .iter()
             .find(|f| f.name == "recent-workflows.json")
             .unwrap();
-        assert!(workflows_file.content.contains("\"failureStage\": \"provider\""));
+        assert!(workflows_file
+            .content
+            .contains("\"failureStage\": \"provider\""));
         assert!(workflows_file.content.contains("\"durationMs\": 90000"));
         assert!(workflows_file.content.contains("PROVIDER_FAILED"));
     }

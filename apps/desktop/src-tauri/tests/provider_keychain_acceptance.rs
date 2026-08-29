@@ -63,14 +63,18 @@ fn save_credential_writes_vault_first_and_persists_only_opaque_reference() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(reference.as_deref(), Some(credential_reference(&account).as_str()));
+    assert_eq!(
+        reference.as_deref(),
+        Some(credential_reference(&account).as_str())
+    );
 }
 
 #[test]
 fn status_and_serialized_payloads_never_contain_secret_or_reference() {
     let (_temp, root) = fixture();
     let store = memory_store();
-    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2")).unwrap();
+    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2"))
+        .unwrap();
 
     let status = ProviderService::configuration_status(&root, store.as_ref(), "openai").unwrap();
     assert!(status.credential_configured);
@@ -121,7 +125,11 @@ fn db_failure_after_vault_write_compensates_by_deleting_vault_entry() {
         fail_sets: AtomicBool,
     }
     impl CredentialStore for FailAfterFirstSet {
-        fn set_secret(&self, account: &str, secret: &str) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
+        fn set_secret(
+            &self,
+            account: &str,
+            secret: &str,
+        ) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
             if self.fail_sets.load(Ordering::SeqCst) {
                 return Err(cinematic_desktop_lib::providers::error::ProviderError::new(
                     cinematic_desktop_lib::providers::error::ProviderErrorKind::CredentialStore,
@@ -130,10 +138,17 @@ fn db_failure_after_vault_write_compensates_by_deleting_vault_entry() {
             }
             self.inner.set_secret(account, secret)
         }
-        fn get_secret(&self, account: &str) -> Result<Option<String>, cinematic_desktop_lib::providers::error::ProviderError> {
+        fn get_secret(
+            &self,
+            account: &str,
+        ) -> Result<Option<String>, cinematic_desktop_lib::providers::error::ProviderError>
+        {
             self.inner.get_secret(account)
         }
-        fn delete_secret(&self, account: &str) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
+        fn delete_secret(
+            &self,
+            account: &str,
+        ) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
             self.inner.delete_secret(account)
         }
     }
@@ -183,7 +198,11 @@ fn removal_clears_database_first_then_vault_entry() {
     assert_eq!(reference, None, "DB reference must be cleared first");
 
     let account = credential_account(&project_id(&root), "openai");
-    assert_eq!(store.get_secret(&account).unwrap(), None, "vault entry must be deleted");
+    assert_eq!(
+        store.get_secret(&account).unwrap(),
+        None,
+        "vault entry must be deleted"
+    );
 }
 
 #[test]
@@ -195,13 +214,24 @@ fn orphaned_secret_is_reported_when_vault_delete_fails_after_db_clear() {
         fail_deletes: AtomicBool,
     }
     impl CredentialStore for DeleteFails {
-        fn set_secret(&self, account: &str, secret: &str) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
+        fn set_secret(
+            &self,
+            account: &str,
+            secret: &str,
+        ) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
             self.inner.set_secret(account, secret)
         }
-        fn get_secret(&self, account: &str) -> Result<Option<String>, cinematic_desktop_lib::providers::error::ProviderError> {
+        fn get_secret(
+            &self,
+            account: &str,
+        ) -> Result<Option<String>, cinematic_desktop_lib::providers::error::ProviderError>
+        {
             self.inner.get_secret(account)
         }
-        fn delete_secret(&self, account: &str) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
+        fn delete_secret(
+            &self,
+            account: &str,
+        ) -> Result<(), cinematic_desktop_lib::providers::error::ProviderError> {
             if self.fail_deletes.load(Ordering::SeqCst) {
                 return Err(cinematic_desktop_lib::providers::error::ProviderError::new(
                     cinematic_desktop_lib::providers::error::ProviderErrorKind::CredentialStore,
@@ -252,7 +282,12 @@ fn legacy_env_reference_migrates_into_vault_when_variable_exists() {
 
     // Seed the legacy configuration exactly as the previous format did.
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    upsert_legacy(&conn, "openai", "env://OPENAI_CINERY_MIGRATION_KEY", Some("gpt-image-2"));
+    upsert_legacy(
+        &conn,
+        "openai",
+        "env://OPENAI_CINERY_MIGRATION_KEY",
+        Some("gpt-image-2"),
+    );
     drop(conn);
 
     std::env::set_var("OPENAI_CINERY_MIGRATION_KEY", SECRET);
@@ -274,7 +309,10 @@ fn legacy_env_reference_migrates_into_vault_when_variable_exists() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(reference.as_deref(), Some(credential_reference(&account).as_str()));
+    assert_eq!(
+        reference.as_deref(),
+        Some(credential_reference(&account).as_str())
+    );
 
     std::env::remove_var("OPENAI_CINERY_MIGRATION_KEY");
 }
@@ -316,7 +354,8 @@ fn configured_status_requires_vault_and_database_agreement() {
 fn openai_execution_resolves_secret_from_vault_not_environment() {
     let (_temp, root) = fixture();
     let store = memory_store();
-    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2")).unwrap();
+    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2"))
+        .unwrap();
 
     std::env::remove_var("OPENAI_API_KEY");
 
@@ -344,7 +383,8 @@ fn mock_provider_needs_no_credential() {
 fn sentinel_secret_never_reaches_project_files_or_status_payloads() {
     let (_temp, root) = fixture();
     let store = memory_store();
-    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2")).unwrap();
+    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2"))
+        .unwrap();
 
     // Execute a mocked reference-image style run: the secret exists only in
     // the vault; every file under the project root and every serialized
@@ -367,16 +407,28 @@ fn sentinel_secret_never_reaches_project_files_or_status_payloads() {
         }
         found
     }
-    assert!(!scan(&root, SECRET), "the sentinel secret must never be written into project files");
-    assert!(!scan(&root, "sk-acceptance-sentinel"), "prefix-scoped sentinel scan must also be clean");
+    assert!(
+        !scan(&root, SECRET),
+        "the sentinel secret must never be written into project files"
+    );
+    assert!(
+        !scan(&root, "sk-acceptance-sentinel"),
+        "prefix-scoped sentinel scan must also be clean"
+    );
 }
 
 fn project_id(root: &std::path::Path) -> String {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap()
+    conn.query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap()
 }
 
-fn upsert_legacy(conn: &rusqlite::Connection, provider_id: &str, env_name: &str, model: Option<&str>) {
+fn upsert_legacy(
+    conn: &rusqlite::Connection,
+    provider_id: &str,
+    env_name: &str,
+    model: Option<&str>,
+) {
     let now = "2026-08-29T00:00:00Z";
     conn.execute(
         "INSERT INTO provider_configurations

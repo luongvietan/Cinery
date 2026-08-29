@@ -33,16 +33,16 @@ pub fn resolve(
     input: &Value,
 ) -> Result<RepairWorkflowContext, AppError> {
     let qa_run_id = required_input(input, "qaRunId")?;
-    let detail = qa_repository::get_run(conn, project_id, &qa_run_id)?
-        .ok_or(AppError::QaRunNotFound)?;
+    let detail =
+        qa_repository::get_run(conn, project_id, &qa_run_id)?.ok_or(AppError::QaRunNotFound)?;
     let compiled = RepairCompiler::compile(&detail)?;
-    let source = asset_repository::get_asset_version_by_id(
-        conn,
-        &compiled.plan.source_asset_version_id,
-    )?
-    .ok_or(AppError::AssetVersionNotFound)?;
+    let source =
+        asset_repository::get_asset_version_by_id(conn, &compiled.plan.source_asset_version_id)?
+            .ok_or(AppError::AssetVersionNotFound)?;
     if source.asset_id != compiled.plan.source_asset_id {
-        return Err(invalid("repair source Asset Version belongs to another Asset"));
+        return Err(invalid(
+            "repair source Asset Version belongs to another Asset",
+        ));
     }
     require_image_file(project_root, &source)?;
     let source_asset = asset_repository::get_asset(conn, &source.asset_id)?;
@@ -71,19 +71,23 @@ pub fn compile_request(
     workflow_run_id: &str,
     context: &RepairWorkflowContext,
 ) -> Result<ExecutionRequest, AppError> {
-    let asset_type: AssetType = serde_json::from_value(Value::String(
-        context.source_asset_type.clone(),
-    ))
-    .map_err(|_| invalid("repair source has an unsupported Asset type"))?;
+    let asset_type: AssetType =
+        serde_json::from_value(Value::String(context.source_asset_type.clone()))
+            .map_err(|_| invalid("repair source has an unsupported Asset type"))?;
     let mut references = vec![ExecutionReference {
         reference_type: ExecutionReferenceType::AssetVersion,
         reference: context.source.id.clone(),
         description: "Exact source candidate to edit; never overwrite this version.".into(),
+        role: None,
     }];
     references.extend(context.references.iter().map(|version| ExecutionReference {
         reference_type: ExecutionReferenceType::AssetVersion,
         reference: version.id.clone(),
-        description: format!("Exact immutable repair reference Asset Version {}", version.id),
+        description: format!(
+            "Exact immutable repair reference Asset Version {}",
+            version.id
+        ),
+        role: None,
     }));
     let constraints = context
         .compiled
@@ -131,10 +135,7 @@ pub struct RepairProvenanceInput<'a> {
     pub created_at: &'a str,
 }
 
-pub fn record_repair(
-    conn: &Connection,
-    input: &RepairProvenanceInput<'_>,
-) -> Result<(), AppError> {
+pub fn record_repair(conn: &Connection, input: &RepairProvenanceInput<'_>) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO qa_repairs
          (id, project_id, source_asset_id, source_asset_version_id, child_asset_version_id,

@@ -2,8 +2,10 @@ use cinematic_desktop_lib::assets::service::AssetService;
 use cinematic_desktop_lib::canon::model::CanonEntityType;
 use cinematic_desktop_lib::canon::service::{CanonService, VisualLockDto};
 use cinematic_desktop_lib::cinema::compiler;
-use cinematic_desktop_lib::cinema::model::{BehavioralLocks, SceneCharacterRecord, SceneRecord, ShotRecord};
 use cinematic_desktop_lib::cinema::model::WorldContinuity;
+use cinematic_desktop_lib::cinema::model::{
+    BehavioralLocks, SceneCharacterRecord, SceneRecord, ShotRecord,
+};
 use cinematic_desktop_lib::cinema::service::CinemaService;
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
@@ -76,8 +78,7 @@ fn compilable_scene() -> CompiledScene {
 
     let look = canonical_version(&root, "outfit", "Mara Look");
     let world = canonical_version(&root, "world_plate", "Station interior");
-    let scene =
-        CinemaService::create_scene(&root, "Scene 001", Some(world.clone()), None).unwrap();
+    let scene = CinemaService::create_scene(&root, "Scene 001", Some(world.clone()), None).unwrap();
     CinemaService::add_character_to_scene(&root, &scene.id, &character.id, &look, None).unwrap();
     CinemaService::create_shot(
         &root,
@@ -101,13 +102,11 @@ fn compilable_scene() -> CompiledScene {
     .unwrap();
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let behavioral_locks =
-        CinemaService::resolve_scene_behavioral_locks(&conn, &scene.id).unwrap();
+    let behavioral_locks = CinemaService::resolve_scene_behavioral_locks(&conn, &scene.id).unwrap();
     let visual_locks =
         CanonService::get_locked_character_visual_locks(&root, &character.id).unwrap();
     let characters =
-        cinematic_desktop_lib::cinema::repository::list_scene_characters(&conn, &scene.id)
-            .unwrap();
+        cinematic_desktop_lib::cinema::repository::list_scene_characters(&conn, &scene.id).unwrap();
     let shots = CinemaService::list_shots(&root, &scene.id).unwrap();
     drop(conn);
     let world_continuity =
@@ -148,9 +147,18 @@ fn compiles_8s_two_shot_with_behavior_and_world_continuity() {
     assert!((sum - 8.0).abs() < 1e-9);
     assert_eq!(prompt.time_budget, vec![4.0, 4.0]);
 
-    assert_eq!(prompt.behavioral_locks.speech.as_deref(), Some("locked speech"));
-    assert_eq!(prompt.behavioral_locks.movement.as_deref(), Some("locked movement"));
-    assert_eq!(prompt.behavioral_locks.stillness.as_deref(), Some("locked stillness"));
+    assert_eq!(
+        prompt.behavioral_locks.speech.as_deref(),
+        Some("locked speech")
+    );
+    assert_eq!(
+        prompt.behavioral_locks.movement.as_deref(),
+        Some("locked movement")
+    );
+    assert_eq!(
+        prompt.behavioral_locks.stillness.as_deref(),
+        Some("locked stillness")
+    );
 
     assert_eq!(
         prompt.world_continuity.plate_asset_version_id,
@@ -215,7 +223,8 @@ fn compiles_deterministically_and_scrubs_open_tbd_topics() {
     let mut shots = setup.shots.clone();
     shots[0].action = Some("What is behind the red door? Mara glances over".into());
     let scrubbed = compile(&shots, &["What is behind the red door?".to_string()]);
-    assert!(!scrubbed.provider_prompt.contains("What is behind the red door?"));
+    assert!(!scrubbed
+        .provider_prompt
+        .contains("What is behind the red door?"));
     assert!(scrubbed.provider_prompt.contains("Mara glances over"));
 }
-

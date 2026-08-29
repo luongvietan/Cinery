@@ -90,7 +90,10 @@ fn app_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppCommandError> {
 /// and asset-protocol scope). Used by tests that exercise the public
 /// command boundary; production always uses `create_project`.
 #[tauri::command]
-pub fn create_project_standalone(root_path: String, name: String) -> Result<ProjectSummary, AppCommandError> {
+pub fn create_project_standalone(
+    root_path: String,
+    name: String,
+) -> Result<ProjectSummary, AppCommandError> {
     service::validate_root_path(&root_path)?;
     ProjectService::create(&PathBuf::from(root_path), &name).map_err(Into::into)
 }

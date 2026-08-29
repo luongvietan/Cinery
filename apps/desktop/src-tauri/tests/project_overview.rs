@@ -462,5 +462,8 @@ fn superseded_scene_reference_is_stale_and_does_not_offer_invalid_compile() {
     assert_eq!(scene.status, ReadinessStatus::Blocked);
     assert!(scene.detail.contains("superseded"));
     assert_eq!(scene.action.as_ref().unwrap().id, "restage_scene");
-    assert_eq!(overview.readiness.next_action.unwrap().id, "resolve_protected_tbd");
+    assert_eq!(
+        overview.readiness.next_action.unwrap().id,
+        "resolve_protected_tbd"
+    );
 }

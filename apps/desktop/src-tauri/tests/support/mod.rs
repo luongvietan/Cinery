@@ -76,8 +76,7 @@ pub fn compilable_scene() -> CompiledScene {
 
     let look = canonical_version(&root, "outfit", "Mara Look");
     let world = canonical_version(&root, "world_plate", "Station interior");
-    let scene =
-        CinemaService::create_scene(&root, "Scene 001", Some(world.clone()), None).unwrap();
+    let scene = CinemaService::create_scene(&root, "Scene 001", Some(world.clone()), None).unwrap();
     CinemaService::add_character_to_scene(&root, &scene.id, &character.id, &look, None).unwrap();
     CinemaService::create_shot(
         &root,
@@ -101,13 +100,11 @@ pub fn compilable_scene() -> CompiledScene {
     .unwrap();
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let behavioral_locks =
-        CinemaService::resolve_scene_behavioral_locks(&conn, &scene.id).unwrap();
+    let behavioral_locks = CinemaService::resolve_scene_behavioral_locks(&conn, &scene.id).unwrap();
     let visual_locks =
         CanonService::get_locked_character_visual_locks(&root, &character.id).unwrap();
     let characters =
-        cinematic_desktop_lib::cinema::repository::list_scene_characters(&conn, &scene.id)
-            .unwrap();
+        cinematic_desktop_lib::cinema::repository::list_scene_characters(&conn, &scene.id).unwrap();
     let shots = CinemaService::list_shots(&root, &scene.id).unwrap();
     drop(conn);
     let world_continuity =

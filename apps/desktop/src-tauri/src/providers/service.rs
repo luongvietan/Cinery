@@ -128,7 +128,9 @@ impl ProviderService {
         let definitions = super::repository::list_custom_providers(&conn)?;
         definitions
             .into_iter()
-            .map(|definition| Self::attach_api_key_hint(&conn, credentials, &project_id, definition))
+            .map(|definition| {
+                Self::attach_api_key_hint(&conn, credentials, &project_id, definition)
+            })
             .collect()
     }
 
@@ -258,9 +260,9 @@ impl ProviderService {
             super::repository::get_custom_provider(&conn, &definition.provider_id)?;
         let existing_config =
             super::repository::get_provider_config(&conn, &definition.provider_id)?;
-        let authority_changed = existing_definition
-            .as_ref()
-            .is_some_and(|existing| provider_authority(&existing.base_url) != provider_authority(&definition.base_url));
+        let authority_changed = existing_definition.as_ref().is_some_and(|existing| {
+            provider_authority(&existing.base_url) != provider_authority(&definition.base_url)
+        });
         let account = credential_account(&project_id, &definition.provider_id);
         let mut desired_secrets = BTreeMap::<String, Option<String>>::new();
         if let Some(api_key) = definition.api_key.as_deref() {
@@ -286,7 +288,9 @@ impl ProviderService {
                     &definition.provider_id,
                     &header.name,
                 );
-                if authority_changed || !current_header_names.contains(&header.name.to_ascii_lowercase()) {
+                if authority_changed
+                    || !current_header_names.contains(&header.name.to_ascii_lowercase())
+                {
                     desired_secrets.insert(canonical, None);
                     desired_secrets.insert(legacy, None);
                 } else if legacy != canonical {
@@ -335,7 +339,9 @@ impl ProviderService {
                     Some(value) if value.trim().is_empty() => None,
                     Some(_) => Some(credential_reference(&account)),
                     None if authority_changed => None,
-                    None => existing_config.as_ref().and_then(|record| record.credential_reference.clone()),
+                    None => existing_config
+                        .as_ref()
+                        .and_then(|record| record.credential_reference.clone()),
                 };
                 super::repository::upsert_provider_config(
                     &tx,
@@ -402,10 +408,13 @@ impl ProviderService {
             previous_secrets.push((account, previous));
         }
         let db_result = (|| -> Result<(), AppError> {
-            let tx = conn.transaction().map_err(|error| AppError::Database(error.to_string()))?;
+            let tx = conn
+                .transaction()
+                .map_err(|error| AppError::Database(error.to_string()))?;
             super::repository::delete_custom_provider(&tx, provider_id)?;
             super::repository::delete_provider_config(&tx, provider_id)?;
-            tx.commit().map_err(|error| AppError::Database(error.to_string()))?;
+            tx.commit()
+                .map_err(|error| AppError::Database(error.to_string()))?;
             Ok(())
         })();
         if let Err(error) = db_result {
@@ -1066,8 +1075,8 @@ mod connection_tests {
             }],
             headers: vec![],
         };
-        let saved = ProviderService::upsert_custom_provider(&root, &credentials, &definition)
-            .unwrap();
+        let saved =
+            ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         assert_eq!(saved.api_key, None);
         assert_eq!(saved.api_key_hint.as_deref(), Some("sk-j9ml•••ray"));
 
@@ -1091,8 +1100,10 @@ mod connection_tests {
         assert_eq!(
             credentials
                 .get_secret(&credential_account(
-                    &ProviderService::project_id(&ProviderService::open_project_conn(&root).unwrap())
-                        .unwrap(),
+                    &ProviderService::project_id(
+                        &ProviderService::open_project_conn(&root).unwrap()
+                    )
+                    .unwrap(),
                     "hinted"
                 ))
                 .unwrap()
@@ -1205,9 +1216,17 @@ mod connection_tests {
         ProjectService::create(&root, "Tampered metadata").unwrap();
         let credentials = MemoryCredentialStore::new();
         let definition = CustomProviderDefinition {
-            provider_id: "tampered".into(), display_name: "Tampered".into(),
-            base_url: "https://safe.example.test/v1".into(), purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-secret".into()), api_key_hint: None, models: vec![CustomProviderModel { id: "m".into(), name: "M".into() }], headers: vec![],
+            provider_id: "tampered".into(),
+            display_name: "Tampered".into(),
+            base_url: "https://safe.example.test/v1".into(),
+            purpose: CustomProviderPurpose::Llm,
+            api_key: Some("sk-secret".into()),
+            api_key_hint: None,
+            models: vec![CustomProviderModel {
+                id: "m".into(),
+                name: "M".into(),
+            }],
+            headers: vec![],
         };
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let conn = ProviderService::open_project_conn(&root).unwrap();
@@ -1217,7 +1236,8 @@ mod connection_tests {
         ).unwrap();
         let probe = RecordingProbe::default();
 
-        let error = ProviderService::test_connection(&root, &credentials, &probe, "tampered").unwrap_err();
+        let error =
+            ProviderService::test_connection(&root, &credentials, &probe, "tampered").unwrap_err();
 
         assert!(error.to_string().contains("must not contain credentials"));
         assert!(probe.request.lock().unwrap().is_none());
@@ -1230,10 +1250,20 @@ mod connection_tests {
         ProjectService::create(&root, "Authority change").unwrap();
         let credentials = MemoryCredentialStore::new();
         let mut definition = CustomProviderDefinition {
-            provider_id: "moving".into(), display_name: "Moving".into(),
-            base_url: "https://first.example.test/v1".into(), purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-old".into()), api_key_hint: None, models: vec![CustomProviderModel { id: "m".into(), name: "M".into() }],
-            headers: vec![CustomProviderHeader { name: "X-API-Key".into(), value: Some("header-old".into()) }],
+            provider_id: "moving".into(),
+            display_name: "Moving".into(),
+            base_url: "https://first.example.test/v1".into(),
+            purpose: CustomProviderPurpose::Llm,
+            api_key: Some("sk-old".into()),
+            api_key_hint: None,
+            models: vec![CustomProviderModel {
+                id: "m".into(),
+                name: "M".into(),
+            }],
+            headers: vec![CustomProviderHeader {
+                name: "X-API-Key".into(),
+                value: Some("header-old".into()),
+            }],
         };
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         definition.base_url = "https://second.example.test/v1".into();
@@ -1244,9 +1274,25 @@ mod connection_tests {
 
         let conn = ProviderService::open_project_conn(&root).unwrap();
         let project_id = ProviderService::project_id(&conn).unwrap();
-        assert!(credentials.get_secret(&credential_account(&project_id, "moving")).unwrap().is_none());
-        assert!(credentials.get_secret(&header_credential_account(&project_id, "moving", "X-API-Key")).unwrap().is_none());
-        assert!(super::super::repository::get_provider_config(&conn, "moving").unwrap().unwrap().credential_reference.is_none());
+        assert!(credentials
+            .get_secret(&credential_account(&project_id, "moving"))
+            .unwrap()
+            .is_none());
+        assert!(credentials
+            .get_secret(&header_credential_account(
+                &project_id,
+                "moving",
+                "X-API-Key"
+            ))
+            .unwrap()
+            .is_none());
+        assert!(
+            super::super::repository::get_provider_config(&conn, "moving")
+                .unwrap()
+                .unwrap()
+                .credential_reference
+                .is_none()
+        );
         let probe = RecordingProbe::default();
         assert!(ProviderService::test_connection(&root, &credentials, &probe, "moving").is_err());
         assert!(probe.request.lock().unwrap().is_none());
@@ -1259,10 +1305,20 @@ mod connection_tests {
         ProjectService::create(&root, "Delete cleanup").unwrap();
         let credentials = MemoryCredentialStore::new();
         let definition = CustomProviderDefinition {
-            provider_id: "delete_me".into(), display_name: "Delete".into(),
-            base_url: "https://api.example.test/v1".into(), purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-delete".into()), api_key_hint: None, models: vec![CustomProviderModel { id: "m".into(), name: "M".into() }],
-            headers: vec![CustomProviderHeader { name: "X-Key".into(), value: Some("header-delete".into()) }],
+            provider_id: "delete_me".into(),
+            display_name: "Delete".into(),
+            base_url: "https://api.example.test/v1".into(),
+            purpose: CustomProviderPurpose::Llm,
+            api_key: Some("sk-delete".into()),
+            api_key_hint: None,
+            models: vec![CustomProviderModel {
+                id: "m".into(),
+                name: "M".into(),
+            }],
+            headers: vec![CustomProviderHeader {
+                name: "X-Key".into(),
+                value: Some("header-delete".into()),
+            }],
         };
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let conn = ProviderService::open_project_conn(&root).unwrap();
@@ -1272,10 +1328,28 @@ mod connection_tests {
         ProviderService::delete_custom_provider(&root, &credentials, "delete_me").unwrap();
 
         let conn = ProviderService::open_project_conn(&root).unwrap();
-        assert!(super::super::repository::get_custom_provider(&conn, "delete_me").unwrap().is_none());
-        assert!(super::super::repository::get_provider_config(&conn, "delete_me").unwrap().is_none());
-        assert!(credentials.get_secret(&credential_account(&project_id, "delete_me")).unwrap().is_none());
-        assert!(credentials.get_secret(&header_credential_account(&project_id, "delete_me", "X-Key")).unwrap().is_none());
+        assert!(
+            super::super::repository::get_custom_provider(&conn, "delete_me")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            super::super::repository::get_provider_config(&conn, "delete_me")
+                .unwrap()
+                .is_none()
+        );
+        assert!(credentials
+            .get_secret(&credential_account(&project_id, "delete_me"))
+            .unwrap()
+            .is_none());
+        assert!(credentials
+            .get_secret(&header_credential_account(
+                &project_id,
+                "delete_me",
+                "X-Key"
+            ))
+            .unwrap()
+            .is_none());
     }
 }
 

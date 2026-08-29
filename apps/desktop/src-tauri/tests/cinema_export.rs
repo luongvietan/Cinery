@@ -23,7 +23,11 @@ fn compile_and_export_writes_deterministic_json_and_records_sha() {
 
     // Export file exists at the recorded project-relative path.
     let file_path = setup.root.join(&compilation.export_path);
-    assert!(file_path.exists(), "export missing at {}", compilation.export_path);
+    assert!(
+        file_path.exists(),
+        "export missing at {}",
+        compilation.export_path
+    );
     assert!(compilation.export_path.starts_with("prompts/cinema/"));
 
     // Recorded sha256 matches the file contents.
@@ -70,9 +74,14 @@ fn second_compile_of_same_inputs_is_prompt_deterministic() {
     assert_ne!(first.id, second.id);
 
     // ...but identical prompt content apart from the compilation id line.
-    let normalize =
-        |json: &str| json.replace(&first.id, "COMPILATION").replace(&second.id, "COMPILATION");
-    assert_eq!(normalize(&first.compilation_json), normalize(&second.compilation_json));
+    let normalize = |json: &str| {
+        json.replace(&first.id, "COMPILATION")
+            .replace(&second.id, "COMPILATION")
+    };
+    assert_eq!(
+        normalize(&first.compilation_json),
+        normalize(&second.compilation_json)
+    );
 
     // Both compilations are listed for the scene, newest first.
     let listed = CinemaService::list_compilations(&setup.root, &setup.scene.id).unwrap();

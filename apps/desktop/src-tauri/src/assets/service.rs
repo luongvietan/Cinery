@@ -77,7 +77,9 @@ impl AssetService {
     }
 
     /// Lists every asset belonging to the project rooted at `project_root`.
-    pub fn list_assets(project_root: &Path) -> Result<Vec<crate::assets::model::AssetSummaryRecord>, AppError> {
+    pub fn list_assets(
+        project_root: &Path,
+    ) -> Result<Vec<crate::assets::model::AssetSummaryRecord>, AppError> {
         let conn = open_project_db(project_root)?;
         let project_id = project_repository::read_project(&conn)?.id;
         repository::list_asset_summaries(&conn, &project_id)
@@ -167,12 +169,8 @@ impl AssetService {
         let version_number = repository::next_version_number(&tx, asset_id)?;
         let version_id = Ulid::new().to_string();
 
-        let media_relative = managed_media_path(
-            asset_id,
-            version_number,
-            &version_id,
-            inspected.extension,
-        );
+        let media_relative =
+            managed_media_path(asset_id, version_number, &version_id, inspected.extension);
         let thumbnail_relative = managed_thumbnail_path(asset_id, &version_id);
         let media_absolute = project_root.join(&media_relative);
         let thumbnail_absolute = project_root.join(&thumbnail_relative);
@@ -402,8 +400,7 @@ pub(crate) mod test_support {
         pub fn face_asset() -> Self {
             let project = ProjectFixture::new();
             let asset =
-                AssetService::create_asset(&project.root, "face_lock", "MARA-FACE", None)
-                    .unwrap();
+                AssetService::create_asset(&project.root, "face_lock", "MARA-FACE", None).unwrap();
             let source_temp = tempfile::tempdir().unwrap();
             let project_root = project.root.clone();
 
@@ -531,8 +528,7 @@ mod tests {
     fn rejects_video_asset_type_in_sprint_one() {
         let fixture = ProjectFixture::new();
 
-        let error = AssetService::create_asset(&fixture.root, "video", "B-ROLL", None)
-            .unwrap_err();
+        let error = AssetService::create_asset(&fixture.root, "video", "B-ROLL", None).unwrap_err();
 
         assert!(matches!(error, AppError::UnsupportedAssetTypeForSprint));
     }
@@ -560,8 +556,8 @@ mod tests {
     fn rejects_blank_label() {
         let fixture = ProjectFixture::new();
 
-        let error = AssetService::create_asset(&fixture.root, "face_lock", "   ", None)
-            .unwrap_err();
+        let error =
+            AssetService::create_asset(&fixture.root, "face_lock", "   ", None).unwrap_err();
 
         assert!(matches!(error, AppError::InvalidAssetLabel));
     }
@@ -571,8 +567,7 @@ mod tests {
         let fixture = ProjectFixture::new();
 
         let asset =
-            AssetService::create_asset(&fixture.root, "face_lock", "  MARA-FACE  ", None)
-                .unwrap();
+            AssetService::create_asset(&fixture.root, "face_lock", "  MARA-FACE  ", None).unwrap();
 
         assert_eq!(asset.label, "MARA-FACE");
     }
@@ -653,13 +648,8 @@ mod tests {
         let fixture = AssetFixture::face_asset();
         let source = fixture.write_png("same.png", 64, 64);
 
-        AssetService::import_asset_version(
-            &fixture.project_root,
-            &fixture.asset_id,
-            &source,
-            None,
-        )
-        .unwrap();
+        AssetService::import_asset_version(&fixture.project_root, &fixture.asset_id, &source, None)
+            .unwrap();
         let error = AssetService::import_asset_version(
             &fixture.project_root,
             &fixture.asset_id,
@@ -676,13 +666,8 @@ mod tests {
         let fixture = AssetFixture::face_asset();
         let source = fixture.write_png("same.png", 64, 64);
 
-        AssetService::import_asset_version(
-            &fixture.project_root,
-            &fixture.asset_id,
-            &source,
-            None,
-        )
-        .unwrap();
+        AssetService::import_asset_version(&fixture.project_root, &fixture.asset_id, &source, None)
+            .unwrap();
 
         let assets_dir = fixture.project_root.join("assets").join(&fixture.asset_id);
         let entries_before: Vec<_> = walk_all_files(&assets_dir);
@@ -807,13 +792,8 @@ mod tests {
         let fixture = AssetFixture::face_asset();
         let source = fixture.write_png("candidate.png", 32, 32);
 
-        AssetService::import_asset_version(
-            &fixture.project_root,
-            &fixture.asset_id,
-            &source,
-            None,
-        )
-        .unwrap();
+        AssetService::import_asset_version(&fixture.project_root, &fixture.asset_id, &source, None)
+            .unwrap();
 
         let asset = repository::get_asset(
             &db::open_connection(&fixture.project_root.join("project.db")).unwrap(),
@@ -940,11 +920,9 @@ mod tests {
 
         let first =
             AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
-        let before = AssetService::get_asset_with_versions(
-            &fixture.project_root,
-            &fixture.asset_id,
-        )
-        .unwrap();
+        let before =
+            AssetService::get_asset_with_versions(&fixture.project_root, &fixture.asset_id)
+                .unwrap();
         let before_statuses: Vec<_> = before
             .versions
             .iter()
@@ -953,11 +931,8 @@ mod tests {
 
         let repeated =
             AssetService::promote_asset_version(&fixture.project_root, &version_one_id).unwrap();
-        let after = AssetService::get_asset_with_versions(
-            &fixture.project_root,
-            &fixture.asset_id,
-        )
-        .unwrap();
+        let after = AssetService::get_asset_with_versions(&fixture.project_root, &fixture.asset_id)
+            .unwrap();
 
         assert!(repeated.superseded_version_id.is_none());
         assert_eq!(repeated.promoted_version.status, "canonical");
@@ -983,9 +958,8 @@ mod tests {
         )
         .unwrap();
 
-        let error =
-            AssetService::promote_asset_version(&fixture.project_root, &version_one_id)
-                .unwrap_err();
+        let error = AssetService::promote_asset_version(&fixture.project_root, &version_one_id)
+            .unwrap_err();
 
         assert!(matches!(error, AppError::Database(_)));
     }

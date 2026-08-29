@@ -28,10 +28,13 @@ pub fn list_providers(project_root_path: Option<String>) -> Result<Vec<String>, 
     let mut providers = ProviderService::list_provider_ids();
     if let Some(path) = project_root_path {
         validate_root_path(&path)?;
-        providers = ProviderService::list_custom_providers(&PathBuf::from(path), command_credential_store().as_ref())?
-            .into_iter()
-            .map(|provider| provider.provider_id)
-            .collect();
+        providers = ProviderService::list_custom_providers(
+            &PathBuf::from(path),
+            command_credential_store().as_ref(),
+        )?
+        .into_iter()
+        .map(|provider| provider.provider_id)
+        .collect();
     }
     Ok(providers)
 }
@@ -193,10 +196,12 @@ pub fn list_provider_models(
 ) -> Result<Vec<String>, AppCommandError> {
     if let Some(path) = project_root_path {
         validate_root_path(&path)?;
-        if let Some(custom) =
-            ProviderService::list_custom_providers(&PathBuf::from(path), command_credential_store().as_ref())?
-                .into_iter()
-                .find(|provider| provider.provider_id == provider_id)
+        if let Some(custom) = ProviderService::list_custom_providers(
+            &PathBuf::from(path),
+            command_credential_store().as_ref(),
+        )?
+        .into_iter()
+        .find(|provider| provider.provider_id == provider_id)
         {
             return Ok(custom.models.into_iter().map(|model| model.id).collect());
         }

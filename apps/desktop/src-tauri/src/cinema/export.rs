@@ -30,10 +30,7 @@ pub fn export_compilation(
         .map_err(|e| AppError::FileSystem(e.to_string()))?;
     fs::rename(&md_tmp, &md_path).map_err(|e| AppError::FileSystem(e.to_string()))?;
 
-    let relative = format!(
-        "prompts/cinema/{}.json",
-        compilation.compilation_id
-    );
+    let relative = format!("prompts/cinema/{}.json", compilation.compilation_id);
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());

@@ -79,11 +79,11 @@ mod tests {
         assert!(invalid_output.is_err());
     }
 }
-use crate::skills::model::ExpectedOutputDefinition;
 use crate::error::AppError;
+use crate::skills::model::ExpectedOutputDefinition;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use rusqlite::OptionalExtension;
 
 fn deserialize_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
@@ -127,6 +127,15 @@ pub enum ReferenceBackground {
     NeutralGray,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceRole {
+    World,
+    CharacterLook,
+    CharacterSheet,
+    Prop,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionReference {
@@ -134,6 +143,8 @@ pub struct ExecutionReference {
     pub reference_type: ExecutionReferenceType,
     pub reference: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ReferenceRole>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -142,13 +153,25 @@ pub enum ExecutionConstraint {
     #[serde(rename = "flat_reference_background")]
     FlatReferenceBackground { value: ReferenceBackground },
     #[serde(rename = "shadowless_lighting")]
-    ShadowlessLighting { #[serde(deserialize_with = "deserialize_true")] value: bool },
+    ShadowlessLighting {
+        #[serde(deserialize_with = "deserialize_true")]
+        value: bool,
+    },
     #[serde(rename = "no_cast_shadow")]
-    NoCastShadow { #[serde(deserialize_with = "deserialize_true")] value: bool },
+    NoCastShadow {
+        #[serde(deserialize_with = "deserialize_true")]
+        value: bool,
+    },
     #[serde(rename = "no_contact_shadow")]
-    NoContactShadow { #[serde(deserialize_with = "deserialize_true")] value: bool },
+    NoContactShadow {
+        #[serde(deserialize_with = "deserialize_true")]
+        value: bool,
+    },
     #[serde(rename = "no_cinematic_dof")]
-    NoCinematicDof { #[serde(deserialize_with = "deserialize_true")] value: bool },
+    NoCinematicDof {
+        #[serde(deserialize_with = "deserialize_true")]
+        value: bool,
+    },
     #[serde(rename = "preserve_visual_lock")]
     PreserveVisualLock { key: String, description: String },
 }
@@ -200,7 +223,9 @@ pub fn resolve_reference_attachments(
     let mut attachments = Vec::with_capacity(request.references.len());
     for reference in &request.references {
         let version_id = match reference.reference_type {
-            crate::workflow::execution::ExecutionReferenceType::AssetVersion => &reference.reference,
+            crate::workflow::execution::ExecutionReferenceType::AssetVersion => {
+                &reference.reference
+            }
             // Canon-snapshot references are compiled prompt context, not media.
             crate::workflow::execution::ExecutionReferenceType::CanonSnapshot => continue,
         };
@@ -242,7 +267,10 @@ fn resolve_one_attachment(
         })?;
     let (file_path, expected_sha256, media_type, byte_size, original_filename) = row;
 
-    if !matches!(media_type.as_str(), "image/png" | "image/jpeg" | "image/webp") {
+    if !matches!(
+        media_type.as_str(),
+        "image/png" | "image/jpeg" | "image/webp"
+    ) {
         return Err(AppError::WorkflowPrerequisiteFailed(format!(
             "reference asset version {version_id} has unsupported media type {media_type}"
         )));

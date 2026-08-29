@@ -1,10 +1,10 @@
 use cinematic_desktop_lib::db;
-use cinematic_desktop_lib::project::service::ProjectService;
-use cinematic_desktop_lib::providers::repository::{ProviderConfigRecord, upsert_provider_config};
 use cinematic_desktop_lib::diagnostics::DiagnosticsRedactor;
+use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::providers::repository::{upsert_provider_config, ProviderConfigRecord};
 use serde_json::json;
-use tempfile::tempdir;
 use std::fs;
+use tempfile::tempdir;
 
 const TEST_SECRET: &str = "sk-test-integration-secret-12345";
 
@@ -60,7 +60,11 @@ fn diagnostics_redactor_catches_all_patterns() {
 
     assert!(!redacted.contains(TEST_SECRET));
     let redaction_count = redacted.matches("[REDACTED]").count();
-    assert!(redaction_count >= 4, "Expected at least 4 redactions, got {}", redaction_count);
+    assert!(
+        redaction_count >= 4,
+        "Expected at least 4 redactions, got {}",
+        redaction_count
+    );
 }
 
 // Test: JSON diagnostics are properly redacted
@@ -118,27 +122,33 @@ fn credential_reference_isolation() {
     assert!(!stored_ref.contains(TEST_SECRET));
 
     // Verify that all provider config fields don't contain the secret
-    let provider_id: String = conn.query_row(
-        "SELECT provider_id FROM provider_configurations WHERE provider_id = 'isolated-test'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let provider_id: String = conn
+        .query_row(
+            "SELECT provider_id FROM provider_configurations WHERE provider_id = 'isolated-test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     assert!(!provider_id.contains(TEST_SECRET));
 
-    let enabled: i64 = conn.query_row(
-        "SELECT enabled FROM provider_configurations WHERE provider_id = 'isolated-test'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let enabled: i64 = conn
+        .query_row(
+            "SELECT enabled FROM provider_configurations WHERE provider_id = 'isolated-test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     assert_eq!(enabled, 1);
 
-    let default_model: Option<String> = conn.query_row(
-        "SELECT default_model FROM provider_configurations WHERE provider_id = 'isolated-test'",
-        [],
-        |row| row.get(0),
-    ).ok();
+    let default_model: Option<String> = conn
+        .query_row(
+            "SELECT default_model FROM provider_configurations WHERE provider_id = 'isolated-test'",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
 
     if let Some(model) = default_model {
         assert!(!model.contains(TEST_SECRET));
@@ -181,7 +191,9 @@ fn workflow_snapshot_isolation() {
     let (_temp, root) = fixture();
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
 
-    let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
 
     // Create a workflow run with potentially sensitive input
     let sensitive_input = json!({
@@ -198,11 +210,13 @@ fn workflow_snapshot_isolation() {
     ).unwrap();
 
     // Retrieve and verify
-    let stored_input: String = conn.query_row(
-        "SELECT input_json FROM workflow_runs WHERE id = 'secure-run-1'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let stored_input: String = conn
+        .query_row(
+            "SELECT input_json FROM workflow_runs WHERE id = 'secure-run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     // The actual implementation stores the full input, but when shown to users,
     // it should be redacted. Verify redaction works:

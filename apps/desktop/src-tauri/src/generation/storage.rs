@@ -134,9 +134,9 @@ fn validate_component(value: &str) -> Result<(), AppError> {
 fn validate_relative_storage_path(value: &str) -> Result<PathBuf, AppError> {
     let path = Path::new(value);
     if path.is_absolute()
-        || path.components().any(|component| {
-            matches!(component, std::path::Component::ParentDir)
-        })
+        || path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
     {
         return Err(AppError::GenerationArtifactUnavailable(value.into()));
     }

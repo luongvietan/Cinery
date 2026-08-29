@@ -1,7 +1,7 @@
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
-use cinematic_desktop_lib::providers::repository::{ProviderConfigRecord, upsert_provider_config};
 use cinematic_desktop_lib::providers::error::redact_secret;
+use cinematic_desktop_lib::providers::repository::{upsert_provider_config, ProviderConfigRecord};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -50,7 +50,11 @@ fn credential_not_in_project_files() {
 
     // Create a project.yaml file
     let project_yaml = root.join("project.yaml");
-    std::fs::write(&project_yaml, "name: Test Project\nproviders:\n  openai:\n    apiKey: ${OPENAI_API_KEY}\n").unwrap();
+    std::fs::write(
+        &project_yaml,
+        "name: Test Project\nproviders:\n  openai:\n    apiKey: ${OPENAI_API_KEY}\n",
+    )
+    .unwrap();
 
     // Read the file and verify no secrets are hardcoded
     let content = std::fs::read_to_string(&project_yaml).unwrap();
@@ -65,7 +69,9 @@ fn credential_not_in_workflow_snapshot() {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
 
     // Insert a workflow run with execution data
-    let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
     conn.execute(
         "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at)
          VALUES ('run-1', ?1, 'skill-1', '1.0', 'op-1', 'completed', ?2, 'now', 'now')",
@@ -73,11 +79,13 @@ fn credential_not_in_workflow_snapshot() {
     ).unwrap();
 
     // Read the workflow run
-    let input_json: String = conn.query_row(
-        "SELECT input_json FROM workflow_runs WHERE id = 'run-1'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let input_json: String = conn
+        .query_row(
+            "SELECT input_json FROM workflow_runs WHERE id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     // Verify no secrets in the snapshot
     assert!(!input_json.contains(TEST_API_SECRET));
@@ -89,7 +97,9 @@ fn credential_not_in_generation_metadata() {
     let (_temp, root) = fixture();
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
 
-    let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
     conn.execute(
         "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at)
          VALUES ('run-2', ?1, 'skill-1', '1.0', 'op-1', 'completed', '{}', 'now', 'now')",
@@ -102,11 +112,13 @@ fn credential_not_in_generation_metadata() {
         [json!({"result":"success","metadata":{"model":"gpt-4"}}).to_string()],
     ).unwrap();
 
-    let output_json: String = conn.query_row(
-        "SELECT output_json FROM workflow_steps WHERE workflow_run_id = 'run-2'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let output_json: String = conn
+        .query_row(
+            "SELECT output_json FROM workflow_steps WHERE workflow_run_id = 'run-2'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     // Verify no secrets in generation metadata
     assert!(!output_json.contains(TEST_API_SECRET));
@@ -201,11 +213,13 @@ fn credential_reference_not_exposed_in_status() {
     upsert_provider_config(&conn, &config).unwrap();
 
     // The credential_reference should be stored, but never the actual value
-    let stored_ref: String = conn.query_row(
-        "SELECT credential_reference FROM provider_configurations WHERE provider_id = 'openai'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let stored_ref: String = conn
+        .query_row(
+            "SELECT credential_reference FROM provider_configurations WHERE provider_id = 'openai'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
 
     assert_eq!(stored_ref, "TEST_OPENAI_KEY");
     assert!(!stored_ref.contains(TEST_API_SECRET));

@@ -1,7 +1,5 @@
 use cinematic_desktop_lib::{
-    assets::service::AssetService,
-    db,
-    project::service::ProjectService,
+    assets::service::AssetService, db, project::service::ProjectService,
     workflow::runtime::WorkflowRuntime,
 };
 use image::{ImageBuffer, Rgba};
@@ -18,7 +16,11 @@ impl Fixture {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         let project = ProjectService::create(&root, "Repair Project").unwrap();
-        for (name, value) in [("face.png", 40_u8), ("look.png", 80_u8), ("target.png", 120_u8)] {
+        for (name, value) in [
+            ("face.png", 40_u8),
+            ("look.png", 80_u8),
+            ("target.png", 120_u8),
+        ] {
             let image = ImageBuffer::from_pixel(32, 32, Rgba([value, value, value, 255]));
             image.save(root.join(name)).unwrap();
         }
@@ -91,10 +93,34 @@ impl Fixture {
         )
         .unwrap();
         let checks = [
-            ("reference:identity", "identity_similarity", "canonical_reference", "pass", None),
-            ("lock:right_eyebrow_scar", "permanent_visual_lock", "visual_lock", "fail", Some("Move the scar to the character-right eyebrow.")),
-            ("lock:watch_left_wrist", "accessory_placement", "visual_lock", "pass", None),
-            ("artifact:unexpected", "unexpected_artifact", "artifact_detection", "fail", Some("Remove the unexpected lower-right artifact.")),
+            (
+                "reference:identity",
+                "identity_similarity",
+                "canonical_reference",
+                "pass",
+                None,
+            ),
+            (
+                "lock:right_eyebrow_scar",
+                "permanent_visual_lock",
+                "visual_lock",
+                "fail",
+                Some("Move the scar to the character-right eyebrow."),
+            ),
+            (
+                "lock:watch_left_wrist",
+                "accessory_placement",
+                "visual_lock",
+                "pass",
+                None,
+            ),
+            (
+                "artifact:unexpected",
+                "unexpected_artifact",
+                "artifact_detection",
+                "fail",
+                Some("Remove the unexpected lower-right artifact."),
+            ),
         ];
         for (index, (id, check_type, source, status, hint)) in checks.into_iter().enumerate() {
             conn.execute(
@@ -103,7 +129,14 @@ impl Fixture {
                   confidence, observed, reason, repair_hint, review_status, created_at)
                  VALUES (?1, 'qa-1', ?2, ?3, ?4, '{}', ?5, 0.95, 'fixture', 'fixture', ?6,
                          'unreviewed', 'now')",
-                params![format!("check-{index}"), id, check_type, source, status, hint],
+                params![
+                    format!("check-{index}"),
+                    id,
+                    check_type,
+                    source,
+                    status,
+                    hint
+                ],
             )
             .unwrap();
         }
@@ -156,7 +189,10 @@ fn repair_waits_for_approval_and_creates_one_child_with_full_provenance() {
             .unwrap(),
     )
     .unwrap();
-    assert!(compiled["prompt"].as_str().unwrap().contains("character-right"));
+    assert!(compiled["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("character-right"));
     let references = compiled["references"].as_array().unwrap();
     assert_eq!(references.len(), 3, "source plus two exact references");
 
@@ -172,21 +208,50 @@ fn repair_waits_for_approval_and_creates_one_child_with_full_provenance() {
 
     let target = AssetService::get_asset_with_versions(&fixture.root, "target").unwrap();
     assert_eq!(target.versions.len(), 2);
-    let source = target.versions.iter().find(|version| version.id == "target-v1").unwrap();
-    let child = target.versions.iter().find(|version| version.id != "target-v1").unwrap();
+    let source = target
+        .versions
+        .iter()
+        .find(|version| version.id == "target-v1")
+        .unwrap();
+    let child = target
+        .versions
+        .iter()
+        .find(|version| version.id != "target-v1")
+        .unwrap();
     assert_eq!(source.status, "candidate");
     assert_eq!(child.status, "candidate");
     assert_eq!(child.parent_version_id.as_deref(), Some("target-v1"));
-    assert_eq!(std::fs::read(fixture.root.join("target.png")).unwrap(), source_bytes);
+    assert_eq!(
+        std::fs::read(fixture.root.join("target.png")).unwrap(),
+        source_bytes
+    );
 
     let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
-    let provenance: (String, String, String, String, String, Option<String>, Option<String>) = conn
+    let provenance: (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn
         .query_row(
             "SELECT child_asset_version_id, source_qa_run_id, workflow_run_id,
                     provider_id, provider_job_id, child_qa_run_id, auto_qa_workflow_run_id
              FROM qa_repairs",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
         )
         .unwrap();
     assert_eq!(provenance.0, child.id);
@@ -194,8 +259,12 @@ fn repair_waits_for_approval_and_creates_one_child_with_full_provenance() {
     assert_eq!(provenance.2, created.run.id);
     assert_eq!(provenance.3, "mock");
     assert!(provenance.4.starts_with("mock:"));
-    let child_qa_id = provenance.5.expect("repair must trigger exactly one child QA run");
-    let auto_qa_workflow_id = provenance.6.expect("repair must link the child QA workflow");
+    let child_qa_id = provenance
+        .5
+        .expect("repair must trigger exactly one child QA run");
+    let auto_qa_workflow_id = provenance
+        .6
+        .expect("repair must link the child QA workflow");
     let child_qa: (String, String) = conn
         .query_row(
             "SELECT status, overall_status FROM qa_runs WHERE id = ?1 AND workflow_run_id = ?2",
@@ -218,13 +287,8 @@ fn failed_provider_execution_creates_no_phantom_child() {
     )
     .unwrap();
     WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
-    WorkflowRuntime::approve_run_step(
-        &fixture.root,
-        &created.run.id,
-        "approve-repair",
-        None,
-    )
-    .unwrap();
+    WorkflowRuntime::approve_run_step(&fixture.root, &created.run.id, "approve-repair", None)
+        .unwrap();
     assert!(WorkflowRuntime::advance_run(&fixture.root, &created.run.id).is_err());
 
     let target = AssetService::get_asset_with_versions(&fixture.root, "target").unwrap();
@@ -253,7 +317,11 @@ fn remaining_child_qa_failure_stops_without_another_automatic_repair() {
     WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
 
     let target = AssetService::get_asset_with_versions(&fixture.root, "target").unwrap();
-    assert_eq!(target.versions.len(), 2, "post-repair QA must not create a second child");
+    assert_eq!(
+        target.versions.len(),
+        2,
+        "post-repair QA must not create a second child"
+    );
     let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
     let (repair_count, failed_qa_count): (i64, i64) = conn
         .query_row(

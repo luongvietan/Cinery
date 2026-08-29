@@ -17,10 +17,13 @@ fn finalized_file_without_artifact_row_is_quarantined_safely() {
         .write_to(&mut bytes, ImageFormat::Png)
         .unwrap();
 
-    let materialized = materialize_image(&root, "run-1", "attempt-1", 1, &bytes.into_inner()).unwrap();
+    let materialized =
+        materialize_image(&root, "run-1", "attempt-1", 1, &bytes.into_inner()).unwrap();
     assert!(root.join(&materialized.storage_path).exists());
 
     assert_eq!(quarantine_orphan_generated_files(&root).unwrap(), 1);
     assert!(!root.join(&materialized.storage_path).exists());
-    assert!(root.join("generated/quarantine/run-1/attempt-1/0001.png").exists());
+    assert!(root
+        .join("generated/quarantine/run-1/attempt-1/0001.png")
+        .exists());
 }

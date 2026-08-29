@@ -56,13 +56,8 @@ fn run_to_completion(
     .unwrap();
     let waiting = WorkflowRuntime::advance_run(root, &created.run.id).unwrap();
     assert_eq!(waiting.run.status, "waiting_for_approval");
-    let approved = WorkflowRuntime::approve_run_step(
-        root,
-        &created.run.id,
-        "approve-request",
-        None,
-    )
-    .unwrap();
+    let approved =
+        WorkflowRuntime::approve_run_step(root, &created.run.id, "approve-request", None).unwrap();
     assert_eq!(approved.run.status, "ready_for_execution");
     let completed = WorkflowRuntime::advance_run(root, &created.run.id).unwrap();
     assert_eq!(completed.run.status, "completed");
@@ -80,7 +75,8 @@ fn canonical_face_version_id(root: &std::path::Path, project_id: &str) -> String
     // verify its hash against the stored metadata.
     let face_path = root.join("assets/face.png");
     std::fs::create_dir_all(face_path.parent().unwrap()).unwrap();
-    let face_image: image::RgbaImage = image::ImageBuffer::from_pixel(8, 8, image::Rgba([30, 40, 50, 255]));
+    let face_image: image::RgbaImage =
+        image::ImageBuffer::from_pixel(8, 8, image::Rgba([30, 40, 50, 255]));
     face_image.save(&face_path).unwrap();
     use sha2::{Digest, Sha256};
     let face_bytes = std::fs::read(&face_path).unwrap();
@@ -103,7 +99,10 @@ fn canonical_face_version_id(root: &std::path::Path, project_id: &str) -> String
         )
         .optional()
         .unwrap();
-    assert!(found.is_some(), "face asset should be queryable after insertion");
+    assert!(
+        found.is_some(),
+        "face asset should be queryable after insertion"
+    );
     "face-v1".to_string()
 }
 
@@ -143,7 +142,12 @@ fn outfit_run_resolves_the_canonical_face_and_compiles_direct_on_character_promp
     let (_temp, root, project_id) = fixture();
     canonical_face_version_id(&root, &project_id);
 
-    let completed = run_to_completion(&root, "1.1.0", "character.create_outfit", outfit_input(&root));
+    let completed = run_to_completion(
+        &root,
+        "1.1.0",
+        "character.create_outfit",
+        outfit_input(&root),
+    );
 
     let request: serde_json::Value = serde_json::from_str(
         completed
@@ -157,25 +161,22 @@ fn outfit_run_resolves_the_canonical_face_and_compiles_direct_on_character_promp
     )
     .unwrap();
     assert_eq!(request["task"], "character_outfit");
-    assert!(request["prompt"].as_str().unwrap().contains("WARDROBE PROPOSAL"));
-    assert!(request["prompt"].as_str().unwrap().contains("CANONICAL FACE REFERENCE"));
     assert!(request["prompt"]
         .as_str()
         .unwrap()
-        .contains("face-v1"));
+        .contains("WARDROBE PROPOSAL"));
+    assert!(request["prompt"]
+        .as_str()
+        .unwrap()
+        .contains("CANONICAL FACE REFERENCE"));
+    assert!(request["prompt"].as_str().unwrap().contains("face-v1"));
     assert!(request["references"]
         .as_array()
         .unwrap()
         .iter()
         .any(|reference| reference["reference"] == "face-v1"));
-    let snapshot: serde_json::Value = serde_json::from_str(
-        completed
-            .run
-            .context_snapshot_json
-            .as_deref()
-            .unwrap(),
-    )
-    .unwrap();
+    let snapshot: serde_json::Value =
+        serde_json::from_str(completed.run.context_snapshot_json.as_deref().unwrap()).unwrap();
     assert_eq!(
         snapshot["resolvedContext"]["canonicalFaceAssetVersionId"],
         "face-v1"
@@ -188,15 +189,19 @@ fn outfit_run_resolves_the_canonical_face_and_compiles_direct_on_character_promp
 fn sheet_run_compiles_three_panel_prompt_from_canonical_outfit() {
     let (_temp, root, project_id) = fixture();
     canonical_face_version_id(&root, &project_id);
-    let outfit_run = run_to_completion(&root, "1.1.0", "character.create_outfit", outfit_input(&root));
+    let outfit_run = run_to_completion(
+        &root,
+        "1.1.0",
+        "character.create_outfit",
+        outfit_input(&root),
+    );
     // Promote a generated outfit artifact into an outfit asset as canonical,
     // mirroring the production promote flow, so the sheet prerequisite passes.
-    let result_sets =
-        cinematic_desktop_lib::generation::service::GenerationService::list_results(
-            &root,
-            Some(&outfit_run.run.id),
-        )
-        .unwrap();
+    let result_sets = cinematic_desktop_lib::generation::service::GenerationService::list_results(
+        &root,
+        Some(&outfit_run.run.id),
+    )
+    .unwrap();
     let artifact = result_sets
         .iter()
         .flat_map(|set| set.artifacts.iter())
@@ -245,14 +250,8 @@ fn sheet_run_compiles_three_panel_prompt_from_canonical_outfit() {
     assert!(prompt.contains("full-body rear"));
     assert!(prompt.contains("tight chest-up face"));
     assert!(prompt.contains(&outfit_version_id));
-    let snapshot: serde_json::Value = serde_json::from_str(
-        completed
-            .run
-            .context_snapshot_json
-            .as_deref()
-            .unwrap(),
-    )
-    .unwrap();
+    let snapshot: serde_json::Value =
+        serde_json::from_str(completed.run.context_snapshot_json.as_deref().unwrap()).unwrap();
     assert_eq!(
         snapshot["resolvedContext"]["canonicalOutfitAssetVersionId"],
         outfit_version_id

@@ -1,6 +1,8 @@
 use crate::error::AppError;
 use crate::skills::builtin::character_builder::builtin_character_builder;
+use crate::skills::builtin::scene_builder::builtin_scene_builder;
 use crate::skills::builtin::visual_qa::builtin_visual_qa;
+use crate::skills::builtin::world_builder::builtin_world_builder;
 use crate::skills::model::{SkillDefinition, SkillOperation};
 use crate::workflow::model::WorkflowStepDefinition;
 use semver::Version;
@@ -12,17 +14,29 @@ pub struct SkillRegistry {
 
 impl SkillRegistry {
     pub fn builtin() -> Result<Self, AppError> {
-        let definitions = [builtin_character_builder(), builtin_visual_qa()];
+        let definitions = [
+            builtin_character_builder(),
+            builtin_visual_qa(),
+            builtin_world_builder(),
+            builtin_scene_builder(),
+        ];
         let mut skills = HashMap::new();
         for definition in definitions {
             validate_definition(&definition)?;
-            skills.insert(registry_key(&definition.id, &definition.version), definition);
+            skills.insert(
+                registry_key(&definition.id, &definition.version),
+                definition,
+            );
         }
         Ok(Self { skills })
     }
 
     pub fn get(&self, skill_id: &str, version: &str) -> Result<&SkillDefinition, AppError> {
-        if !self.skills.keys().any(|key| key.starts_with(&format!("{skill_id}@"))) {
+        if !self
+            .skills
+            .keys()
+            .any(|key| key.starts_with(&format!("{skill_id}@")))
+        {
             return Err(AppError::SkillNotFound(skill_id.to_string()));
         }
 
@@ -73,10 +87,14 @@ fn registry_key(skill_id: &str, version: &str) -> String {
 
 fn validate_identifier(value: &str, kind: &str) -> Result<(), AppError> {
     if value.is_empty()
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || "-_.".contains(character)
+        })
         || !value
             .chars()
-            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || "-_.".contains(character))
-        || !value.chars().any(|character| character.is_ascii_alphanumeric())
+            .any(|character| character.is_ascii_alphanumeric())
     {
         return Err(AppError::InvalidBuiltinSkillDefinition(format!(
             "{kind} has invalid identifier: {value}"
@@ -135,7 +153,11 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
         .collect();
     if step_types.first() != Some(&"validate_input")
         || step_types.last() != Some(&"complete")
-        || step_types.iter().filter(|step_type| **step_type == "complete").count() != 1
+        || step_types
+            .iter()
+            .filter(|step_type| **step_type == "complete")
+            .count()
+            != 1
     {
         return Err(AppError::InvalidBuiltinSkillDefinition(format!(
             "operation {} must start with validate_input and end with one complete step",
@@ -164,17 +186,20 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
 
     if matches!(
         operation.id.as_str(),
-        "character.create_face_lock" | "asset.run_visual_qa"
-    )
-        && step_types
-            != [
-                "validate_input",
-                "resolve_context",
-                "compile_request",
-                "approval",
-                "execute",
-                "complete",
-            ]
+        "character.create_face_lock"
+            | "asset.run_visual_qa"
+            | "asset.repair_failed_qa"
+            | "world.create_plate"
+            | "scene.create_keyframe"
+    ) && step_types
+        != [
+            "validate_input",
+            "resolve_context",
+            "compile_request",
+            "approval",
+            "execute",
+            "complete",
+        ]
     {
         return Err(AppError::InvalidBuiltinSkillDefinition(
             "character.create_face_lock has an invalid step topology".to_string(),
@@ -207,6 +232,8 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "character_sheet_context"
                         | "visual_qa_context"
                         | "visual_qa_repair_context"
+                        | "world_plate_context"
+                        | "scene_keyframe_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -221,6 +248,8 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "character_sheet_v1"
                         | "visual_qa_v1"
                         | "visual_qa_repair_v1"
+                        | "world_plate_v1"
+                        | "scene_keyframe_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -244,7 +273,8 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                 request_artifact_ref,
                 ..
             } if approval_artifact_ref.is_none()
-                || approval_artifact_ref != Some(request_artifact_ref.as_str()) => {
+                || approval_artifact_ref != Some(request_artifact_ref.as_str()) =>
+            {
                 return Err(AppError::InvalidBuiltinSkillDefinition(
                     "execute step must use the approval artifact".to_string(),
                 ));
@@ -265,17 +295,13 @@ mod tests {
     fn builtin_registry_resolves_the_versioned_face_lock_operation() {
         let registry = SkillRegistry::builtin().unwrap();
         let (skill, operation) = registry
-            .find_operation(
-                "character-builder",
-                "1.1.0",
-                "character.create_face_lock",
-            )
+            .find_operation("character-builder", "1.1.0", "character.create_face_lock")
             .unwrap();
 
         assert_eq!(skill.id, "character-builder");
         assert_eq!(skill.version, "1.1.0");
         assert_eq!(operation.id, "character.create_face_lock");
-        assert_eq!(registry.list().len(), 2);
+        assert_eq!(registry.list().len(), 4);
     }
 
     #[test]
@@ -326,6 +352,48 @@ mod tests {
         let first = definition.operations[0].workflow[0].clone();
         definition.operations[0].workflow.push(first);
         assert!(validate_definition(&definition).is_err());
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_world_plate_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("world-builder", "1.0.0", "world.create_plate")
+            .unwrap();
+
+        assert_eq!(skill.id, "world-builder");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(operation.id, "world.create_plate");
+        assert_eq!(operation.input_schema_id, "create_world_plate");
+        assert_eq!(
+            operation.expected_output.as_ref().unwrap().asset_type,
+            crate::skills::model::AssetType::WorldPlate
+        );
+        assert_eq!(registry.list().len(), 4);
+        let snapshot = serde_json::to_value(skill).unwrap();
+        assert!(snapshot.to_string().contains("world_plate"));
+        assert!(snapshot.get("provider").is_none());
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_scene_keyframe_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("scene-builder", "1.0.0", "scene.create_keyframe")
+            .unwrap();
+
+        assert_eq!(skill.id, "scene-builder");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(operation.id, "scene.create_keyframe");
+        assert_eq!(operation.input_schema_id, "create_scene_keyframe");
+        assert_eq!(
+            operation.expected_output.as_ref().unwrap().asset_type,
+            crate::skills::model::AssetType::ShotKeyframe
+        );
+        assert_eq!(registry.list().len(), 4);
+        let snapshot = serde_json::to_value(skill).unwrap();
+        assert!(snapshot.to_string().contains("shot_keyframe"));
+        assert!(snapshot.get("provider").is_none());
     }
 
     #[test]

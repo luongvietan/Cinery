@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::model::{ProviderOutput, ProviderResult};
     use crate::project::service::ProjectService;
+    use crate::providers::model::{ProviderOutput, ProviderResult};
     use tempfile::tempdir;
 
     #[test]
@@ -11,12 +11,18 @@ mod tests {
         let root = temp.path().join("project");
         ProjectService::create(&root, "Red Door").unwrap();
         let result = ProviderResult {
-            outputs: vec![ProviderOutput { uri: "mock://face-lock.png".into(), mime_type: "image/png".into(), filename: Some("face-lock.png".into()) }],
+            outputs: vec![ProviderOutput {
+                uri: "mock://face-lock.png".into(),
+                mime_type: "image/png".into(),
+                filename: Some("face-lock.png".into()),
+            }],
             provider_reported_model: Some("mock-image-v1".into()),
             metadata: serde_json::json!({}),
         };
 
-        let persisted = persist_provider_result(&root, "run-1", &result, "face_lock", Some("mara".into())).unwrap();
+        let persisted =
+            persist_provider_result(&root, "run-1", &result, "face_lock", Some("mara".into()))
+                .unwrap();
         assert_eq!(persisted.status, "candidate");
         assert_eq!(persisted.mime_type, "image/png");
         assert!(root.join(&persisted.file_path).exists());
@@ -66,17 +72,20 @@ pub fn persist_provider_result(
         .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
 
     let summaries = AssetService::list_assets(project_root)?;
-    let existing = summaries.into_iter().find(|asset| {
-        asset.asset_type == asset_type && asset.owner_entity_id == owner_entity_id
-    });
+    let existing = summaries
+        .into_iter()
+        .find(|asset| asset.asset_type == asset_type && asset.owner_entity_id == owner_entity_id);
     let asset_id = match existing {
         Some(asset) => asset.id,
-        None => AssetService::create_asset(
-            project_root,
-            asset_type,
-            &format!("{asset_type} candidate"),
-            owner_entity_id,
-        )?.id,
+        None => {
+            AssetService::create_asset(
+                project_root,
+                asset_type,
+                &format!("{asset_type} candidate"),
+                owner_entity_id,
+            )?
+            .id
+        }
     };
     match AssetService::import_asset_version(project_root, &asset_id, &source_path, None) {
         Ok(version) => Ok(version),

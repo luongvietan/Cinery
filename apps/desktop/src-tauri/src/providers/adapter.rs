@@ -1,6 +1,6 @@
 use super::error::ProviderError;
 use super::model::{
-    ProviderCapabilities, ProviderCancellationResult, ProviderExecutionRequest, ProviderJobRef,
+    ProviderCancellationResult, ProviderCapabilities, ProviderExecutionRequest, ProviderJobRef,
     ProviderJobStatus, ProviderResult, ProviderSubmission,
 };
 
@@ -13,10 +13,7 @@ pub trait GenerationProvider: Send + Sync {
         request: &ProviderExecutionRequest,
     ) -> Result<ProviderSubmission, ProviderError>;
     fn poll(&self, job: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError>;
-    fn cancel(
-        &self,
-        job: &ProviderJobRef,
-    ) -> Result<ProviderCancellationResult, ProviderError>;
+    fn cancel(&self, job: &ProviderJobRef) -> Result<ProviderCancellationResult, ProviderError>;
     fn fetch_result(&self, job: &ProviderJobRef) -> Result<ProviderResult, ProviderError>;
 }
 
@@ -29,8 +26,12 @@ mod tests {
     struct FakeProvider;
 
     impl GenerationProvider for FakeProvider {
-        fn id(&self) -> &'static str { "fake" }
-        fn adapter_version(&self) -> u32 { 1 }
+        fn id(&self) -> &'static str {
+            "fake"
+        }
+        fn adapter_version(&self) -> u32 {
+            1
+        }
         fn capabilities(&self) -> ProviderCapabilities {
             ProviderCapabilities {
                 media_types: vec![ProviderMediaType::Image],
@@ -44,19 +45,40 @@ mod tests {
                 supports_progress: false,
                 supported_aspect_ratios: vec![],
                 supported_models: vec![],
+                max_reference_images: None,
             }
         }
-        fn submit(&self, _: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {
-            Err(ProviderError::new(ProviderErrorKind::InvalidRequest, "fixture"))
+        fn submit(
+            &self,
+            _: &ProviderExecutionRequest,
+        ) -> Result<ProviderSubmission, ProviderError> {
+            Err(ProviderError::new(
+                ProviderErrorKind::InvalidRequest,
+                "fixture",
+            ))
         }
         fn poll(&self, _: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError> {
-            Ok(ProviderJobStatus { lifecycle: ProviderLifecycle::Unknown, progress_percent: None, diagnostic: None })
+            Ok(ProviderJobStatus {
+                lifecycle: ProviderLifecycle::Unknown,
+                progress_percent: None,
+                diagnostic: None,
+            })
         }
-        fn cancel(&self, job: &ProviderJobRef) -> Result<ProviderCancellationResult, ProviderError> {
-            Ok(ProviderCancellationResult { provider_job_id: job.provider_job_id.clone(), lifecycle: ProviderLifecycle::Cancelled })
+        fn cancel(
+            &self,
+            job: &ProviderJobRef,
+        ) -> Result<ProviderCancellationResult, ProviderError> {
+            Ok(ProviderCancellationResult {
+                provider_job_id: job.provider_job_id.clone(),
+                lifecycle: ProviderLifecycle::Cancelled,
+            })
         }
         fn fetch_result(&self, _: &ProviderJobRef) -> Result<ProviderResult, ProviderError> {
-            Ok(ProviderResult { outputs: vec![], provider_reported_model: None, metadata: serde_json::Value::Null })
+            Ok(ProviderResult {
+                outputs: vec![],
+                provider_reported_model: None,
+                metadata: serde_json::Value::Null,
+            })
         }
     }
 
@@ -65,9 +87,19 @@ mod tests {
         let provider = FakeProvider;
         assert_eq!(provider.id(), "fake");
         assert_eq!(provider.adapter_version(), 1);
-        assert_eq!(provider.poll(&ProviderJobRef {
-            provider_id: "fake".into(), provider_job_id: "job".into(), run_id: "run".into(),
-            step_id: "step".into(), submission_id: "submission".into(), submitted_at: "now".into(),
-        }).unwrap().lifecycle, ProviderLifecycle::Unknown);
+        assert_eq!(
+            provider
+                .poll(&ProviderJobRef {
+                    provider_id: "fake".into(),
+                    provider_job_id: "job".into(),
+                    run_id: "run".into(),
+                    step_id: "step".into(),
+                    submission_id: "submission".into(),
+                    submitted_at: "now".into(),
+                })
+                .unwrap()
+                .lifecycle,
+            ProviderLifecycle::Unknown
+        );
     }
 }

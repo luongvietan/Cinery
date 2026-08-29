@@ -10,8 +10,10 @@ pub mod project;
 pub mod providers;
 pub mod qa;
 pub mod recovery;
+pub mod scenes;
 pub mod skills;
 pub mod workflow;
+pub mod worlds;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -101,6 +103,33 @@ pub fn run() {
             diagnostics::commands::export_diagnostics,
             diagnostics::commands::get_diagnostics_folder,
             diagnostics::commands::append_diagnostics_log,
+            worlds::commands::create_world,
+            worlds::commands::list_worlds,
+            worlds::commands::get_world,
+            worlds::commands::list_worlds_detailed,
+            worlds::commands::get_world_detailed,
+            scenes::commands::create_world_scene,
+            scenes::commands::list_world_scenes,
+            scenes::commands::get_world_scene,
+            scenes::commands::update_scene_details,
+            scenes::commands::assign_scene_world,
+            scenes::commands::clear_scene_world,
+            scenes::commands::add_world_scene_character,
+            scenes::commands::remove_world_scene_character,
+            scenes::commands::list_scene_characters,
+            scenes::commands::add_world_scene_prop,
+            scenes::commands::remove_world_scene_prop,
+            scenes::commands::list_scene_props,
+            scenes::commands::resolve_scene_references,
+            scenes::commands::upgrade_scene_world_reference,
+            scenes::commands::upgrade_scene_character_look_reference,
+            scenes::commands::upgrade_scene_character_sheet_reference,
+            scenes::commands::upgrade_scene_prop_reference,
+            scenes::commands::get_world_scene_readiness,
+            scenes::commands::ensure_scene_keyframe_asset,
+            scenes::commands::set_scene_tbd_binding,
+            scenes::commands::remove_scene_tbd_binding,
+            scenes::commands::list_scene_tbd_bindings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

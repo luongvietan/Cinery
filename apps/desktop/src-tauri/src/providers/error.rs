@@ -62,13 +62,26 @@ pub fn redact_secret(value: &str) -> String {
     let mut redacted = value.to_string();
     // List of patterns that precede secrets
     let patterns = [
-        "Authorization", "authorization",
-        "api_key", "apiKey", "API_KEY",
-        "token", "Token", "TOKEN",
-        "x-api-key", "X-Api-Key", "X-API-KEY",
-        "secret", "Secret", "SECRET",
-        "credential", "Credential", "CREDENTIAL",
-        "password", "Password", "PASSWORD"
+        "Authorization",
+        "authorization",
+        "api_key",
+        "apiKey",
+        "API_KEY",
+        "token",
+        "Token",
+        "TOKEN",
+        "x-api-key",
+        "X-Api-Key",
+        "X-API-KEY",
+        "secret",
+        "Secret",
+        "SECRET",
+        "credential",
+        "Credential",
+        "CREDENTIAL",
+        "password",
+        "Password",
+        "PASSWORD",
     ];
 
     for pattern in &patterns {
@@ -84,11 +97,7 @@ pub fn redact_secret(value: &str) -> String {
                     .map(|character| character.is_whitespace())
                     .unwrap_or(false)
                 {
-                    value_start += redacted[value_start..]
-                        .chars()
-                        .next()
-                        .unwrap()
-                        .len_utf8();
+                    value_start += redacted[value_start..].chars().next().unwrap().len_utf8();
                 }
 
                 // Check if the value is quoted (starts with ")

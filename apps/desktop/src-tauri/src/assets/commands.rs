@@ -1,5 +1,6 @@
 use crate::assets::model::{
-    AssetRecord, AssetSummaryRecord, AssetVersionRecord, AssetWithVersions, CanonicalPromotionResult,
+    AssetRecord, AssetSummaryRecord, AssetVersionRecord, AssetWithVersions,
+    CanonicalPromotionResult,
 };
 use crate::assets::service::AssetService;
 use crate::error::AppCommandError;

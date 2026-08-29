@@ -79,18 +79,15 @@ fn malformed_json_and_unknown_top_level_fields_are_rejected() {
 
 #[test]
 fn unknown_missing_and_duplicate_check_ids_are_rejected() {
-    let mut unknown: serde_json::Value =
-        serde_json::from_str(&response("pass", "pass")).unwrap();
+    let mut unknown: serde_json::Value = serde_json::from_str(&response("pass", "pass")).unwrap();
     unknown["checks"][0]["checkId"] = json!("invented");
     assert!(QaResponseNormalizer::normalize(&plan(), &unknown.to_string()).is_err());
 
-    let mut missing: serde_json::Value =
-        serde_json::from_str(&response("pass", "pass")).unwrap();
+    let mut missing: serde_json::Value = serde_json::from_str(&response("pass", "pass")).unwrap();
     missing["checks"].as_array_mut().unwrap().pop();
     assert!(QaResponseNormalizer::normalize(&plan(), &missing.to_string()).is_err());
 
-    let mut duplicate: serde_json::Value =
-        serde_json::from_str(&response("pass", "pass")).unwrap();
+    let mut duplicate: serde_json::Value = serde_json::from_str(&response("pass", "pass")).unwrap();
     duplicate["checks"][1]["checkId"] = json!("blocking");
     assert!(QaResponseNormalizer::normalize(&plan(), &duplicate.to_string()).is_err());
 }
@@ -115,8 +112,7 @@ fn invalid_status_confidence_and_unbounded_text_are_rejected() {
 #[test]
 fn not_applicable_does_not_turn_uncertainty_into_pass() {
     let normalized =
-        QaResponseNormalizer::normalize(&plan(), &response("not_applicable", "uncertain"))
-            .unwrap();
+        QaResponseNormalizer::normalize(&plan(), &response("not_applicable", "uncertain")).unwrap();
     assert_eq!(normalized.overall, QaOverallStatus::NeedsReview);
     assert_eq!(normalized.checks[0].status, QaCheckStatus::NotApplicable);
 }

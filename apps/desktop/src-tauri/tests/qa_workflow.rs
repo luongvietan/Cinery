@@ -100,10 +100,13 @@ fn visual_qa_waits_for_approval_then_persists_auditable_results() {
     assert_eq!(waiting.run.status, "waiting_for_approval");
 
     let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
-    let queued = repository::list_runs_for_asset_version(&conn, &fixture.project_id, "target-v1")
-        .unwrap();
+    let queued =
+        repository::list_runs_for_asset_version(&conn, &fixture.project_id, "target-v1").unwrap();
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].workflow_run_id.as_deref(), Some(created.run.id.as_str()));
+    assert_eq!(
+        queued[0].workflow_run_id.as_deref(),
+        Some(created.run.id.as_str())
+    );
     drop(conn);
 
     WorkflowRuntime::approve_run_step(
@@ -141,13 +144,7 @@ fn malformed_adapter_output_fails_qa_without_fabricating_checks() {
     )
     .unwrap();
     WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
-    WorkflowRuntime::approve_run_step(
-        &fixture.root,
-        &created.run.id,
-        "approve-qa",
-        None,
-    )
-    .unwrap();
+    WorkflowRuntime::approve_run_step(&fixture.root, &created.run.id, "approve-qa", None).unwrap();
     assert!(WorkflowRuntime::advance_run(&fixture.root, &created.run.id).is_err());
 
     let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
@@ -228,7 +225,10 @@ fn reopening_project_marks_interrupted_visual_qa_failed_without_reexecution() {
         .pop()
         .unwrap();
     assert_eq!(qa_run.status.to_string(), "failed");
-    assert_eq!(qa_run.error_code.as_deref(), Some("INTERRUPTED_DURING_STEP"));
+    assert_eq!(
+        qa_run.error_code.as_deref(),
+        Some("INTERRUPTED_DURING_STEP")
+    );
     assert!(repository::get_run(&conn, &fixture.project_id, &qa_run.id)
         .unwrap()
         .unwrap()

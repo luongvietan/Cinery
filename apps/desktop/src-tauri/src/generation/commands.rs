@@ -11,8 +11,11 @@ pub fn list_generation_results(
     workflow_run_id: Option<String>,
 ) -> Result<Vec<GenerationResultSetDetail>, AppCommandError> {
     project_service::validate_root_path(&project_root_path)?;
-    GenerationService::list_results(&PathBuf::from(project_root_path), workflow_run_id.as_deref())
-        .map_err(Into::into)
+    GenerationService::list_results(
+        &PathBuf::from(project_root_path),
+        workflow_run_id.as_deref(),
+    )
+    .map_err(Into::into)
 }
 
 #[tauri::command]

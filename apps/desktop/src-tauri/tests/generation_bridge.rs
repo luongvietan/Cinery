@@ -1,7 +1,5 @@
 use cinematic_desktop_lib::db;
-use cinematic_desktop_lib::generation::service::{
-    GenerationCaptureInput, GenerationService,
-};
+use cinematic_desktop_lib::generation::service::{GenerationCaptureInput, GenerationService};
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::providers::model::{ProviderOutput, ProviderResult};
 use tempfile::tempdir;
@@ -11,7 +9,9 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf, String) {
     let root = temp.path().join("generation-project");
     ProjectService::create(&root, "Generation Project").unwrap();
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
     conn.execute(
         "INSERT INTO workflow_runs
          (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at)
@@ -26,12 +26,14 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf, String) {
          VALUES ('attempt-1', 'run-1', 'execute', 1, 'compiled-1', 'mock', 'mock-image-v1', 1,
                  'run-1:execute:1', 'succeeded', 'now')",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
          VALUES ('asset-1', ?1, 'face_lock', 'MARA-FACE', 'now', 'now')",
         [&project_id],
-    ).unwrap();
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO asset_versions
          (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
@@ -39,7 +41,8 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf, String) {
          VALUES ('version-2', 'asset-1', 2, 'canonical', 'assets/asset-1/v002/face.png',
                  'thumbnails/asset-1/version-2.webp', 'd', 'face.png', 'image/png', 1, 'now')",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     (temp, root, project_id)
 }
 
@@ -78,14 +81,29 @@ fn approved_provider_output_becomes_four_durable_candidates_without_an_asset_ver
             requested_output_count: 4,
         },
         &result,
-    ).unwrap();
+    )
+    .unwrap();
 
     assert_eq!(captured.artifacts.len(), 4);
-    assert!(captured.artifacts.iter().all(|artifact| artifact.capture_status == "available"));
-    assert!(captured.artifacts.iter().all(|artifact| root.join(&artifact.storage_path).exists()));
+    assert!(captured
+        .artifacts
+        .iter()
+        .all(|artifact| artifact.capture_status == "available"));
+    assert!(captured
+        .artifacts
+        .iter()
+        .all(|artifact| root.join(&artifact.storage_path).exists()));
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let version_count: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0)).unwrap();
-    let lineage_source: String = conn.query_row("SELECT asset_version_id FROM generated_artifact_sources WHERE artifact_id = ?1", [&captured.artifacts[0].id], |row| row.get(0)).unwrap();
+    let version_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0))
+        .unwrap();
+    let lineage_source: String = conn
+        .query_row(
+            "SELECT asset_version_id FROM generated_artifact_sources WHERE artifact_id = ?1",
+            [&captured.artifacts[0].id],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(version_count, 1);
     assert_eq!(lineage_source, "version-2");
 }
@@ -101,7 +119,8 @@ fn lineage_capture_failure_removes_materialized_candidate_files() {
          VALUES ('attempt-2', 'run-1', 'execute', 2, 'compiled-1', 'mock', 'mock-image-v1', 1,
                  'run-1:execute:2', 'succeeded', 'now')",
         [],
-    ).unwrap();
+    )
+    .unwrap();
     let result = ProviderResult {
         outputs: vec![ProviderOutput {
             uri: "mock://lineage-failure.png".into(),
@@ -133,8 +152,12 @@ fn lineage_capture_failure_removes_materialized_candidate_files() {
             requested_output_count: 1,
         },
         &result,
-    ).unwrap_err();
+    )
+    .unwrap_err();
 
-    assert!(matches!(error, cinematic_desktop_lib::error::AppError::GenerationLineageIncomplete));
+    assert!(matches!(
+        error,
+        cinematic_desktop_lib::error::AppError::GenerationLineageIncomplete
+    ));
     assert!(!root.join("generated/run-1/attempt-2").exists());
 }

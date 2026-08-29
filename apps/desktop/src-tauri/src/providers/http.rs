@@ -26,14 +26,25 @@ pub fn encode_multipart(parts: &[MultipartPart]) -> Result<(Vec<u8>, String), St
     for part in parts {
         body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         if let Some(file_name) = &part.file_name {
-            let content_type = part.content_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+            let content_type = part
+                .content_type
+                .clone()
+                .unwrap_or_else(|| "application/octet-stream".into());
             body.extend_from_slice(
-                format!("Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n", part.field_name, file_name).as_bytes(),
+                format!(
+                    "Content-Disposition: form-data; name=\"{}\"; filename=\"{}\"\r\n",
+                    part.field_name, file_name
+                )
+                .as_bytes(),
             );
             body.extend_from_slice(format!("Content-Type: {content_type}\r\n\r\n").as_bytes());
         } else {
             body.extend_from_slice(
-                format!("Content-Disposition: form-data; name=\"{}\"\r\n\r\n", part.field_name).as_bytes(),
+                format!(
+                    "Content-Disposition: form-data; name=\"{}\"\r\n\r\n",
+                    part.field_name
+                )
+                .as_bytes(),
             );
         }
         body.extend_from_slice(&part.bytes);
@@ -44,19 +55,32 @@ pub fn encode_multipart(parts: &[MultipartPart]) -> Result<(Vec<u8>, String), St
 }
 
 pub trait HttpTransport: Send + Sync {
-    fn post_json(&self, endpoint: &str, bearer_token: &str, body: &serde_json::Value) -> Result<serde_json::Value, String>;
+    fn post_json(
+        &self,
+        endpoint: &str,
+        bearer_token: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, String>;
     fn post_multipart(&self, request: MultipartHttpRequest) -> Result<serde_json::Value, String> {
         // Default implementation performs a real multipart POST through ureq.
         let (body, boundary) = encode_multipart(&request.parts)?;
         let response = ureq::post(&request.endpoint)
             .set("Authorization", &format!("Bearer {}", request.bearer_token))
-            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .set(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
             .send_bytes(&body)
             .map_err(multipart_request_error)?;
         read_json_response(response.into_reader(), request.max_response_bytes)
     }
     fn get_json(&self, endpoint: &str, bearer_token: &str) -> Result<serde_json::Value, String>;
-    fn get_bytes(&self, endpoint: &str, bearer_token: &str, max_bytes: usize) -> Result<Vec<u8>, String>;
+    fn get_bytes(
+        &self,
+        endpoint: &str,
+        bearer_token: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, String>;
 }
 
 fn multipart_request_error(error: ureq::Error) -> String {
@@ -72,7 +96,9 @@ fn multipart_request_error(error: ureq::Error) -> String {
 fn read_json_response(reader: impl Read, max_bytes: usize) -> Result<serde_json::Value, String> {
     let mut limited = reader.take((max_bytes + 1) as u64);
     let mut buffer = Vec::new();
-    limited.read_to_end(&mut buffer).map_err(|error| error.to_string())?;
+    limited
+        .read_to_end(&mut buffer)
+        .map_err(|error| error.to_string())?;
     if buffer.len() > max_bytes {
         return Err(format!("response exceeds {max_bytes} byte limit"));
     }
@@ -121,13 +147,20 @@ impl HttpTransport for UreqTransport {
     }
 
     fn post_multipart(&self, request: MultipartHttpRequest) -> Result<serde_json::Value, String> {
-        let max_bytes = if request.max_response_bytes == 0 { Self::DEFAULT_MAX_RESPONSE_BYTES } else { request.max_response_bytes };
+        let max_bytes = if request.max_response_bytes == 0 {
+            Self::DEFAULT_MAX_RESPONSE_BYTES
+        } else {
+            request.max_response_bytes
+        };
         let (body, boundary) = encode_multipart(&request.parts)?;
         let response = self
             .agent
             .post(&request.endpoint)
             .set("Authorization", &format!("Bearer {}", request.bearer_token))
-            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .set(
+                "Content-Type",
+                &format!("multipart/form-data; boundary={boundary}"),
+            )
             .send_bytes(&body)
             .map_err(Self::request_error)?;
         read_json_response(response.into_reader(), max_bytes)

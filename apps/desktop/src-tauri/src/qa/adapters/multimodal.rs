@@ -269,8 +269,8 @@ fn is_local_host(host: &str) -> bool {
 fn is_likely_multimodal_model(model: &str) -> bool {
     let model = model.to_ascii_lowercase();
     [
-        "gpt-4o", "gpt-4.1", "gpt-5", "vision", "vl", "llava", "pixtral", "gemma-3",
-        "claude-3", "claude-4", "mock-vlm",
+        "gpt-4o", "gpt-4.1", "gpt-5", "vision", "vl", "llava", "pixtral", "gemma-3", "claude-3",
+        "claude-4", "mock-vlm",
     ]
     .iter()
     .any(|marker| model.contains(marker))

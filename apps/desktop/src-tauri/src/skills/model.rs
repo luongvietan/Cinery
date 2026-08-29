@@ -24,7 +24,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(definition.id, "character-builder");
-        assert_eq!(serde_json::to_value(definition).unwrap()["version"], "1.0.0");
+        assert_eq!(
+            serde_json::to_value(definition).unwrap()["version"],
+            "1.0.0"
+        );
     }
 
     #[test]
@@ -59,10 +62,10 @@ mod tests {
         assert!(unknown.is_err());
     }
 }
-use crate::workflow::model::WorkflowStepDefinition;
 use crate::canon::model::CanonEntityType;
-use serde::{Deserialize, Serialize};
+use crate::workflow::model::WorkflowStepDefinition;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 fn deserialize_non_empty_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
 where

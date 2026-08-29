@@ -108,10 +108,24 @@ pub fn get_provenance_graph(
         );
 
         // Traverse backwards (dependencies)
-        traverse_backwards(&conn, &kind_str, &id, &mut nodes_map, &mut edges_vec, &mut queue)?;
+        traverse_backwards(
+            &conn,
+            &kind_str,
+            &id,
+            &mut nodes_map,
+            &mut edges_vec,
+            &mut queue,
+        )?;
 
         // Traverse forwards (dependents)
-        traverse_forwards(&conn, &kind_str, &id, &mut nodes_map, &mut edges_vec, &mut queue)?;
+        traverse_forwards(
+            &conn,
+            &kind_str,
+            &id,
+            &mut nodes_map,
+            &mut edges_vec,
+            &mut queue,
+        )?;
     }
 
     let mut nodes: Vec<ProvenanceNode> = nodes_map.into_values().collect();
@@ -158,11 +172,7 @@ fn parse_kind(kind_str: &str) -> Result<ProvenanceKind, AppError> {
 /// - **CinemaCompile:** scene ID + compilation time
 ///
 /// Returns error if the node does not exist in the database (should not occur in valid graph).
-fn build_node(
-    conn: &Connection,
-    kind_str: &str,
-    id: &str,
-) -> Result<ProvenanceNode, AppError> {
+fn build_node(conn: &Connection, kind_str: &str, id: &str) -> Result<ProvenanceNode, AppError> {
     let kind = parse_kind(kind_str)?;
 
     let (label, timestamp) = match kind_str {
@@ -170,16 +180,22 @@ fn build_node(
             let mut stmt = conn
                 .prepare("SELECT a.label, av.created_at FROM asset_versions av JOIN assets a ON av.asset_id = a.id WHERE av.id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            stmt.query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-                .map_err(|e| AppError::Database(e.to_string()))?
+            stmt.query_row([id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
         }
         "workflow_run" => {
             let mut stmt = conn
-                .prepare("SELECT workflow_definition_id, created_at FROM workflow_runs WHERE id = ?1")
+                .prepare(
+                    "SELECT workflow_definition_id, created_at FROM workflow_runs WHERE id = ?1",
+                )
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            let (def_id, ts) =
-                stmt.query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-                    .map_err(|e| AppError::Database(e.to_string()))?;
+            let (def_id, ts) = stmt
+                .query_row([id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
             (format!("Workflow {}", def_id), ts)
         }
         "generation" => {
@@ -196,7 +212,9 @@ fn build_node(
                 .prepare("SELECT asset_version_id, created_at FROM qa_runs WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let (av_id, ts) = stmt
-                .query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_row([id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(|e| AppError::Database(e.to_string()))?;
             (format!("QA of {}", av_id), ts)
         }
@@ -205,7 +223,9 @@ fn build_node(
                 .prepare("SELECT qa_run_id, created_at FROM qa_repairs WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let (qa_id, ts) = stmt
-                .query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_row([id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(|e| AppError::Database(e.to_string()))?;
             (format!("Repair from QA {}", qa_id), ts)
         }
@@ -213,22 +233,28 @@ fn build_node(
             let mut stmt = conn
                 .prepare("SELECT title, created_at FROM scenes WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            stmt.query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-                .map_err(|e| AppError::Database(e.to_string()))?
+            stmt.query_row([id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
         }
         "shot" => {
             let mut stmt = conn
                 .prepare("SELECT intent, created_at FROM shots WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            stmt.query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
-                .map_err(|e| AppError::Database(e.to_string()))?
+            stmt.query_row([id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| AppError::Database(e.to_string()))?
         }
         "cinema_compile" => {
             let mut stmt = conn
                 .prepare("SELECT scene_id, created_at FROM cinema_compilations WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let (scene_id, ts) = stmt
-                .query_row([id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_row([id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(|e| AppError::Database(e.to_string()))?;
             (format!("Cinema from {}", scene_id), ts)
         }
@@ -381,10 +407,9 @@ fn traverse_backwards(
                 .map_err(|e| AppError::Database(e.to_string()))?
                 .and_then(|v| v)
             {
-                if let Ok(snapshot) =
-                    serde_json::from_str::<crate::workflow::model::WorkflowContextSnapshot>(
-                        &snapshot_json,
-                    )
+                if let Ok(snapshot) = serde_json::from_str::<
+                    crate::workflow::model::WorkflowContextSnapshot,
+                >(&snapshot_json)
                 {
                     for canon in snapshot.canon {
                         let canon_id = canon.entity_id;
@@ -454,9 +479,7 @@ fn traverse_backwards(
         "scene" => {
             // Scene -> Character Look Version
             let mut stmt = conn
-                .prepare(
-                    "SELECT look_asset_version_id FROM scene_characters WHERE scene_id = ?1",
-                )
+                .prepare("SELECT look_asset_version_id FROM scene_characters WHERE scene_id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))

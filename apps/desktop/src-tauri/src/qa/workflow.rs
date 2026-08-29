@@ -1,6 +1,4 @@
-use super::adapters::{
-    MockVisualQaAdapter, OpenAiCompatibleVisualQaAdapter, VisualQaAdapter,
-};
+use super::adapters::{MockVisualQaAdapter, OpenAiCompatibleVisualQaAdapter, VisualQaAdapter};
 use super::check_planner::QaCheckPlanner;
 use super::context::{resolve_qa_context, QaPlanningRequest, ResolvedQaContext};
 use super::models::{
@@ -197,8 +195,8 @@ pub fn execute(
         );
         AppError::ProviderExecution(message)
     })?;
-    let normalized = QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text)
-        .map_err(|error| {
+    let normalized =
+        QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text).map_err(|error| {
             let message = error.to_string();
             let _ = repository::mark_run_failed(
                 conn,
@@ -300,7 +298,9 @@ fn build_adapter(
         "openai" => {
             let config = providers::repository::get_provider_config(conn, "openai")?
                 .filter(|config| config.enabled)
-                .ok_or_else(|| AppError::ProviderConfiguration("OpenAI provider is disabled".into()))?;
+                .ok_or_else(|| {
+                    AppError::ProviderConfiguration("OpenAI provider is disabled".into())
+                })?;
             let endpoint = config.endpoint.ok_or_else(|| {
                 AppError::ProviderConfiguration("Visual QA endpoint is required".into())
             })?;

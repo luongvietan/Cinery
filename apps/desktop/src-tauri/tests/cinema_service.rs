@@ -25,11 +25,9 @@ fn test_image(root: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
 /// Creates an outfit asset with one imported, promoted (canonical) version
 /// and returns the canonical version id.
 fn canonical_version(root: &Path, asset_type: &str, pixel: [u8; 4]) -> String {
-    let asset =
-        AssetService::create_asset(root, asset_type, "Mara Look", None).unwrap();
+    let asset = AssetService::create_asset(root, asset_type, "Mara Look", None).unwrap();
     let source = test_image(root, "look.png", pixel);
-    let version =
-        AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
+    let version = AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
     AssetService::promote_asset_version(root, &version.id).unwrap();
     version.id
 }
@@ -84,15 +82,13 @@ fn add_character_requires_canonical_current_look_version() {
     let draft = AssetService::import_asset_version(&root, &asset.id, &source, None).unwrap();
 
     // Draft (not canonical) version must be rejected.
-    let error = CinemaService::add_character_to_scene(
-        &root, &scene.id, &character, &draft.id, None,
-    )
-    .unwrap_err();
+    let error =
+        CinemaService::add_character_to_scene(&root, &scene.id, &character, &draft.id, None)
+            .unwrap_err();
     assert!(matches!(error, AppError::WorkflowPrerequisiteFailed(_)));
 
     AssetService::promote_asset_version(&root, &draft.id).unwrap();
-    CinemaService::add_character_to_scene(&root, &scene.id, &character, &draft.id, None)
-        .unwrap();
+    CinemaService::add_character_to_scene(&root, &scene.id, &character, &draft.id, None).unwrap();
 }
 
 #[test]
@@ -108,11 +104,23 @@ fn create_scene_and_shots_validate_and_auto_order() {
     let scene = CinemaService::create_scene(&root, "Scene 001", None, None).unwrap();
 
     let first = CinemaService::create_shot(
-        &root, &scene.id, None, 4.0, "Establish the ops room", None, Some("wide".into()),
+        &root,
+        &scene.id,
+        None,
+        4.0,
+        "Establish the ops room",
+        None,
+        Some("wide".into()),
     )
     .unwrap();
     let second = CinemaService::create_shot(
-        &root, &scene.id, None, 4.0, "Close on the console", Some("Mara leans in".into()), None,
+        &root,
+        &scene.id,
+        None,
+        4.0,
+        "Close on the console",
+        Some("Mara leans in".into()),
+        None,
     )
     .unwrap();
     assert_eq!(first.ordering, 0);
@@ -174,4 +182,3 @@ fn validate_scene_for_compilation_requires_characters_and_shots() {
         CinemaService::validate_scene_for_compilation(&conn, &project_id, &scene.id).unwrap();
     assert_eq!(validated.id, scene.id);
 }
-
