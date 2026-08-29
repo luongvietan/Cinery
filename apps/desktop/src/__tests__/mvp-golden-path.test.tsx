@@ -12,20 +12,48 @@ import {
   listSkillOperations,
   listWorkflowRuns,
 } from "../features/workflows/api";
-import { listScenes } from "../features/cinema/api";
+import { listScenes, getCompileReadiness, listShots } from "../features/scenes/api";
 import { getProjectOverview } from "../features/overview/api";
 import { getProjectHealth } from "../features/overview/healthApi";
 import { getDiagnosticsFolder } from "../features/diagnostics/api";
 
 vi.mock("../features/assets/api");
 vi.mock("../features/workflows/api");
-vi.mock("../features/cinema/api");
+vi.mock("../features/scenes/api", () => ({
+  listScenes: vi.fn().mockResolvedValue([]),
+  getScene: vi.fn().mockResolvedValue(null),
+  resolveSceneReferences: vi.fn().mockResolvedValue({
+    sceneId: "scene-001",
+    world: null,
+    characters: [],
+    props: [],
+  }),
+  listSceneCharacters: vi.fn().mockResolvedValue([]),
+  listSceneProps: vi.fn().mockResolvedValue([]),
+  listSceneTbdBindings: vi.fn().mockResolvedValue([]),
+  removeSceneTbdBinding: vi.fn().mockResolvedValue(undefined),
+  setSceneTbdBinding: vi.fn().mockResolvedValue(null),
+  listShots: vi.fn().mockResolvedValue([
+    { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
+  ]),
+  getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] }),
+  listCinemaCompilations: vi.fn().mockResolvedValue([]),
+}));
 vi.mock("../features/overview/api");
 vi.mock("../features/overview/healthApi");
 vi.mock("../features/diagnostics/api");
 vi.mock("../features/canon/api", () => ({
   listCanonEntities: vi.fn().mockResolvedValue([]),
   listCanonTbds: vi.fn().mockResolvedValue([]),
+}));
+vi.mock("../features/worlds/api", () => ({
+  listWorlds: vi.fn().mockResolvedValue([]),
+  listWorldsDetailed: vi.fn().mockResolvedValue([]),
+  getWorldDetailed: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("../features/qa/api", () => ({
+  listQaRuns: vi.fn().mockResolvedValue([]),
+  getQaRun: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("../features/canon/healthApi", () => ({
   getProjectHealth: vi.fn().mockResolvedValue([]),
@@ -107,33 +135,33 @@ describe("MVP golden path (deterministic UI portions)", () => {
       {
         id: "scene-001",
         projectId: "mara-project",
+        ordinal: 0,
         title: "Scene 001",
+        summary: "Mara returns to the station",
+        worldId: "world-1",
         worldAssetVersionId: "world-v1",
-        canonNotes: null,
+        keyframeAssetId: "kf-asset",
         createdAt: "2026-08-28T06:00:00Z",
         updatedAt: "2026-08-28T06:00:00Z",
       },
     ]);
-    // The cinema workspace auto-selects the action's scene and loads its
-    // detail/readiness through the same mocked command facade.
-    const { getScene, getSceneReadiness } = await import("../features/cinema/api");
-    vi.mocked(getScene).mockReset().mockResolvedValue({
-      scene: {
-        id: "scene-001", projectId: "mara-project", title: "Scene 001", worldAssetVersionId: "world-v1",
-        canonNotes: null, createdAt: "2026-08-28T06:00:00Z", updatedAt: "2026-08-28T06:00:00Z",
-      },
-      characters: [],
-      props: [],
-      shots: [{ id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, generatedVideoAssetVersionId: null, createdAt: "now", updatedAt: "now" }],
+    // The unified Scene workspace auto-selects the action's scene and shows
+    // its shots + compile sections (readiness via the compile command).
+    vi.mocked(getCompileReadiness).mockReset().mockResolvedValue({
+      sceneId: "scene-001",
+      ready: true,
+      blockers: [],
     });
-    vi.mocked(getSceneReadiness).mockReset().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] });
+    vi.mocked(listShots).mockReset().mockResolvedValue([
+      { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
+    ]);
     vi.mocked(getProjectOverview).mockReset().mockResolvedValue({
       readiness: {
         status: "pending",
         nextAction: {
           id: "cinema_compilation",
           title: "Cinema Compilation",
-          destination: "cinema",
+          destination: "scenes",
           characterEntityId: null,
           sceneId: "scene-001",
         },
@@ -193,7 +221,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
     ).toBeInTheDocument();
   });
 
-  it("navigates the overview's continue action to the cinema panel", async () => {
+  it("navigates the overview's continue action to the unified Scene workspace", async () => {
     const user = userEvent.setup();
     render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
 
@@ -202,8 +230,11 @@ describe("MVP golden path (deterministic UI portions)", () => {
     });
     await user.click(continueButton);
 
+    // The Scenes panel opens with the action's scene selected and its
+    // compile section visible — one Scene workspace, no separate cinema view.
     expect(
-      await screen.findByRole("button", { name: "Compile Scene 001" }),
+      await screen.findByRole("button", { name: "Compile Scene" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Scene 001")).toBeInTheDocument();
   });
 });

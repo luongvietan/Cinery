@@ -12,14 +12,13 @@ import { SceneWorkspace } from "../scenes/SceneWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel";
 import { ProjectOverview } from "../overview/ProjectOverview";
-import { CinemaWorkspace } from "../cinema/CinemaWorkspace";
 
 interface ProjectWorkspaceProps {
   project: ProjectSummary;
   onCloseProject: () => void;
 }
 
-type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "worlds" | "scenes" | "providers" | "cinema" | "diagnostics";
+type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "worlds" | "scenes" | "providers" | "diagnostics";
 
 export function ProjectWorkspace({
   project,
@@ -113,10 +112,9 @@ export function ProjectWorkspace({
         ) : null}
         {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} initialTab={overviewAction?.id === "resolve_protected_tbd" ? "TBDs" : "Story"} /> : null}
         {panelView === "worlds" ? <WorldWorkspace projectRootPath={project.rootPath} /> : null}
-        {panelView === "scenes" ? <SceneWorkspace projectRootPath={project.rootPath} /> : null}
+        {panelView === "scenes" ? <SceneWorkspace projectRootPath={project.rootPath} initialSceneId={overviewAction?.destination === "scenes" ? overviewAction.sceneId : null} /> : null}
         {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
         {panelView === "diagnostics" ? <DiagnosticsPanel projectRootPath={project.rootPath} /> : null}
-        {panelView === "cinema" ? <CinemaWorkspace projectRootPath={project.rootPath} action={overviewAction} /> : null}
       </section>
     </>
   );

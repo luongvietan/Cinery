@@ -194,7 +194,7 @@ export class StatefulTauriFacade {
         blockers.push({ code: "missing_cast_look", sceneId: scene.id, entityId: null, shotId: null, message: "No character is cast in this scene.", actionTarget: "cast" });
       }
       if (scene.shots.length === 0) {
-        blockers.push({ code: "missing_shot_keyframe", sceneId: scene.id, entityId: null, shotId: null, message: "This scene has no shots.", actionTarget: "shot" });
+        blockers.push({ code: "missing_shot", sceneId: scene.id, entityId: null, shotId: null, message: "This scene has no shots.", actionTarget: "shot" });
       }
       return { sceneId: scene.id, ready: blockers.length === 0, blockers };
     });
@@ -238,7 +238,7 @@ export class StatefulTauriFacade {
         keyframeAssetVersionId: null as string | null,
       };
       scene.shots.push(shot);
-      return { ...shot, sceneId: scene.id, intent: String(args.intent ?? "Establish"), action: null, camera: null, generatedVideoAssetVersionId: null, createdAt: "now", updatedAt: "now" };
+      return { ...shot, sceneId: scene.id, intent: String(args.intent ?? "Establish"), action: null, camera: null, createdAt: "now", updatedAt: "now" };
     });
 
     this.handlers.set("set_shot_keyframe", (args) => {

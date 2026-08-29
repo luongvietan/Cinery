@@ -2,6 +2,7 @@ import type { DiagnosticsBundle } from "@cinematic/domain";
 import { useEffect, useState } from "react";
 import { describeError } from "../../lib/errors";
 import { exportDiagnostics, getDiagnosticsFolder } from "./api";
+import { JobsPanel } from "../jobs/JobsPanel";
 
 interface Props {
   projectRootPath: string;
@@ -93,6 +94,11 @@ export function DiagnosticsPanel({ projectRootPath }: Props) {
           </ul>
         </div>
       ) : null}
+
+      <details className="diagnostics-jobs" style={{ marginTop: "16px" }}>
+        <summary>Background jobs &amp; recovery</summary>
+        <JobsPanel projectRootPath={projectRootPath} />
+      </details>
     </section>
   );
 }

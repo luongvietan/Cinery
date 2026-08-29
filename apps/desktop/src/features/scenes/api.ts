@@ -196,3 +196,148 @@ export function upgradeScenePropReference(
     { projectRootPath, sceneId, assignmentId },
   );
 }
+
+// ---------------------------------------------------------------------------
+// Shots + cinema compilation on the unified Scene (backend `cinema` module)
+// ---------------------------------------------------------------------------
+
+export interface Shot {
+  id: string;
+  sceneId: string;
+  ordering: number;
+  durationSeconds: number;
+  keyframeAssetVersionId: string | null;
+  intent: string;
+  action: string | null;
+  camera: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CinemaCompilation {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  inputJson: string;
+  compilationJson: string;
+  exportPath: string;
+  exportSha256: string;
+  createdAt: string;
+}
+
+export interface CompileReadinessBlocker {
+  code: string;
+  sceneId: string;
+  entityId: string | null;
+  shotId: string | null;
+  message: string;
+  actionTarget: string;
+}
+
+export interface CompileReadiness {
+  sceneId: string;
+  ready: boolean;
+  blockers: CompileReadinessBlocker[];
+}
+
+export function listShots(projectRootPath: string, sceneId: string): Promise<Shot[]> {
+  return invokeCommand<Shot[]>("list_shots", { projectRootPath, sceneId });
+}
+
+export function createShot(
+  projectRootPath: string,
+  sceneId: string,
+  durationSeconds: number,
+  intent: string,
+  action?: string | null,
+  camera?: string | null,
+): Promise<Shot> {
+  return invokeCommand<Shot>("create_shot", {
+    projectRootPath,
+    sceneId,
+    ordering: null,
+    durationSeconds,
+    intent,
+    action: action ?? null,
+    camera: camera ?? null,
+  });
+}
+
+export function updateShot(
+  projectRootPath: string,
+  shotId: string,
+  fields: { durationSeconds?: number | null; intent?: string | null; action?: string | null; camera?: string | null },
+): Promise<Shot> {
+  return invokeCommand<Shot>("update_shot", {
+    projectRootPath,
+    shotId,
+    durationSeconds: fields.durationSeconds ?? null,
+    intent: fields.intent ?? null,
+    action: fields.action ?? null,
+    camera: fields.camera ?? null,
+  });
+}
+
+export function deleteShot(projectRootPath: string, sceneId: string, shotId: string): Promise<void> {
+  return invokeCommand<void>("delete_shot", { projectRootPath, sceneId, shotId });
+}
+
+export function reorderShots(
+  projectRootPath: string,
+  sceneId: string,
+  orderedShotIds: string[],
+): Promise<Shot[]> {
+  return invokeCommand<Shot[]>("reorder_shots", { projectRootPath, sceneId, orderedShotIds });
+}
+
+export function setShotKeyframe(
+  projectRootPath: string,
+  shotId: string,
+  keyframeAssetVersionId: string | null,
+): Promise<void> {
+  return invokeCommand<void>("set_shot_keyframe", {
+    projectRootPath,
+    shotId,
+    keyframeAssetVersionId,
+  });
+}
+
+export function getCompileReadiness(
+  projectRootPath: string,
+  sceneId: string,
+): Promise<CompileReadiness> {
+  return invokeCommand<CompileReadiness>("get_scene_readiness", { projectRootPath, sceneId });
+}
+
+export function compileCinema(
+  projectRootPath: string,
+  sceneId: string,
+  totalDurationSeconds: number,
+): Promise<CinemaCompilation> {
+  return invokeCommand<CinemaCompilation>("compile_cinema", {
+    projectRootPath,
+    sceneId,
+    totalDurationSeconds,
+    shotCount: null,
+  });
+}
+
+export function listCinemaCompilations(
+  projectRootPath: string,
+  sceneId: string,
+): Promise<CinemaCompilation[]> {
+  return invokeCommand<CinemaCompilation[]>("list_cinema_compilations", {
+    projectRootPath,
+    sceneId,
+  });
+}
+
+export function ensureSceneKeyframeAsset(
+  projectRootPath: string,
+  sceneId: string,
+): Promise<{ id: string; label: string }> {
+  return invokeCommand<{ id: string; label: string }>("ensure_scene_keyframe_asset", {
+    projectRootPath,
+    sceneId,
+  });
+}

@@ -6,12 +6,20 @@ import { SceneCharacterAssignments } from "./SceneCharacterAssignments";
 import { ScenePropAssignments } from "./ScenePropAssignments";
 import { SceneTbdPanel } from "./SceneTbdPanel";
 import { SceneReadinessPanel } from "./SceneReadinessPanel";
+import { SceneShots } from "./SceneShots";
+import { SceneCompile } from "./SceneCompile";
 import { createScene } from "./api";
 import { describeError } from "../../lib/errors";
 import { useEffect, useRef } from "react";
 
-export function SceneWorkspace({ projectRootPath }: { projectRootPath: string }) {
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
+export function SceneWorkspace({
+  projectRootPath,
+  initialSceneId = null,
+}: {
+  projectRootPath: string;
+  initialSceneId?: string | null;
+}) {
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId);
   const [refreshKey, setRefreshKey] = useState(0);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -125,16 +133,18 @@ export function SceneWorkspace({ projectRootPath }: { projectRootPath: string })
               />
               <SceneTbdPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} />
               <SceneReadinessPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} refreshKey={refreshKey} />
-              {/* Placeholder for future keyframe generation */}
-              <section
-                aria-label="Scene keyframe"
-                style={{ padding: "16px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
-              >
-                <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>KEYFRAME</h3>
-                <p style={{ marginTop: "8px", fontSize: "13px", color: "var(--color-mid-gray)" }}>
-                  Shot Keyframe generation will appear here (Task 9). Scene readiness and exact pinned versions are already visible above.
-                </p>
-              </section>
+              <SceneShots
+                key={`shots-${selectedSceneId}-${refreshKey}`}
+                projectRootPath={projectRootPath}
+                sceneId={selectedSceneId}
+                onChanged={() => setRefreshKey((k) => k + 1)}
+              />
+              <SceneCompile
+                key={`compile-${selectedSceneId}-${refreshKey}`}
+                projectRootPath={projectRootPath}
+                sceneId={selectedSceneId}
+                onChanged={() => setRefreshKey((k) => k + 1)}
+              />
             </>
           ) : (
             <p>Select a scene to assemble its World, Characters, and Props — or create a new Scene.</p>

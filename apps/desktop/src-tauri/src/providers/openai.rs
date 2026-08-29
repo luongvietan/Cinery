@@ -200,7 +200,10 @@ impl GenerationProvider for OpenAiImageProvider {
             supports_progress: false,
             supported_aspect_ratios: vec!["square".into()],
             supported_models: vec![super::super::providers::service::OPENAI_DEFAULT_MODEL.into()],
-            max_reference_images: Some(1),
+            // The edits endpoint accepts one `image[]` part per attachment
+            // (see submit's multipart path), so the declared limit must match
+            // what the adapter actually sends.
+            max_reference_images: Some(4),
         }
     }
     fn submit(

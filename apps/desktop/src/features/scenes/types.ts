@@ -87,7 +87,10 @@ export type SceneReadinessBlockerKind =
   | "world_reference_broken"
   | "character_reference_broken"
   | "prop_reference_broken"
-  | "tbd_decision_required";
+  | "tbd_decision_required"
+  | "no_cast"
+  | "no_shots"
+  | "shot_keyframe_not_canonical";
 
 export type SceneReadinessWarningKind =
   | "upgrade_available"
@@ -109,6 +112,9 @@ export interface SceneReadiness {
   readyForKeyframe: boolean;
   blockers: SceneReadinessBlocker[];
   warnings: SceneReadinessWarning[];
+  /** Compile gate: additionally requires cast and shots (cinema semantics). */
+  readyForCompile?: boolean;
+  compileBlockers?: SceneReadinessBlocker[];
 }
 
 export function formatSceneOrdinal(ordinal: number): string {
