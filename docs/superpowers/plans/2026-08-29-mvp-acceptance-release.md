@@ -1,6 +1,6 @@
 # MVP Acceptance and Release Qualification Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Prove the complete deterministic MVP through public Tauri command boundaries and a stateful desktop UI test, then build the production bundle and record honest release-candidate and clean-install evidence.
 
@@ -51,21 +51,21 @@ impl CommandHarness {
 }
 ```
 
-- [ ] **Step 1: Write the first failing command-only project/canon test**
+- [x] **Step 1: Write the first failing command-only project/canon test**
 
 Create a project, reopen it, write required Canon sections, and inspect overview/readiness using command functions. Add a test guard/comment convention that acceptance mutations may not call `*Service` or `*Repository` methods.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test mvp_command_acceptance -- --nocapture`
 
 Expected: missing harness/public command access or incomplete setup.
 
-- [ ] **Step 3: Implement the smallest injectable Tauri state wrapper**
+- [x] **Step 3: Implement the smallest injectable Tauri state wrapper**
 
 Reuse production repositories, migrations, paths, command DTOs, and error conversion. Inject deterministic provider/QA adapters at state construction only.
 
-- [ ] **Step 4: Run GREEN for project/canon setup**
+- [x] **Step 4: Run GREEN for project/canon setup**
 
 Suggested commit: `test: add Tauri command acceptance harness`
 
@@ -75,23 +75,23 @@ Suggested commit: `test: add Tauri command acceptance harness`
 - Modify: `apps/desktop/src-tauri/tests/mvp_command_acceptance.rs`
 - Modify: `apps/desktop/src-tauri/tests/support/command_harness.rs`
 
-- [ ] **Step 1: Add failing Face Lock command sequence**
+- [x] **Step 1: Add failing Face Lock command sequence**
 
 Through command DTOs: create run, compile, approve, execute, list result sets, run QA, record a deterministic failure, create repair, execute repair, record pass, promote candidate, and assert canonical Face version.
 
-- [ ] **Step 2: Run RED and make only harness/public-boundary fixes**
+- [x] **Step 2: Run RED and make only harness/public-boundary fixes**
 
 Do not bypass missing commands with direct services. If a necessary command is absent, add it with its own focused RED/GREEN command test first.
 
-- [ ] **Step 3: Add failing Outfit sequence**
+- [x] **Step 3: Add failing Outfit sequence**
 
 Create Outfit using the canonical Face reference; assert compiled input version, provider/model, result gallery persistence, QA result, explicit promotion, and canonical Outfit version.
 
-- [ ] **Step 4: Add failing Character Sheet sequence**
+- [x] **Step 4: Add failing Character Sheet sequence**
 
 Create Sheet using pinned Face + Outfit references; assert exact version IDs, result persistence, and explicit canonical promotion.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test mvp_command_acceptance character_pipeline -- --nocapture`
 
@@ -102,19 +102,19 @@ Suggested commit: `test: cover character MVP through Tauri commands`
 **Files:**
 - Modify: `apps/desktop/src-tauri/tests/mvp_command_acceptance.rs`
 
-- [ ] **Step 1: Add failing canonical reference setup**
+- [x] **Step 1: Add failing canonical reference setup**
 
 Import World, Prop, and Keyframe assets through asset commands, create versions, and promote exact versions through public generation/asset commands.
 
-- [ ] **Step 2: Add failing Cinema sequence**
+- [x] **Step 2: Add failing Cinema sequence**
 
 Create/rename Scene, set World, add Character with Face/Outfit/Sheet pins, add Prop, create/reorder/update Shot, set Keyframe, inspect structured readiness, and compile.
 
-- [ ] **Step 3: Add failing provenance and reopen assertions**
+- [x] **Step 3: Add failing provenance and reopen assertions**
 
 Assert compile ID/path/hash/time, every pinned input version, lineage/provenance traversal, exported payload, then close/reopen the project and assert the same canonical selections, result sets, scene graph, and compilation record.
 
-- [ ] **Step 4: Run RED, implement only missing public behavior, then GREEN**
+- [x] **Step 4: Run RED, implement only missing public behavior, then GREEN**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test mvp_command_acceptance -- --nocapture`
 
@@ -138,27 +138,27 @@ export class StatefulTauriFacade {
 }
 ```
 
-- [ ] **Step 1: Write a failing facade state-transition test**
+- [x] **Step 1: Write a failing facade state-transition test**
 
 Assert create/update/promote/compile calls mutate subsequent list/detail responses, invalid calls reject with the same normalized shape as `AppCommandError`, and reopening a project retains fixture state.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- mvp-golden-path.test.tsx`
 
-- [ ] **Step 3: Implement only commands exercised by the MVP path**
+- [x] **Step 3: Implement only commands exercised by the MVP path**
 
 Use exhaustive command matching that throws on unknown commands; never return one static canned response for all states.
 
-- [ ] **Step 4: Drive the visible desktop flow**
+- [x] **Step 4: Drive the visible desktop flow**
 
 The test must interact like a user: open project, finish Canon, run Face with QA fail/repair/promote, run Outfit/promote, run Sheet/promote, assemble Cinema references, compile, inspect provenance, navigate away/back, and verify persisted results.
 
-- [ ] **Step 5: Assert meaningful UI state at each boundary**
+- [x] **Step 5: Assert meaningful UI state at each boundary**
 
 Prefer roles/labels/text visible to users. Assert disabled/blocker states, progress, errors, selected provider/model, gallery candidates, explicit promotion, compile evidence, and reload.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 Run: `pnpm --filter @cinematic/desktop test -- mvp-golden-path.test.tsx`
 
@@ -185,11 +185,11 @@ param(
 
 The script stops on first failure, records command, exit code, tool versions, Git commit/dirty state, artifact paths, sizes, hashes, and timestamps. It never writes `cleanInstallPassed: true`.
 
-- [ ] **Step 1: Write a failing Pester-free smoke invocation**
+- [x] **Step 1: Write a failing Pester-free smoke invocation**
 
 Run the script with `-SkipInstall -SkipBundle` and assert it refuses to write a passing record if any required command fails. Keep it runnable with stock PowerShell.
 
-- [ ] **Step 2: Implement ordered gates**
+- [x] **Step 2: Implement ordered gates**
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -202,11 +202,11 @@ git diff --check
 
 Resolve bundle artifacts only beneath `apps/desktop/src-tauri/target/release/bundle`; validate each resolved absolute path stays under that directory before hashing.
 
-- [ ] **Step 3: Emit release-candidate evidence**
+- [x] **Step 3: Emit release-candidate evidence**
 
 Write `docs/release-evidence/<date>-mvp-release-candidate.md` with a table of gates and a clearly unchecked clean-install section.
 
-- [ ] **Step 4: Run the non-bundle script path GREEN**
+- [x] **Step 4: Run the non-bundle script path GREEN**
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/verify-mvp-release.ps1 -SkipInstall -SkipBundle`
 
@@ -220,11 +220,11 @@ Suggested commit: `build: add reproducible MVP release verification`
 - Modify: `docs/release-checklist.md`
 - Create: `docs/release-evidence/clean-install-template.md`
 
-- [ ] **Step 1: Add a failing documentation assertion**
+- [x] **Step 1: Add a failing documentation assertion**
 
 Use an `rg`/PowerShell check that fails while unqualified `MVP IMPLEMENTED` appears outside historical evidence and requires `MVP RELEASE CANDIDATE` plus the clean-install gate.
 
-- [ ] **Step 2: Update status language**
+- [x] **Step 2: Update status language**
 
 Document states exactly:
 
@@ -238,11 +238,11 @@ MVP IMPLEMENTED
 
 The README must describe OS-keychain configuration, not environment variables as the normal mechanism.
 
-- [ ] **Step 3: Define the manual clean-install record**
+- [x] **Step 3: Define the manual clean-install record**
 
 Require OS/build, installer path/hash, clean account/profile, install result, first launch, project creation, provider configuration, deterministic/full smoke flow, reopen, export, uninstall, residual-data observation, screenshots/log paths, tester, timestamp, and pass/fail.
 
-- [ ] **Step 4: Run documentation check and commit**
+- [x] **Step 4: Run documentation check and commit**
 
 Suggested commit: `docs: gate MVP implemented status on clean install`
 
@@ -252,27 +252,27 @@ Suggested commit: `docs: gate MVP implemented status on clean install`
 - Generate: `docs/release-evidence/<date>-mvp-release-candidate.md`
 - Do not edit the clean-install result unless the manual test was truly performed
 
-- [ ] **Step 1: Capture the exact baseline**
+- [x] **Step 1: Capture the exact baseline**
 
 Run: `git status --short`
 
 Record HEAD, dirty paths, Node, pnpm, Rust, Cargo, and Tauri versions in evidence.
 
-- [ ] **Step 2: Run the complete automated gate including bundle**
+- [x] **Step 2: Run the complete automated gate including bundle**
 
 Run: `powershell -ExecutionPolicy Bypass -File scripts/verify-mvp-release.ps1`
 
 Expected: all tests/builds pass and at least one signed/unsigned platform installer artifact is found and hashed.
 
-- [ ] **Step 3: Inspect bundle output**
+- [x] **Step 3: Inspect bundle output**
 
 Verify file existence, non-zero size, SHA-256, expected app identifier/name/version, and that no raw credential sentinel appears in unpacked readable resources.
 
-- [ ] **Step 4: Record honest status**
+- [x] **Step 4: Record honest status**
 
 If automated gates pass, label the build `MVP RELEASE CANDIDATE`. Keep `MVP IMPLEMENTED` blocked until Task 8 passes.
 
-- [ ] **Step 5: Commit the release-candidate evidence if it contains no secrets or machine-private paths**
+- [x] **Step 5: Commit the release-candidate evidence if it contains no secrets or machine-private paths**
 
 Suggested commit: `chore: record MVP release candidate evidence`
 
@@ -302,7 +302,7 @@ Record expected retained project data versus unexpected application residue. Do 
 
 Only when every clean-install item passes may README/architecture/checklist change from `MVP RELEASE CANDIDATE` to `MVP IMPLEMENTED`. Otherwise record the failure and keep the candidate label.
 
-- [ ] **Step 6: Run final integrity check**
+- [x] **Step 6: Run final integrity check**
 
 Run: `git diff --check`
 
