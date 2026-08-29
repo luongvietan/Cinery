@@ -80,8 +80,10 @@ mod tests {
     }
 }
 use crate::skills::model::ExpectedOutputDefinition;
+use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use rusqlite::OptionalExtension;
 
 fn deserialize_true<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
@@ -181,4 +183,112 @@ pub struct ExecutionResult {
     pub result_set_id: Option<String>,
     pub artifact_ids: Vec<String>,
     pub request: ExecutionRequest,
+}
+
+/// Maximum accepted reference attachment size (25 MiB).
+const MAX_REFERENCE_BYTES: usize = 25 * 1024 * 1024;
+
+/// Resolves every `AssetVersion` reference of `request` into a verified,
+/// ordered, ephemeral attachment. Verification re-hashes the stored bytes
+/// against the version metadata and rejects foreign, missing, oversized, or
+/// corrupted references before any provider submission. The execution layer
+/// owns resolution; adapters receive ready bytes only.
+pub fn resolve_reference_attachments(
+    project_root: &std::path::Path,
+    request: &ExecutionRequest,
+) -> Result<Vec<crate::providers::model::ProviderReferenceAttachment>, AppError> {
+    let mut attachments = Vec::with_capacity(request.references.len());
+    for reference in &request.references {
+        let version_id = match reference.reference_type {
+            crate::workflow::execution::ExecutionReferenceType::AssetVersion => &reference.reference,
+            // Canon-snapshot references are compiled prompt context, not media.
+            crate::workflow::execution::ExecutionReferenceType::CanonSnapshot => continue,
+        };
+        attachments.push(resolve_one_attachment(project_root, version_id)?);
+    }
+    Ok(attachments)
+}
+
+fn resolve_one_attachment(
+    project_root: &std::path::Path,
+    version_id: &str,
+) -> Result<crate::providers::model::ProviderReferenceAttachment, AppError> {
+    use sha2::{Digest, Sha256};
+
+    let conn = crate::db::open_existing_connection(&project_root.join("project.db"))?;
+    let project = crate::project::repository::read_project(&conn)?;
+    let row = conn
+        .query_row(
+            "SELECT av.file_path, av.sha256, av.mime_type, av.byte_size, av.original_filename \
+             FROM asset_versions av JOIN assets a ON a.id = av.asset_id \
+             WHERE av.id = ?1 AND a.project_id = ?2",
+            rusqlite::params![version_id, project.id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| AppError::Database(error.to_string()))?
+        .ok_or_else(|| {
+            AppError::WorkflowPrerequisiteFailed(format!(
+                "reference asset version {version_id} does not exist in this project"
+            ))
+        })?;
+    let (file_path, expected_sha256, media_type, byte_size, original_filename) = row;
+
+    if !matches!(media_type.as_str(), "image/png" | "image/jpeg" | "image/webp") {
+        return Err(AppError::WorkflowPrerequisiteFailed(format!(
+            "reference asset version {version_id} has unsupported media type {media_type}"
+        )));
+    }
+    if byte_size as usize > MAX_REFERENCE_BYTES {
+        return Err(AppError::WorkflowPrerequisiteFailed(format!(
+            "reference asset version {version_id} exceeds the {MAX_REFERENCE_BYTES} byte attachment limit"
+        )));
+    }
+
+    let absolute = project_root.join(&file_path);
+    let bytes = std::fs::read(&absolute).map_err(|error| {
+        AppError::WorkflowPrerequisiteFailed(format!(
+            "reference asset version {version_id} could not be read: {error}"
+        ))
+    })?;
+    if bytes.len() > MAX_REFERENCE_BYTES {
+        return Err(AppError::WorkflowPrerequisiteFailed(format!(
+            "reference asset version {version_id} exceeds the attachment size limit"
+        )));
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let actual_sha256 = format!("{:x}", hasher.finalize());
+    if actual_sha256 != expected_sha256 {
+        return Err(AppError::GenerationArtifactIntegrityMismatch(format!(
+            "reference asset version {version_id} failed its integrity check before submission"
+        )));
+    }
+
+    let file_name = if original_filename.trim().is_empty() {
+        std::path::Path::new(&file_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("reference")
+            .to_string()
+    } else {
+        original_filename
+    };
+
+    Ok(crate::providers::model::ProviderReferenceAttachment {
+        asset_version_id: version_id.to_string(),
+        file_name,
+        media_type,
+        bytes,
+        sha256: actual_sha256,
+    })
 }

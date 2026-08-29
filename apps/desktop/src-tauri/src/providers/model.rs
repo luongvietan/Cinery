@@ -109,6 +109,23 @@ pub struct ProviderExecutionRequest {
     pub selected_provider: String,
     pub selected_model: String,
     pub idempotency_key: String,
+    /// Verified, ephemeral media attachments resolved immediately before
+    /// submission. Skipped in serialization so bytes never leak into logs,
+    /// diagnostics, or persisted snapshots.
+    #[serde(skip)]
+    pub reference_attachments: Vec<ProviderReferenceAttachment>,
+}
+
+/// One verified reference attachment ready for a multipart provider call.
+/// Lives only for the duration of a submission; adapters never resolve or
+/// persist these bytes themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderReferenceAttachment {
+    pub asset_version_id: String,
+    pub file_name: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+    pub sha256: String,
 }
 
 impl ProviderExecutionRequest {
@@ -144,6 +161,7 @@ impl ProviderExecutionRequest {
             selected_provider: selected_provider.into(),
             selected_model: selected_model.into(),
             idempotency_key: idempotency_key.into(),
+            reference_attachments: Vec::new(),
         })
     }
 }

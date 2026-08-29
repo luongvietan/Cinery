@@ -23,6 +23,18 @@ impl Fixture {
             image.save(root.join(name)).unwrap();
         }
         let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+        // Compute the real hashes of the materialized files so reference
+        // resolution can verify them before submission.
+        use sha2::{Digest, Sha256};
+        fn file_hash(root: &std::path::Path, name: &str) -> (String, i64) {
+            let bytes = std::fs::read(root.join(name)).unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            (format!("{:x}", hasher.finalize()), bytes.len() as i64)
+        }
+        let (face_hash, face_size) = file_hash(&root, "face.png");
+        let (look_hash, look_size) = file_hash(&root, "look.png");
+        let (target_hash, target_size) = file_hash(&root, "target.png");
         conn.execute_batch(&format!(
             "INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at)
              VALUES ('character-1', '{}', 'character', 'Mara', 'mara', 'now', 'now');
@@ -42,12 +54,15 @@ impl Fixture {
               original_filename, mime_type, byte_size, created_at)
              VALUES
              ('face-v1', 'face', 1, 'canonical', 'face.png', 'face.png',
-              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'face.png', 'image/png', 1, 'now'),
+              '{face_hash}', 'face.png', 'image/png', {face_size}, 'now'),
              ('look-v1', 'look', 1, 'canonical', 'look.png', 'look.png',
-              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'look.png', 'image/png', 1, 'now'),
+              '{look_hash}', 'look.png', 'image/png', {look_size}, 'now'),
              ('target-v1', 'target', 1, 'candidate', 'target.png', 'target.png',
-              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 'target.png', 'image/png', 1, 'now');",
-            project.id, project.id, project.id, project.id
+              '{target_hash}', 'target.png', 'image/png', {target_size}, 'now');",
+            project.id, project.id, project.id, project.id,
+            face_hash = face_hash, face_size = face_size,
+            look_hash = look_hash, look_size = look_size,
+            target_hash = target_hash, target_size = target_size,
         ))
         .unwrap();
         let plan = json!({
