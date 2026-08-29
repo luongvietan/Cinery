@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ProviderCapabilities, ProviderConfigurationStatus } from "@cinematic/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderSettings } from "./ProviderSettings";
-import { configureProvider, getProviderCapabilities, getProviderConfigurationStatus, listProviderModels, listProviders, removeProviderCredentials, saveProviderCredential, validateProviderConfiguration } from "../workflows/api";
+import { configureProvider, getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders, removeProviderCredentials, saveProviderCredential, upsertCustomProvider, validateProviderConfiguration } from "../workflows/api";
 
 vi.mock("../workflows/api");
 
@@ -16,12 +16,14 @@ function statusFor(providerId: string, configured: boolean): ProviderConfigurati
 describe("ProviderSettings", () => {
   beforeEach(() => {
     vi.mocked(listProviders).mockResolvedValue(["mock", "openai"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([]);
     vi.mocked(listProviderModels).mockImplementation(async (providerId: string) => providerId === "openai" ? ["gpt-image-2"] : ["mock-image-v1"]);
     vi.mocked(getProviderCapabilities).mockResolvedValue(capabilities);
     vi.mocked(configureProvider).mockImplementation(async (_root: string, config: Record<string, unknown>) => statusFor(String(config.providerId), true));
     vi.mocked(saveProviderCredential).mockImplementation(async (_root: string, providerId: string) => statusFor(providerId, true));
     vi.mocked(removeProviderCredentials).mockResolvedValue();
     vi.mocked(validateProviderConfiguration).mockResolvedValue();
+    vi.mocked(upsertCustomProvider).mockImplementation(async (_root, definition) => ({ ...definition, apiKey: undefined, headers: definition.headers.map((header) => ({ name: header.name })) }));
   });
 
   it("keeps the credential write-only and exposes accessible provider controls", async () => {
@@ -64,5 +66,23 @@ describe("ProviderSettings", () => {
     render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
     expect(await screen.findByText("This provider runs locally and needs no credential.")).toBeInTheDocument();
     expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
+  });
+
+  it("captures custom provider models, optional API key, and headers", async () => {
+    const user = userEvent.setup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.type(screen.getByLabelText("Provider ID"), "video_provider");
+    await user.type(screen.getByLabelText("Display name"), "Video Provider");
+    await user.type(screen.getByLabelText("Base URL"), "https://video.example.test/v1");
+    await user.type(screen.getByLabelText("API key (optional)"), "video-secret");
+    await user.type(screen.getByLabelText("Model ID"), "video-v1");
+    await user.type(screen.getByLabelText("Model name"), "Video V1");
+    await user.click(screen.getByRole("button", { name: "Add header" }));
+    const headerInputs = screen.getAllByLabelText("Header");
+    await user.type(headerInputs[0], "X-Workspace");
+    await user.type(screen.getAllByLabelText("Value")[0], "workspace-secret");
+    await user.click(screen.getByRole("button", { name: "Save custom provider" }));
+    await waitFor(() => expect(upsertCustomProvider).toHaveBeenCalledWith("C:/projects/red-door", expect.objectContaining({ providerId: "video_provider", apiKey: "video-secret", models: [{ id: "video-v1", name: "Video V1" }], headers: [{ name: "X-Workspace", value: "workspace-secret" }] })));
+    expect(screen.queryByText("video-secret")).not.toBeInTheDocument();
   });
 });

@@ -64,6 +64,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 13,
         sql: include_str!("../../migrations/0013_performance_indexes.sql"),
     },
+    Migration {
+        version: 14,
+        sql: include_str!("../../migrations/0014_custom_provider_definitions.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in

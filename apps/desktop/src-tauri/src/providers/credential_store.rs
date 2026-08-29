@@ -25,6 +25,16 @@ pub fn credential_reference(account: &str) -> String {
     format!("keyring://{KEYRING_SERVICE}/{account}")
 }
 
+/// Deterministic account key for one custom HTTP header value.
+pub fn header_credential_account(project_id: &str, provider_id: &str, header_name: &str) -> String {
+    let encoded = header_name
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{project_id}:{provider_id}:header:{encoded}")
+}
+
 pub trait CredentialStore: Send + Sync {
     fn set_secret(&self, account: &str, secret: &str) -> Result<(), ProviderError>;
     fn get_secret(&self, account: &str) -> Result<Option<String>, ProviderError>;
@@ -108,7 +118,9 @@ pub struct KeyringCredentialStore {
 
 impl KeyringCredentialStore {
     pub fn new() -> Self {
-        Self { service: KEYRING_SERVICE }
+        Self {
+            service: KEYRING_SERVICE,
+        }
     }
 
     fn entry(&self, account: &str) -> Result<keyring::Entry, ProviderError> {
@@ -173,14 +185,26 @@ mod tests {
         let store = MemoryCredentialStore::new();
         assert_eq!(store.get_secret("p:openai").unwrap(), None);
         store.set_secret("p:openai", "alpha").unwrap();
-        assert_eq!(store.get_secret("p:openai").unwrap().as_deref(), Some("alpha"));
+        assert_eq!(
+            store.get_secret("p:openai").unwrap().as_deref(),
+            Some("alpha")
+        );
         // Replacement overwrites the prior value.
         store.set_secret("p:openai", "beta").unwrap();
-        assert_eq!(store.get_secret("p:openai").unwrap().as_deref(), Some("beta"));
+        assert_eq!(
+            store.get_secret("p:openai").unwrap().as_deref(),
+            Some("beta")
+        );
         // Account isolation.
         store.set_secret("q:openai", "gamma").unwrap();
-        assert_eq!(store.get_secret("q:openai").unwrap().as_deref(), Some("gamma"));
-        assert_eq!(store.get_secret("p:openai").unwrap().as_deref(), Some("beta"));
+        assert_eq!(
+            store.get_secret("q:openai").unwrap().as_deref(),
+            Some("gamma")
+        );
+        assert_eq!(
+            store.get_secret("p:openai").unwrap().as_deref(),
+            Some("beta")
+        );
         store.delete_secret("p:openai").unwrap();
         assert_eq!(store.get_secret("p:openai").unwrap(), None);
         // Deleting a missing account is idempotent.
@@ -189,7 +213,9 @@ mod tests {
 
     #[test]
     fn failing_store_reports_credential_store_errors_without_echoing_secrets() {
-        let store = FailingCredentialStore { message: "vault locked".into() };
+        let store = FailingCredentialStore {
+            message: "vault locked".into(),
+        };
         let error = store.set_secret("p:openai", "supersecret").unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::CredentialStore);
         assert!(!error.message.contains("supersecret"));

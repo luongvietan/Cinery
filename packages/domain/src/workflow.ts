@@ -250,6 +250,27 @@ export interface ProviderConfigurationStatus {
   defaultModel: string | null;
 }
 
+export interface CustomProviderModel {
+  id: string;
+  name: string;
+}
+
+export interface CustomProviderHeader {
+  name: string;
+  /** Write-only input; omitted from responses. */
+  value?: string;
+}
+
+export interface CustomProviderDefinition {
+  providerId: string;
+  displayName: string;
+  baseUrl: string;
+  /** Write-only input; omitted from responses. */
+  apiKey?: string;
+  models: CustomProviderModel[];
+  headers: CustomProviderHeader[];
+}
+
 export interface ProviderExecutionSummary {
   id: string;
   stepDefinitionId: string;

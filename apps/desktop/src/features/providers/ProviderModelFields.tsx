@@ -35,13 +35,13 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     setPending(true);
     setError(null);
     Promise.resolve()
-      .then(() => listProviders())
+      .then(() => listProviders(projectRootPath))
       .then((providerIds) => Promise.all(
         (providerIds ?? []).map(async (id): Promise<ProviderOption> => {
           try {
             const [capabilities, models, status] = await Promise.all([
               getProviderCapabilities(id).catch(() => null),
-              listProviderModels(id).catch(() => [] as string[]),
+              listProviderModels(id, projectRootPath).catch(() => [] as string[]),
               getProviderConfigurationStatus(projectRootPath, id).catch(() => null),
             ]);
             return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? ALWAYS_CONFIGURED.has(id) };

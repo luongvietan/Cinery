@@ -3,6 +3,92 @@ use crate::workflow::execution::{
     ExecutionConstraint, ExecutionMediaType, ExecutionReference, ExecutionRequest, ExecutionTask,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderModel {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderHeader {
+    pub name: String,
+    #[serde(default, skip_serializing)]
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderDefinition {
+    pub provider_id: String,
+    pub display_name: String,
+    pub base_url: String,
+    #[serde(default, skip_serializing)]
+    pub api_key: Option<String>,
+    pub models: Vec<CustomProviderModel>,
+    pub headers: Vec<CustomProviderHeader>,
+}
+
+impl CustomProviderDefinition {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.provider_id.is_empty()
+            || !self.provider_id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+            })
+        {
+            return Err(
+                "provider ID must contain only lowercase letters, numbers, '-' or '_'".into(),
+            );
+        }
+        if self.display_name.trim().is_empty() {
+            return Err("display name must not be blank".into());
+        }
+        if !(self.base_url.starts_with("http://") || self.base_url.starts_with("https://"))
+            || self.base_url.chars().any(char::is_whitespace)
+        {
+            return Err("base URL must be an absolute HTTP(S) URL".into());
+        }
+        if self.models.is_empty() {
+            return Err("at least one model is required".into());
+        }
+        let mut model_ids = HashSet::new();
+        for model in &self.models {
+            if model.id.trim().is_empty()
+                || model.name.trim().is_empty()
+                || !model_ids.insert(&model.id)
+            {
+                return Err("model IDs and names must be non-blank and model IDs unique".into());
+            }
+        }
+        let mut header_names = HashSet::new();
+        for header in &self.headers {
+            if header.name.trim().is_empty()
+                || !header_names.insert(header.name.to_ascii_lowercase())
+            {
+                return Err("header names must be non-blank and unique".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn without_secrets(&self) -> Self {
+        Self {
+            api_key: None,
+            headers: self
+                .headers
+                .iter()
+                .map(|header| CustomProviderHeader {
+                    name: header.name.clone(),
+                    value: None,
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -218,9 +304,51 @@ pub struct ProviderResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::execution::{
-        ExecutionProvenance, ExecutionReferenceType, ExecutionTask,
-    };
+    use crate::workflow::execution::{ExecutionProvenance, ExecutionReferenceType, ExecutionTask};
+
+    #[test]
+    fn custom_provider_definition_validates_and_redacts_secrets() {
+        let definition = CustomProviderDefinition {
+            provider_id: "image_provider".into(),
+            display_name: "Image Provider".into(),
+            base_url: "https://images.example.test/v1".into(),
+            api_key: Some("secret-api-key".into()),
+            models: vec![CustomProviderModel {
+                id: "image-v1".into(),
+                name: "Image V1".into(),
+            }],
+            headers: vec![CustomProviderHeader {
+                name: "X-Workspace".into(),
+                value: Some("secret-header".into()),
+            }],
+        };
+        definition.validate().unwrap();
+        let json = serde_json::to_string(&definition).unwrap();
+        assert!(!json.contains("secret-api-key"));
+        assert!(!json.contains("secret-header"));
+    }
+
+    #[test]
+    fn custom_provider_definition_rejects_invalid_id_and_duplicates() {
+        let definition = CustomProviderDefinition {
+            provider_id: "Bad ID".into(),
+            display_name: "x".into(),
+            base_url: "http://x".into(),
+            api_key: None,
+            models: vec![
+                CustomProviderModel {
+                    id: "same".into(),
+                    name: "one".into(),
+                },
+                CustomProviderModel {
+                    id: "same".into(),
+                    name: "two".into(),
+                },
+            ],
+            headers: vec![],
+        };
+        assert!(definition.validate().is_err());
+    }
 
     fn execution_request() -> ExecutionRequest {
         ExecutionRequest {

@@ -5,6 +5,34 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
+    fn custom_provider_storage_round_trips_without_secret_values() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        let definition = CustomProviderDefinition {
+            provider_id: "video_provider".into(),
+            display_name: "Video".into(),
+            base_url: "https://video.example.test".into(),
+            api_key: Some("secret".into()),
+            models: vec![CustomProviderModel {
+                id: "v1".into(),
+                name: "Video 1".into(),
+            }],
+            headers: vec![CustomProviderHeader {
+                name: "X-Org".into(),
+                value: Some("header-secret".into()),
+            }],
+        };
+        upsert_custom_provider(&conn, &definition).unwrap();
+        let saved = get_custom_provider(&conn, "video_provider")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.provider_id, "video_provider");
+        assert_eq!(saved.models[0].id, "v1");
+        assert!(saved.api_key.is_none());
+        assert!(saved.headers[0].value.is_none());
+    }
+
+    #[test]
     fn provider_storage_survives_reopen_and_keeps_attempts_immutable() {
         let mut conn = Connection::open_in_memory().unwrap();
         run_migrations(&mut conn).unwrap();
@@ -42,7 +70,9 @@ mod tests {
         .unwrap();
         assert_eq!(attempt.attempt_number, 1);
         persist_job(&conn, &attempt.id, "openai", "job-1", "submitted").unwrap();
-        let active = find_active_attempt(&conn, "run-1", "execute").unwrap().unwrap();
+        let active = find_active_attempt(&conn, "run-1", "execute")
+            .unwrap()
+            .unwrap();
         assert_eq!(active.provider_job_id.as_deref(), Some("job-1"));
     }
 
@@ -59,8 +89,13 @@ mod tests {
             [],
         ).unwrap();
 
-        create_attempt(&conn, "run", "execute", 1, "compiled", "mock", "model", "same-key").unwrap();
-        let result = create_attempt(&conn, "run", "execute", 2, "compiled", "mock", "model", "same-key");
+        create_attempt(
+            &conn, "run", "execute", 1, "compiled", "mock", "model", "same-key",
+        )
+        .unwrap();
+        let result = create_attempt(
+            &conn, "run", "execute", 2, "compiled", "mock", "model", "same-key",
+        );
         assert!(result.is_err());
     }
 
@@ -76,22 +111,36 @@ mod tests {
             "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, status, input_json, created_at, updated_at) VALUES ('run', 'p', 's', '1', 'o', 'running', '{}', 'now', 'now')",
             [],
         ).unwrap();
-        let attempt = create_attempt(&conn, "run", "execute", 1, "compiled", "mock", "model", "artifact-key").unwrap();
+        let attempt = create_attempt(
+            &conn,
+            "run",
+            "execute",
+            1,
+            "compiled",
+            "mock",
+            "model",
+            "artifact-key",
+        )
+        .unwrap();
 
         update_artifact_ids(
             &conn,
             &attempt.id,
             &["artifact-1".into(), "artifact-2".into()],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let saved: String = conn.query_row(
-            "SELECT artifact_ids_json FROM workflow_step_executions WHERE id = ?1",
-            [&attempt.id],
-            |row| row.get(0),
-        ).unwrap();
+        let saved: String = conn
+            .query_row(
+                "SELECT artifact_ids_json FROM workflow_step_executions WHERE id = ?1",
+                [&attempt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(saved, "[\"artifact-1\",\"artifact-2\"]");
     }
 }
+use super::model::{CustomProviderDefinition, CustomProviderHeader, CustomProviderModel};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -127,6 +176,129 @@ pub struct ExecutionAttemptRecord {
     pub artifact_ids_json: String,
     pub started_at: String,
     pub completed_at: Option<String>,
+}
+
+pub fn upsert_custom_provider(
+    conn: &Connection,
+    definition: &CustomProviderDefinition,
+) -> Result<(), AppError> {
+    definition
+        .validate()
+        .map_err(AppError::ProviderConfiguration)?;
+    let metadata = definition.without_secrets();
+    let models_json = serde_json::to_string(&metadata.models)
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let headers_json = serde_json::to_string(&metadata.headers)
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO custom_provider_definitions
+         (provider_id, display_name, base_url, models_json, headers_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         ON CONFLICT(provider_id) DO UPDATE SET
+           display_name = excluded.display_name, base_url = excluded.base_url,
+           models_json = excluded.models_json, headers_json = excluded.headers_json,
+           updated_at = excluded.updated_at",
+        params![
+            metadata.provider_id,
+            metadata.display_name,
+            metadata.base_url,
+            models_json,
+            headers_json,
+            now
+        ],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn get_custom_provider(
+    conn: &Connection,
+    provider_id: &str,
+) -> Result<Option<CustomProviderDefinition>, AppError> {
+    conn.query_row(
+        "SELECT provider_id, display_name, base_url, models_json, headers_json
+         FROM custom_provider_definitions WHERE provider_id = ?1",
+        [provider_id],
+        |row| {
+            let models_json: String = row.get(3)?;
+            let headers_json: String = row.get(4)?;
+            let models = serde_json::from_str::<Vec<CustomProviderModel>>(&models_json).map_err(
+                |error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                },
+            )?;
+            let headers = serde_json::from_str::<Vec<CustomProviderHeader>>(&headers_json)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            Ok(CustomProviderDefinition {
+                provider_id: row.get(0)?,
+                display_name: row.get(1)?,
+                base_url: row.get(2)?,
+                api_key: None,
+                models,
+                headers,
+            })
+        },
+    )
+    .optional()
+    .map_err(db_error)
+}
+
+pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefinition>, AppError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT provider_id, display_name, base_url, models_json, headers_json
+         FROM custom_provider_definitions ORDER BY provider_id",
+        )
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([], |row| {
+            let models: Vec<CustomProviderModel> = serde_json::from_str(&row.get::<_, String>(3)?)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        3,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            let headers: Vec<CustomProviderHeader> =
+                serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?;
+            Ok(CustomProviderDefinition {
+                provider_id: row.get(0)?,
+                display_name: row.get(1)?,
+                base_url: row.get(2)?,
+                api_key: None,
+                models,
+                headers,
+            })
+        })
+        .map_err(db_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+}
+
+pub fn delete_custom_provider(conn: &Connection, provider_id: &str) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM custom_provider_definitions WHERE provider_id = ?1",
+        [provider_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
 }
 
 pub fn upsert_provider_config(
@@ -244,7 +416,14 @@ pub fn persist_job(
         "INSERT INTO provider_jobs
          (id, execution_id, provider_id, provider_job_id, status, submitted_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-        params![ulid::Ulid::new().to_string(), execution_id, provider_id, provider_job_id, status, now],
+        params![
+            ulid::Ulid::new().to_string(),
+            execution_id,
+            provider_id,
+            provider_job_id,
+            status,
+            now
+        ],
     )
     .map_err(db_error)?;
     conn.execute(
@@ -297,8 +476,8 @@ pub fn update_attempt_status(
     status: &str,
     normalized_error_json: Option<&str>,
 ) -> Result<(), AppError> {
-    let completed_at = matches!(status, "succeeded" | "failed" | "cancelled")
-        .then(|| Utc::now().to_rfc3339());
+    let completed_at =
+        matches!(status, "succeeded" | "failed" | "cancelled").then(|| Utc::now().to_rfc3339());
     conn.execute(
         "UPDATE workflow_step_executions
          SET status = ?1, normalized_error_json = ?2, completed_at = COALESCE(?3, completed_at)
