@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CustomProviderDefinition, ProviderCapabilities } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
+import { openPanel } from "../../lib/panelNavigation";
 import { getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders } from "../workflows/api";
 
 export interface ProviderModelSelection {
@@ -16,7 +17,9 @@ interface ProviderModelFieldsProps {
   onChange(value: ProviderModelSelection): void;
 }
 
-const ALWAYS_CONFIGURED = new Set(["mock", "dry_run"]);
+// Local-only test providers are still registered in the backend for tests and
+// diagnostics, but they must never appear in a user-facing run form.
+const USER_HIDDEN_PROVIDERS = new Set(["mock", "dry_run"]);
 
 interface ProviderOption {
   id: string;
@@ -38,25 +41,51 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     Promise.resolve()
       .then(() => Promise.all([listProviders(projectRootPath), Promise.resolve(listCustomProviders(projectRootPath)).catch(() => [] as CustomProviderDefinition[])]))
       .then(([providerIds, customProviders]) => Promise.all(
-        (providerIds ?? []).map(async (id): Promise<ProviderOption> => {
-          const custom = (customProviders ?? []).find((provider) => provider.providerId === id);
-          try {
-            const [capabilities, models, status] = await Promise.all([
-              getProviderCapabilities(id).catch(() => null),
-              listProviderModels(id, projectRootPath).catch(() => [] as string[]),
-              getProviderConfigurationStatus(projectRootPath, id).catch(() => null),
-            ]);
-            return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? ALWAYS_CONFIGURED.has(id), purpose: custom?.purpose ?? null };
-          } catch {
-            return { id, capabilities: null, models: [], configured: false, purpose: custom?.purpose ?? null };
-          }
-        }),
+        (providerIds ?? [])
+          .filter((id) => !USER_HIDDEN_PROVIDERS.has(id))
+          .map(async (id): Promise<ProviderOption> => {
+            const custom = (customProviders ?? []).find((provider) => provider.providerId === id);
+            try {
+              const [capabilities, models, status] = await Promise.all([
+                getProviderCapabilities(id, projectRootPath).catch(() => null),
+                listProviderModels(id, projectRootPath).catch(() => [] as string[]),
+                getProviderConfigurationStatus(projectRootPath, id).catch(() => null),
+              ]);
+              return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? false, purpose: custom?.purpose ?? null };
+            } catch {
+              return { id, capabilities: null, models: [], configured: false, purpose: custom?.purpose ?? null };
+            }
+          }),
       ))
       .then((resolved) => { if (!cancelled) setOptions(resolved); })
       .catch((reason) => { if (!cancelled) setError(describeError(reason)); })
       .finally(() => { if (!cancelled) setPending(false); });
     return () => { cancelled = true; };
   }, [projectRootPath]);
+
+  // Auto-select the first compatible, configured service when the form opens
+  // with no selection, so the user never has to understand provider ids.
+  const autoSelectRef = useRef(false);
+  useEffect(() => {
+    if (pending || autoSelectRef.current || options.length === 0) return;
+    if (value.providerId && options.some((option) => option.id === value.providerId)) {
+      autoSelectRef.current = true;
+      return;
+    }
+    const candidate = options.find((option) => {
+      if (!option.configured) return false;
+      if (option.purpose && option.purpose !== "legacy" && option.purpose !== mediaType) return false;
+      if (option.capabilities) {
+        if (!option.capabilities.mediaTypes.includes(mediaType)) return false;
+        if (requiresReferences && !option.capabilities.supportsReferenceImage) return false;
+      }
+      return true;
+    });
+    autoSelectRef.current = true;
+    if (candidate) {
+      onChange({ providerId: candidate.id, modelId: candidate.models[0] ?? "" });
+    }
+  }, [pending, options, value.providerId, mediaType, requiresReferences, onChange]);
 
   const selected = options.find((option) => option.id === value.providerId) ?? null;
   const compatible = (option: ProviderOption): boolean => {
@@ -74,14 +103,17 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     return "not compatible with this operation";
   };
   const statusText = pending
-    ? "Checking provider credentials…"
+    ? "Checking connection…"
     : error
-      ? "Provider status unavailable"
+      ? "AI service status unavailable"
       : selected
         ? selected.configured
-          ? "Credential configured"
-          : "Credential not configured"
+          ? "Connected"
+          : "This service needs its API key before it can generate anything"
         : "";
+
+  const hasConfiguredCompatible = options.some((option) => option.configured && compatible(option));
+  const needsSetup = !pending && !error && !hasConfiguredCompatible;
 
   function handleProviderChange(providerId: string) {
     const option = options.find((candidate) => candidate.id === providerId);
@@ -90,7 +122,11 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
   }
 
   return <div className="provider-model-fields">
-    <label htmlFor="provider-model-provider">Provider</label>
+    {needsSetup ? <div className="provider-setup-hint" role="status">
+      <p>Cinery generates through an AI service you connect, like an image or video API. None is connected yet.</p>
+      <button type="button" onClick={() => openPanel("providers")}>Connect an AI service</button>
+    </div> : null}
+    <label htmlFor="provider-model-provider">AI service</label>
     <select
       id="provider-model-provider"
       value={value.providerId}
@@ -114,6 +150,7 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
       {(selected?.models ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
     </select>
     <p id="provider-model-status" role="status">{statusText}</p>
+    {selected && !selected.configured && !pending ? <button type="button" onClick={() => openPanel("providers")}>Add the API key in AI Services</button> : null}
     {error ? <p role="alert">{error}</p> : null}
   </div>;
 }

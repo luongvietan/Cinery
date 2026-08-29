@@ -29,6 +29,63 @@ const baseVersion = {
   createdAt: "2026-08-27T06:10:00Z",
 };
 
+describe("AssetInspector video versions", () => {
+  beforeEach(() => {
+    vi.mocked(getAssetWithVersions).mockReset();
+    vi.mocked(promoteAssetVersion).mockReset();
+    vi.restoreAllMocks();
+  });
+
+  it("renders an inline video player for video versions and keeps the meta line video-aware", async () => {
+    vi.mocked(getAssetWithVersions).mockResolvedValue({
+      asset: {
+        id: "asset-video",
+        projectId: "project-1",
+        type: "video",
+        label: "Scene 001 — Video",
+        ownerEntityId: null,
+        canonicalVersionId: "ver-video-1",
+        createdAt: "2026-08-27T06:00:00Z",
+        updatedAt: "2026-08-27T06:00:00Z",
+      },
+      versions: [
+        {
+          id: "ver-video-1",
+          assetId: "asset-video",
+          versionNumber: 1,
+          status: "candidate" as const,
+          filePath: "assets/asset-video/v001/v1.mp4",
+          thumbnailPath: "",
+          sha256: "hashv",
+          originalFilename: "generated.mp4",
+          mimeType: "video/mp4" as const,
+          byteSize: 5_000_000,
+          width: null,
+          height: null,
+          parentVersionId: null,
+          createdAt: "2026-08-27T06:10:00Z",
+          origin: "generated" as const,
+          generationArtifactId: null,
+        },
+      ],
+    });
+
+    render(<AssetInspector projectRootPath="C:/projects/red-door" assetId="asset-video" />);
+
+    // Canonical panel and the version card each render an inline player.
+    const players = await screen.findAllByLabelText(/video preview/i);
+    expect(players).toHaveLength(2);
+    for (const player of players) {
+      expect(player.tagName).toBe("VIDEO");
+      expect(player).toHaveAttribute("controls");
+      expect(player.getAttribute("src")).toContain("v1.mp4");
+    }
+    expect(screen.getByText("Video", { exact: true })).toBeInTheDocument();
+    // An empty thumbnail path must never be converted into a broken image.
+    expect(screen.queryByRole("img", { name: /thumbnail/i })).not.toBeInTheDocument();
+  });
+});
+
 describe("AssetInspector", () => {
   beforeEach(() => {
     vi.mocked(getAssetWithVersions).mockReset();

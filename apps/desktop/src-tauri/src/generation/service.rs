@@ -5,7 +5,7 @@ use super::model::{
 use super::model::{GeneratedArtifactDetail, GenerationResultSetDetail};
 use super::recovery;
 use super::repository;
-use super::storage::{materialize_image, read_and_verify, MaterializedArtifact};
+use super::storage::{read_and_verify, MaterializedArtifact};
 use crate::assets::service::AssetService;
 use crate::db;
 use crate::error::AppError;
@@ -40,6 +40,8 @@ pub struct GenerationCaptureInput {
     pub model_id: String,
     pub source_asset_version_ids: Vec<String>,
     pub requested_output_count: i64,
+    /// "image" or "video" — selects capture-time materialization behavior.
+    pub media_kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,7 +116,7 @@ impl GenerationService {
             workflow_run_id: input.workflow_run_id.clone(),
             workflow_step_key: input.workflow_step_key.clone(),
             provider_attempt_id: input.provider_attempt_id.clone(),
-            media_kind: "image".into(),
+            media_kind: input.media_kind.clone(),
             requested_output_count: input.requested_output_count,
             created_at: Utc::now().to_rfc3339(),
         };
@@ -123,13 +125,33 @@ impl GenerationService {
         for (index, output) in provider_result.outputs.iter().enumerate() {
             let ordinal = (index + 1) as i64;
             let bytes = provider_output_bytes(output)?;
-            match materialize_image(
-                project_root,
-                &input.workflow_run_id,
-                &input.provider_attempt_id,
-                ordinal,
-                &bytes,
-            ) {
+            let materialized = if input.media_kind == "video" {
+                if output.mime_type != "video/mp4" || !super::storage::looks_like_mp4(&bytes) {
+                    return Err(AppError::GenerationArtifactCaptureFailed(
+                        "provider returned a payload that is not a valid MP4 video".into(),
+                    ));
+                }
+                super::storage::materialize_media(
+                    project_root,
+                    &input.workflow_run_id,
+                    &input.provider_attempt_id,
+                    ordinal,
+                    &bytes,
+                    &output.mime_type,
+                    "mp4",
+                    None,
+                    None,
+                )
+            } else {
+                super::storage::materialize_image(
+                    project_root,
+                    &input.workflow_run_id,
+                    &input.provider_attempt_id,
+                    ordinal,
+                    &bytes,
+                )
+            };
+            match materialized {
                 Ok(metadata) => stored.push((ordinal, metadata)),
                 Err(error) => {
                     cleanup_stored(project_root, &stored);
@@ -144,7 +166,7 @@ impl GenerationService {
                 id: ulid::Ulid::new().to_string(),
                 result_set_id: result_set.id.clone(),
                 ordinal: *ordinal,
-                media_kind: "image".into(),
+                media_kind: input.media_kind.clone(),
                 mime_type: metadata.mime_type.clone(),
                 width: metadata.width,
                 height: metadata.height,
@@ -376,15 +398,34 @@ fn provider_output_bytes(output: &ProviderOutput) -> Result<Vec<u8>, AppError> {
     if output.uri.starts_with("mock://") || output.uri.starts_with("dry-run://") {
         return Ok(deterministic_mock_png(&output.uri));
     }
+    if output.uri.starts_with("data:") {
+        // Inline base64 payload (image or video). Decode and persist; the
+        // data URI itself is never stored in metadata or logs.
+        let payload = output
+            .uri
+            .split_once(",")
+            .map(|(_, payload)| payload)
+            .ok_or_else(|| {
+                AppError::GenerationArtifactCaptureFailed(
+                    "provider returned a malformed data URI".into(),
+                )
+            })?;
+        return base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
+            .map_err(|_| {
+                AppError::GenerationArtifactCaptureFailed(
+                    "provider returned an undecodable data URI payload".into(),
+                )
+            });
+    }
     if output.uri.starts_with("https://") || output.uri.starts_with("http://") {
         return UreqTransport::new(Duration::from_secs(60))
             .get_bytes(&output.uri, "", MAX_PROVIDER_OUTPUT_BYTES)
             .map_err(|_| {
-                AppError::GenerationArtifactCaptureFailed("provider image download failed".into())
+                AppError::GenerationArtifactCaptureFailed("provider output download failed".into())
             });
     }
     Err(AppError::GenerationArtifactCaptureFailed(
-        "provider returned a non-durable image reference".into(),
+        "provider returned a non-durable output reference".into(),
     ))
 }
 

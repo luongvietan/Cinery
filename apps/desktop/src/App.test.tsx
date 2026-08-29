@@ -7,7 +7,7 @@ describe("App", () => {
     render(<App />);
     expect(
       screen.getByRole("heading", {
-        name: "AI Cinematic Production OS",
+        name: "Make films with AI, without losing your characters.",
       }),
     ).toBeInTheDocument();
   });

@@ -69,7 +69,7 @@ export function WorldList({
     return (
       <div className="world-list-empty" aria-label="Worlds">
         <p>No worlds yet</p>
-        <p>Create a World from a Canon Location to begin.</p>
+        <p>A world is the backdrop your scenes happen in, generated from a location in your story. Create one to begin.</p>
       </div>
     );
   }
@@ -105,8 +105,8 @@ export function WorldList({
                   className="world-list-status"
                   style={{
                     display: "block",
-                    fontSize: "12px",
-                    color: "var(--color-mid-gray)",
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--c-muted)",
                   }}
                 >
                   {worldPlateStatus(detail)}
@@ -115,8 +115,8 @@ export function WorldList({
                   className="world-list-secondary"
                   style={{
                     display: "block",
-                    fontSize: "12px",
-                    color: "var(--color-mid-gray)",
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--c-muted)",
                   }}
                 >
                   {formatWorldListSecondary(detail)}

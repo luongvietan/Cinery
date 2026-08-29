@@ -35,7 +35,7 @@
 
 .subtitle {
   margin: 0;
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   color: var(--c-muted);
 }
 
@@ -79,13 +79,13 @@
 .jobType {
   font-weight: 600;
   color: var(--c-text);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   text-transform: capitalize;
 }
 
 .jobId {
-  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
-  font-size: 0.8rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
   color: var(--c-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -93,9 +93,9 @@
 }
 
 .disposition {
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
-  border-radius: 999px;
+  font-size: var(--fs-sm);
+  padding: var(--space-4) var(--space-8);
+  border-radius: var(--radius-pill);
   text-transform: capitalize;
   font-weight: 500;
   white-space: nowrap;
@@ -128,8 +128,8 @@
 
 .expandIcon {
   flex-shrink: 0;
-  margin-left: 0.5rem;
-  font-size: 0.75rem;
+  margin-left: var(--space-8);
+  font-size: var(--fs-sm);
   color: var(--c-muted);
 }
 

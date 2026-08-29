@@ -283,6 +283,104 @@ impl RequestCompiler for WorldPlateCompiler {
     }
 }
 
+pub struct SceneVideoCompiler;
+
+impl RequestCompiler for SceneVideoCompiler {
+    fn id(&self) -> &'static str {
+        "scene_video_v1"
+    }
+
+    fn compile(
+        &self,
+        workflow_run_id: &str,
+        skill: &SkillDefinition,
+        operation: &SkillOperation,
+        context: &WorkflowContextSnapshot,
+    ) -> Result<ExecutionRequest, AppError> {
+        let compilation = required_context(&context.resolved_context, "compilation")?;
+        let provider_prompt = compilation
+            .get("providerPrompt")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "compilation.providerPrompt is missing from context".into(),
+                )
+            })?;
+        let total_duration = compilation
+            .get("totalDurationSeconds")
+            .and_then(Value::as_f64)
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        let last_frame = compilation
+            .get("lastFrame")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        // Motion wrapper over the provider-neutral cinema prompt, per the
+        // cinema-director grammar: explicit task, no slow motion, no on-screen
+        // text, diegetic sound only. The prompt body itself stays untouched so
+        // any provider-specific adaptation stays possible later.
+        let mut prompt = String::new();
+        prompt.push_str("TASK
+");
+        if total_duration.is_empty() {
+            prompt.push_str("Animate the following compiled scene into one continuous video shot.
+
+");
+        } else {
+            prompt.push_str(&format!(
+                "Animate the following compiled scene into one continuous video shot of {total_duration} seconds total.
+
+"
+            ));
+        }
+        prompt.push_str("SPEED POLICY
+All shots at normal speed. No slow motion, no overcranking, no ramping, and no speed change anywhere in this sequence.
+
+");
+        prompt.push_str("TEXT POLICY
+No on-screen text, no captions, no titles, no subtitles, no watermarks anywhere in the frame.
+
+");
+        prompt.push_str("SOUND POLICY
+Diegetic sound only: what exists inside the world of the scene. No music, no lyrics, no dialogue, no singing unless the compiled audio instructions say otherwise.
+
+");
+        if !last_frame.trim().is_empty() {
+            prompt.push_str("LAST FRAME
+Hold the final composition exactly as described: ");
+            prompt.push_str(last_frame);
+            prompt.push_str("
+
+");
+        }
+        prompt.push_str("COMPILED SCENE PROMPT
+");
+        prompt.push_str(provider_prompt);
+
+        Ok(ExecutionRequest {
+            task: crate::workflow::execution::ExecutionTask::SceneVideo,
+            request_version: 1,
+            media_type: crate::workflow::execution::ExecutionMediaType::Video,
+            prompt,
+            references: Vec::new(),
+            constraints: Vec::new(),
+            expected_output: operation.expected_output.clone().ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "scene-video operation has no expected output".into(),
+                )
+            })?,
+            provenance: ExecutionProvenance {
+                workflow_run_id: workflow_run_id.into(),
+                skill_id: skill.id.clone(),
+                skill_version: skill.version.clone(),
+                operation_id: operation.id.clone(),
+            },
+        })
+    }
+}
+
 pub struct SceneKeyframeCompiler;
 
 impl RequestCompiler for SceneKeyframeCompiler {

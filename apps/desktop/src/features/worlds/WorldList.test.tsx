@@ -65,7 +65,7 @@ describe("WorldList", () => {
       />,
     );
     expect(await screen.findByText("No worlds yet")).toBeInTheDocument();
-    expect(screen.getByText("Create a World from a Canon Location to begin.")).toBeInTheDocument();
+    expect(screen.getByText("A world is the backdrop your scenes happen in, generated from a location in your story. Create one to begin.")).toBeInTheDocument();
   });
 
   it("shows world with no canonical Plate", async () => {

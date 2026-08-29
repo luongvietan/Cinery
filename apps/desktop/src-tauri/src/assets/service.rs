@@ -222,6 +222,96 @@ impl AssetService {
 
         Ok(record)
     }
+
+    /// Imports a generated video (MP4) as a new asset version. Videos get no
+    /// generated thumbnail (the column keeps an empty string; previews fall
+    /// back to the file icon path in the UI).
+    pub fn import_media_version(
+        project_root: &Path,
+        asset_id: &str,
+        source_path: &Path,
+        parent_version_id: Option<String>,
+    ) -> Result<AssetVersionRecord, AppError> {
+        let mut conn = open_project_db(project_root)?;
+
+        repository::get_asset(&conn, asset_id)?;
+
+        if let Some(parent_id) = &parent_version_id {
+            match repository::get_asset_version_by_id(&conn, parent_id)? {
+                Some(parent) if parent.asset_id == asset_id => {}
+                _ => return Err(AppError::ParentVersionMismatch),
+            }
+        }
+
+        let inspected = import::inspect_video(source_path)?;
+
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        if repository::find_version_by_hash(&tx, asset_id, &inspected.sha256)?.is_some() {
+            return Err(AppError::DuplicateAssetVersion);
+        }
+
+        let version_number = repository::next_version_number(&tx, asset_id)?;
+        let version_id = Ulid::new().to_string();
+
+        let media_relative =
+            managed_media_path(asset_id, version_number, &version_id, inspected.extension);
+        let media_absolute = project_root.join(&media_relative);
+
+        if let Some(parent) = media_absolute.parent() {
+            fs::create_dir_all(parent).map_err(|e| AppError::FileSystem(e.to_string()))?;
+        }
+        let tmp_media_path = with_tmp_suffix(&media_absolute);
+        fs::copy(source_path, &tmp_media_path)
+            .map_err(|e| AppError::FileSystem(format!("copy failed: {e}")))?;
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(&tmp_media_path)
+            .map_err(|e| AppError::FileSystem(format!("open-for-sync failed: {e}")))?;
+        file.sync_all()
+            .map_err(|e| AppError::FileSystem(format!("sync_all failed: {e}")))?;
+        drop(file);
+        fs::rename(&tmp_media_path, &media_absolute)
+            .map_err(|e| AppError::FileSystem(format!("rename failed: {e}")))?;
+
+        let original_filename = source_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let record = AssetVersionRecord {
+            id: version_id,
+            asset_id: asset_id.to_string(),
+            version_number,
+            status: "candidate".to_string(),
+            file_path: to_forward_slash(&media_relative),
+            thumbnail_path: String::new(),
+            sha256: inspected.sha256,
+            original_filename,
+            mime_type: inspected.mime_type.to_string(),
+            byte_size: inspected.byte_size as i64,
+            width: None,
+            height: None,
+            parent_version_id,
+            created_at: Utc::now().to_rfc3339(),
+            origin: "imported".into(),
+            generation_artifact_id: None,
+        };
+
+        if let Err(err) = repository::insert_asset_version(&tx, &record) {
+            let _ = fs::remove_file(&media_absolute);
+            return Err(err);
+        }
+
+        if let Err(e) = tx.commit() {
+            let _ = fs::remove_file(&media_absolute);
+            return Err(AppError::Database(e.to_string()));
+        }
+
+        Ok(record)
+    }
 }
 
 /// Copies `source_path` into `media_absolute` (via a temporary sibling

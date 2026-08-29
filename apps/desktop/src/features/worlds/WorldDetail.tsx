@@ -94,8 +94,8 @@ export function WorldDetail({
         style={{
           display: "flex",
           justifyContent: "space-between",
-          padding: "8px 0",
-          borderBottom: "1px solid var(--color-hairline)",
+          padding: "var(--space-8) 0",
+          borderBottom: "1px solid var(--c-hairline)",
         }}
       >
         <span style={{ fontWeight: 500 }}>{title}</span>
@@ -126,15 +126,15 @@ export function WorldDetail({
       </header>
 
       {/* Canon Location lock state */}
-      <section aria-label="Canon Location" style={{ marginBottom: "16px" }}>
+      <section aria-label="Canon Location" style={{ marginBottom: "var(--space-16)" }}>
         <h3>CANON LOCATION</h3>
-        <div style={{ marginTop: "8px" }}>
+        <div style={{ marginTop: "var(--space-8)" }}>
           {sectionRow("description", "Description")}
           {sectionRow("geography", "Geography")}
           {sectionRow("visual_tags", "Visual Tags")}
           {sectionRow("rules", "Rules")}
         </div>
-        <p style={{ marginTop: "8px", fontSize: "12px", color: "var(--color-mid-gray)" }}>
+        <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
           Description and Geography must be LOCKED before generating a World Plate.
           Draft Canon is not generation authority.
         </p>
@@ -147,42 +147,42 @@ export function WorldDetail({
       <section
         aria-label="Protected Unknowns"
         style={{
-          marginTop: "16px",
-          padding: "16px",
-          background: "var(--surface-canvas)",
-          border: "1px solid var(--color-hairline)",
-          borderRadius: "10px",
+          marginTop: "var(--space-16)",
+          padding: "var(--space-16)",
+          background: "var(--c-panel)",
+          border: "1px solid var(--c-hairline)",
+          borderRadius: "var(--radius-lg)",
         }}
       >
         <h3>Protected Unknowns</h3>
         {tbds.length === 0 ? (
           <p>No protected unknowns for this World.</p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0" }}>
+          <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-8) 0 0" }}>
             {tbds.map((tbd) => (
               <li
                 key={tbd.id}
                 style={{
-                  padding: "8px 0",
-                  borderBottom: "1px solid var(--color-hairline)",
+                  padding: "var(--space-8) 0",
+                  borderBottom: "1px solid var(--c-hairline)",
                 }}
               >
-                <div style={{ display: "flex", gap: "8px", alignItems: "baseline" }}>
+                <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "baseline" }}>
                   <span aria-hidden="true">•</span>
                   <strong>{tbd.topic}</strong>
                   <span className="canon-badge">PROTECTED</span>
-                  <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--color-mid-gray)" }}>
+                  <span style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", color: "var(--c-muted)" }}>
                     PRESERVE UNKNOWN
                   </span>
                 </div>
                 {tbd.note ? (
-                  <p style={{ marginLeft: "16px", fontSize: "13px" }}>{tbd.note}</p>
+                  <p style={{ marginLeft: "var(--space-16)", fontSize: "var(--fs-md)" }}>{tbd.note}</p>
                 ) : null}
               </li>
             ))}
           </ul>
         )}
-        <p style={{ marginTop: "8px", fontSize: "12px", color: "var(--color-mid-gray)" }}>
+        <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
           TBDs scoped to this Location must be preserve_unknown. Project-scoped unknowns require explicit classification.
         </p>
       </section>

@@ -122,21 +122,21 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
   return (
     <section
       aria-label="TBD decisions"
-      style={{ padding: "16px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>TBD DECISIONS</h3>
-        <p style={{ marginTop: "4px", fontSize: "12px", color: "var(--color-mid-gray)" }}>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>TBD DECISIONS</h3>
+        <p style={{ marginTop: "var(--space-4)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
           All relevant protected TBDs must have an explicit handling decision. Directly scoped TBDs must be preserve_unknown. Project-scoped TBDs may be not_applicable with justification.
         </p>
       </header>
 
-      {validationError ? <p role="alert" style={{ marginTop: "8px" }}>{validationError}</p> : null}
+      {validationError ? <p role="alert" style={{ marginTop: "var(--space-8)" }}>{validationError}</p> : null}
 
       {relevantTbds.length === 0 ? (
-        <p style={{ marginTop: "12px" }}>No protected unknowns for this Scene.</p>
+        <p style={{ marginTop: "var(--space-12)" }}>No protected unknowns for this Scene.</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: "12px 0 0", display: "flex", flexDirection: "column", gap: "12px" }}>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-12) 0 0", display: "flex", flexDirection: "column", gap: "var(--space-12)" }}>
           {relevantTbds.map((tbd) => {
             const isProject = isProjectScoped(tbd);
             const decision = decisions[tbd.id]?.decision ?? null;
@@ -144,19 +144,19 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
             return (
               <li
                 key={tbd.id}
-                style={{ padding: "12px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "6px" }}
+                style={{ padding: "var(--space-12)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)" }}
               >
-                <div style={{ display: "flex", gap: "8px", alignItems: "baseline", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "baseline", flexWrap: "wrap" }}>
                   <strong>{tbd.topic}</strong>
                   <span className="canon-badge">PROTECTED</span>
-                  <span style={{ fontSize: "11px", textTransform: "uppercase", color: "var(--color-mid-gray)" }}>
+                  <span style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", color: "var(--c-muted)" }}>
                     {isProject ? "PROJECT-SCOPED" : `SCOPED TO ${tbd.canonEntityId}`}
                   </span>
-                  {tbd.sectionKey ? <span style={{ fontSize: "11px" }}>section: {tbd.sectionKey}</span> : null}
+                  {tbd.sectionKey ? <span style={{ fontSize: "var(--fs-xs)" }}>section: {tbd.sectionKey}</span> : null}
                 </div>
-                {tbd.note ? <p style={{ marginTop: "4px", fontSize: "13px" }}>{tbd.note}</p> : null}
-                <div style={{ marginTop: "8px", display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                  <label style={{ display: "flex", gap: "6px", alignItems: "center", fontSize: "13px", fontWeight: 500 }}>
+                {tbd.note ? <p style={{ marginTop: "var(--space-4)", fontSize: "var(--fs-md)" }}>{tbd.note}</p> : null}
+                <div style={{ marginTop: "var(--space-8)", display: "flex", gap: "var(--space-12)", alignItems: "center", flexWrap: "wrap" }}>
+                  <label style={{ display: "flex", gap: "var(--space-8)", alignItems: "center", fontSize: "var(--fs-md)", fontWeight: 500 }}>
                     <input
                       type="radio"
                       name={`tbd-decision-${tbd.id}`}
@@ -167,7 +167,7 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
                     />
                     Preserve Unknown
                   </label>
-                  <label style={{ display: "flex", gap: "6px", alignItems: "center", fontSize: "13px", fontWeight: 500, opacity: isProject ? 1 : 0.5 }}>
+                  <label style={{ display: "flex", gap: "var(--space-8)", alignItems: "center", fontSize: "var(--fs-md)", fontWeight: 500, opacity: isProject ? 1 : 0.5 }}>
                     <input
                       type="radio"
                       name={`tbd-decision-${tbd.id}`}
@@ -180,12 +180,12 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
                     Not Applicable
                   </label>
                   {!isProject && decision === "not_applicable" ? (
-                    <span style={{ color: "var(--color-danger)", fontSize: "12px" }}>Must be preserve_unknown for directly scoped TBDs</span>
+                    <span style={{ color: "var(--c-danger)", fontSize: "var(--fs-sm)" }}>Must be preserve_unknown for directly scoped TBDs</span>
                   ) : null}
                 </div>
                 {decision === "not_applicable" ? (
-                  <div style={{ marginTop: "8px" }}>
-                    <label htmlFor={`justification-${tbd.id}`} style={{ fontSize: "12px", fontWeight: 500, color: "var(--color-mid-gray)" }}>
+                  <div style={{ marginTop: "var(--space-8)" }}>
+                    <label htmlFor={`justification-${tbd.id}`} style={{ fontSize: "var(--fs-sm)", fontWeight: 500, color: "var(--c-muted)" }}>
                       Justification (required for not_applicable)
                     </label>
                     <textarea
@@ -197,21 +197,21 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
                       aria-label={`Justification for ${tbd.topic}`}
                       style={{
                         width: "100%",
-                        marginTop: "4px",
-                        padding: "8px 12px",
-                        border: "1px solid var(--color-hairline)",
-                        borderRadius: "6px",
+                        marginTop: "var(--space-4)",
+                        padding: "var(--space-8) var(--space-12)",
+                        border: "1px solid var(--c-hairline)",
+                        borderRadius: "var(--radius-md)",
                         fontFamily: "inherit",
                       }}
                       required={decision === "not_applicable"}
                     />
                     {decision === "not_applicable" && !justification.trim() ? (
-                      <p style={{ color: "var(--color-danger)", fontSize: "12px", marginTop: "4px" }}>Justification is required for not_applicable</p>
+                      <p style={{ color: "var(--c-danger)", fontSize: "var(--fs-sm)", marginTop: "var(--space-4)" }}>Justification is required for not_applicable</p>
                     ) : null}
                   </div>
                 ) : null}
                 {decision ? (
-                  <p style={{ marginTop: "8px", fontSize: "11px", color: "var(--color-mid-gray)", fontFamily: "ui-monospace, monospace" }}>
+                  <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-xs)", color: "var(--c-muted)", fontFamily: "var(--font-mono)" }}>
                     Snapshot: topic &quot;{tbd.topic}&quot; decision {decision} {justification ? `justification: ${justification}` : ""}
                   </p>
                 ) : null}
@@ -220,7 +220,7 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
           })}
         </ul>
       )}
-      <p style={{ marginTop: "8px", fontSize: "12px", color: "var(--color-mid-gray)" }}>
+      <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
         Scene {scene ? `${scene.id} ordinal ${scene.ordinal}` : sceneId} — TBD bindings are immutable snapshots copied at decision time.
       </p>
     </section>

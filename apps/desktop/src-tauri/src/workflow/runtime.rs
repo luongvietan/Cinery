@@ -1,7 +1,6 @@
 use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
-use crate::providers::adapter::GenerationProvider;
 use crate::providers::repository::{
     append_audit_event, create_attempt, next_attempt_number, persist_job, update_artifact_ids,
     update_attempt_status,
@@ -67,6 +66,7 @@ impl WorkflowRuntime {
             "repair_failed_qa" => validate_visual_repair_input(&input)?,
             "create_world_plate" => validate_world_plate_input(&input)?,
             "create_scene_keyframe" => validate_scene_keyframe_input(&input)?,
+            "generate_scene_video" => validate_scene_keyframe_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -338,6 +338,32 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "scene_video_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail.run.prerequisite_report_json.as_deref().ok_or_else(
+                                        || {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        },
+                                    )?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context = crate::workflow::context::resolve_scene_video_context(
+                                &conn,
+                                &project.id,
+                                &detail.run.skill_id,
+                                &detail.run.skill_version,
+                                &detail.run.operation_id,
+                                &input,
+                                report,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
                     };
                     complete_context_step(
@@ -442,6 +468,21 @@ impl WorkflowRuntime {
                                     AppError::WorkflowRunInconsistent(error.to_string())
                                 })?;
                             let request = SceneKeyframeCompiler.compile(
+                                workflow_run_id,
+                                skill,
+                                operation,
+                                &context,
+                            )?;
+                            write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "scene_video_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = crate::workflow::compiler::SceneVideoCompiler.compile(
                                 workflow_run_id,
                                 skill,
                                 operation,
@@ -891,6 +932,7 @@ fn execute_visual_repair_ready(
     let submission = match ProviderService::submit_provider_request(
         &request,
         reference_attachments,
+        Some(project_root),
         None,
         execute_step_id,
         &compiled_hash,
@@ -1095,6 +1137,66 @@ fn execute_visual_repair_ready(
     WorkflowRepository::get_run(conn, project_id, &detail.run.id)
 }
 
+/// Resolves the execution provider and model from the run input. There is no
+/// implicit fallback to a local mock: if the user never selected a service and
+/// no project default exists, the run fails with actionable guidance instead
+/// of silently producing a mock artifact.
+fn resolve_provider_selection(
+    project_root: &Path,
+    input: &Value,
+) -> Result<(String, String), AppError> {
+    let configured_default = ProviderService::configured_default(project_root)?;
+    let provider_id = input
+        .get("providerId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            configured_default
+                .as_ref()
+                .map(|(provider, _)| provider.clone())
+        })
+        .ok_or_else(|| {
+            AppError::ProviderConfiguration(
+                "No AI service is connected. Open AI Services, add a service with its Base URL and API key, then run this step again.".into(),
+            )
+        })?;
+    if provider_id == "dry_run" {
+        // Explicit dry-run selection keeps its local default model.
+        let model_id = input
+            .get("modelId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "dry-run-v1".into());
+        return Ok((provider_id, model_id));
+    }
+    if provider_id == "mock" {
+        let model_id = input
+            .get("modelId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "mock-image-v1".into());
+        return Ok((provider_id, model_id));
+    }
+    let model_id = input
+        .get("modelId")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            configured_default
+                .as_ref()
+                .and_then(|(provider, model)| (provider == &provider_id).then(|| model.clone()))
+        })
+        .or_else(|| {
+            ProviderService::default_model_for(project_root, &provider_id).ok().flatten()
+        })
+        .ok_or_else(|| {
+            AppError::ProviderConfiguration(format!(
+                "No model is selected for {provider_id}. Pick a model in the run form or set the provider's default model."
+            ))
+        })?;
+    Ok((provider_id, model_id))
+}
+
 fn execute_scene_keyframe_ready(
     conn: &mut Connection,
     project_root: &Path,
@@ -1133,52 +1235,12 @@ fn execute_scene_keyframe_ready(
     // Provider capability check before side effects
     let input: Value = serde_json::from_str(&detail.run.input_json)
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
-    let configured_default = ProviderService::configured_default(project_root)?;
-    let provider_id = input
-        .get("providerId")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            configured_default
-                .as_ref()
-                .map(|(provider, _)| provider.clone())
-        })
-        .unwrap_or_else(|| "dry_run".into());
-    let model_id = input
-        .get("modelId")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            configured_default
-                .as_ref()
-                .and_then(|(_, model)| (provider_id != "dry_run").then_some(model.clone()))
-        })
-        .unwrap_or_else(|| {
-            if provider_id == "dry_run" {
-                "dry-run-v1".into()
-            } else {
-                "mock-image-v1".into()
-            }
-        });
+    let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
 
     // Compute required reference count from request (world + looks + sheets + props)
     // Already in request.references; check capability
     {
-        let caps = if provider_id == "openai" {
-            crate::providers::openai::OpenAiImageProvider::new("https://api.openai.com/v1", "dummy")
-                .capabilities()
-        } else {
-            let registry = crate::providers::registry::ProviderRegistry::builtin();
-            match registry.get(&provider_id) {
-                Ok(provider) => provider.capabilities(),
-                Err(_) => {
-                    return Err(AppError::ProviderCapabilityUnsatisfied(format!(
-                        "provider {} is not registered",
-                        provider_id
-                    )))
-                }
-            }
-        };
+        let caps = ProviderService::capabilities_for(project_root, &provider_id)?;
         let ref_count = request.references.len();
         if ref_count > 0 && !caps.supports_reference_image {
             return Err(AppError::ProviderCapabilityUnsatisfied(format!(
@@ -1281,6 +1343,7 @@ fn execute_scene_keyframe_ready(
         )?;
         let submission = match ProviderService::submit_compiled_request(
             &request,
+            Some(project_root),
             execute_step_id,
             &compiled_hash,
             &provider_id,
@@ -1376,6 +1439,7 @@ fn execute_scene_keyframe_ready(
                         .map(|asset| asset.asset_version_id.clone())
                         .collect(),
                     requested_output_count: 1,
+                    media_kind: "image".into(),
                 },
                 &outcome.result,
             )?;
@@ -1542,6 +1606,429 @@ fn execute_scene_keyframe_ready(
     WorkflowRepository::get_run(conn, project_id, &detail.run.id)
 }
 
+fn execute_scene_video_ready(
+    conn: &mut Connection,
+    project_root: &Path,
+    project_id: &str,
+    detail: WorkflowRunDetail,
+    operation: &crate::skills::model::SkillOperation,
+) -> Result<WorkflowRunDetail, AppError> {
+    let execute_index = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "execute" && step.status == "pending")
+        .map(|step| step.step_index)
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("execute step is missing".into()))?;
+    let request_json = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "compile_request")
+        .and_then(|step| step.output_json.clone())
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("compiled request is missing".into()))?;
+    let request: crate::workflow::execution::ExecutionRequest = serde_json::from_str(&request_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let (execute_step_id, complete_step_id) = match (
+        operation.workflow.get(execute_index as usize),
+        operation.workflow.get(execute_index as usize + 1),
+    ) {
+        (
+            Some(crate::workflow::model::WorkflowStepDefinition::Execute { id, .. }),
+            Some(crate::workflow::model::WorkflowStepDefinition::Complete { id: complete_id }),
+        ) => (id.as_str(), complete_id.as_str()),
+        _ => {
+            return Err(AppError::WorkflowRunInconsistent(
+                "scene keyframe execute/complete definitions are missing".into(),
+            ))
+        }
+    };
+    // Provider capability check before side effects
+    let input: Value = serde_json::from_str(&detail.run.input_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
+
+    // Compute required reference count from request (world + looks + sheets + props)
+    // Already in request.references; check capability
+    {
+        let caps = ProviderService::capabilities_for(project_root, &provider_id)?;
+        let ref_count = request.references.len();
+        if ref_count > 0 && !caps.supports_reference_image {
+            return Err(AppError::ProviderCapabilityUnsatisfied(format!(
+                "provider {} does not support reference images (need {} references)",
+                provider_id, ref_count
+            )));
+        }
+        if ref_count > 1 && !caps.supports_multiple_reference_images {
+            return Err(AppError::ProviderCapabilityUnsatisfied(format!(
+                "provider {} does not support multiple references (need {} references)",
+                provider_id, ref_count
+            )));
+        }
+        if let Some(max) = caps.max_reference_images {
+            if (ref_count as u32) > max {
+                return Err(AppError::ProviderCapabilityUnsatisfied(format!(
+                    "provider {} supports at most {} references but scene requires {}",
+                    provider_id, max, ref_count
+                )));
+            }
+        }
+        // Also check via generic supports for model etc.
+        let provider_request =
+            crate::providers::model::ProviderExecutionRequest::from_execution_request(
+                &request.provenance.workflow_run_id,
+                execute_step_id,
+                &compiled_request_id(&request_json),
+                &provider_id,
+                &model_id,
+                &ProviderService::idempotency_key(
+                    &request.provenance.workflow_run_id,
+                    execute_step_id,
+                    1,
+                ),
+                &request,
+            )
+            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+        caps.supports(&provider_request)
+            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+    }
+
+    // Proceed with normal provider execution (reuse generic logic but for shot_keyframe)
+    // Use the same flow as generic execute: start transaction, submit, finish, persist
+    let started_at = Utc::now().to_rfc3339();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    tx.execute(
+        "UPDATE workflow_runs SET status = 'running', updated_at = ?1 WHERE id = ?2",
+        params![started_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    mark_step(&tx, &detail.run.id, execute_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(execute_step_id),
+        None,
+        &started_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_started",
+        Some(execute_step_id),
+        None,
+        &started_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+
+    let result = if provider_id == "dry_run" {
+        DryRunExecutor.execute(
+            &request,
+            &workflow_artifact_dir(project_root, &detail.run.id),
+        )?
+    } else {
+        let compiled_hash = compiled_request_id(&request_json);
+        let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+        let idempotency_key =
+            ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
+        let attempt = create_attempt(
+            conn,
+            &detail.run.id,
+            execute_step_id,
+            attempt_number,
+            &compiled_hash,
+            &provider_id,
+            &model_id,
+            &idempotency_key,
+        )?;
+        append_audit_event(
+            conn,
+            Some(&attempt.id),
+            &detail.run.id,
+            "provider.execution.queued",
+            Some(
+                &serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number}),
+            ),
+        )?;
+        let submission = match ProviderService::submit_compiled_request(
+            &request,
+            Some(project_root),
+            execute_step_id,
+            &compiled_hash,
+            &provider_id,
+            &model_id,
+            attempt_number,
+        ) {
+            Ok(submission) => submission,
+            Err(error) => {
+                let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                let _ = append_audit_event(
+                    conn,
+                    Some(&attempt.id),
+                    &detail.run.id,
+                    "provider.execution.failed",
+                    Some(&serde_json::json!({"error": error.to_string()})),
+                );
+                return Err(error);
+            }
+        };
+        persist_job(
+            conn,
+            &attempt.id,
+            &provider_id,
+            &submission.submission.job.provider_job_id,
+            "submitted",
+        )?;
+        append_audit_event(
+            conn,
+            Some(&attempt.id),
+            &detail.run.id,
+            "provider.execution.submitted",
+            Some(&serde_json::json!({"providerJobId": submission.submission.job.provider_job_id})),
+        )?;
+        let (status, provider_result) = match ProviderService::finish_submission(&submission) {
+            Ok(result) => result,
+            Err(error) => {
+                let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                let _ = append_audit_event(
+                    conn,
+                    Some(&attempt.id),
+                    &detail.run.id,
+                    "provider.execution.failed",
+                    Some(&serde_json::json!({"error": error.to_string()})),
+                );
+                return Err(error);
+            }
+        };
+        let outcome = crate::providers::service::ProviderExecutionOutcome {
+            provider_id: provider_id.clone(),
+            adapter_version: submission.adapter_version,
+            submission: submission.submission,
+            status,
+            result: provider_result,
+        };
+        update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+        let snapshot: crate::workflow::model::WorkflowContextSnapshot = detail
+            .run
+            .context_snapshot_json
+            .as_deref()
+            .ok_or_else(|| AppError::WorkflowRunInconsistent("context snapshot is missing".into()))
+            .and_then(|json| {
+                serde_json::from_str(json)
+                    .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))
+            })?;
+        // For scene keyframe, snapshot.assets is non-empty but we still need to create asset version in keyframe Asset
+        // We'll use generation capture path if assets non-empty, else persist
+        if !snapshot.assets.is_empty() {
+            let compiled_request_hash = compiled_request_id(&request_json);
+            let captured = crate::generation::service::GenerationService::capture_provider_result(
+                project_root,
+                &crate::generation::service::GenerationCaptureInput {
+                    project_id: project_id.into(),
+                    workflow_run_id: detail.run.id.clone(),
+                    workflow_step_key: execute_step_id.into(),
+                    workflow_definition_id: operation.id.clone(),
+                    workflow_version: detail.run.skill_version.clone(),
+                    skill_id: detail.run.skill_id.clone(),
+                    skill_version: detail.run.skill_version.clone(),
+                    compiled_execution_artifact_id: compiled_request_hash.clone(),
+                    compiled_request_sha256: compiled_request_hash,
+                    canon_snapshot_id: (!snapshot.canon.is_empty())
+                        .then(|| format!("canon:{}", detail.run.id)),
+                    canon_snapshot_sha256: (!snapshot.canon.is_empty())
+                        .then(|| sha256_json(&snapshot.canon)),
+                    provider_attempt_id: attempt.id.clone(),
+                    provider_id: provider_id.clone(),
+                    model_id: model_id.clone(),
+                    source_asset_version_ids: snapshot
+                        .assets
+                        .iter()
+                        .map(|asset| asset.asset_version_id.clone())
+                        .collect(),
+                    requested_output_count: 1,
+                    media_kind: "video".into(),
+                },
+                &outcome.result,
+            )?;
+            let artifact_ids = captured
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.id.clone())
+                .collect::<Vec<_>>();
+            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+            append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.completed",
+                Some(
+                    &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
+                ),
+            )?;
+            // Import the video into the scene's durable video asset
+            // (find-or-create: one video asset per scene holds every run).
+            let first_artifact = captured
+                .artifacts
+                .first()
+                .ok_or_else(|| AppError::GenerationArtifactCaptureFailed("no artifact".into()))?;
+            let scene_id = input
+                .get("sceneId")
+                .or_else(|| input.get("scene_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| AppError::WorkflowInputInvalid("sceneId is required".into()))?
+                .to_string();
+            let video_asset_id = match conn
+                .query_row(
+                    "SELECT id FROM assets WHERE project_id = ?1 AND type = 'video' AND owner_entity_id = ?2 ORDER BY created_at ASC, id ASC LIMIT 1",
+                    params![project_id, scene_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(db_error)?
+            {
+                Some(existing) => existing,
+                None => {
+                    let scene_title: String = conn
+                        .query_row(
+                            "SELECT title FROM world_scenes WHERE id = ?1",
+                            params![scene_id],
+                            |row| row.get(0),
+                        )
+                        .unwrap_or_else(|_| "Scene".into());
+                    let asset = crate::assets::service::AssetService::create_asset(
+                        project_root,
+                        "video",
+                        &format!("{scene_title} — Video"),
+                        Some(scene_id.clone()),
+                    )?;
+                    asset.id
+                }
+            };
+            let source_path = project_root.join(&first_artifact.storage_path);
+            let imported = match crate::assets::service::AssetService::import_media_version(
+                project_root,
+                &video_asset_id,
+                &source_path,
+                None,
+            ) {
+                Ok(v) => v,
+                Err(AppError::DuplicateAssetVersion) => {
+                    let hash = first_artifact.sha256.clone();
+                    crate::assets::service::AssetService::get_asset_with_versions(
+                        project_root,
+                        &video_asset_id,
+                    )?
+                    .versions
+                    .into_iter()
+                    .find(|v| v.sha256 == hash)
+                    .ok_or_else(|| {
+                        AppError::GenerationArtifactCaptureFailed("duplicate not found".into())
+                    })?
+                }
+                Err(e) => return Err(e),
+            };
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(&imported.file_path),
+                result_set_id: Some(captured.result_set.id),
+                artifact_ids,
+                request,
+            }
+        } else {
+            let asset_type = request.expected_output.asset_type.as_str();
+            let owner_entity_id = request
+                .expected_output
+                .owner_entity_input_ref
+                .as_deref()
+                .and_then(|reference| input.get(reference))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let version = crate::workflow::ingestion::persist_provider_result(
+                project_root,
+                &detail.run.id,
+                &outcome.result,
+                asset_type,
+                owner_entity_id,
+            )?;
+            append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.completed",
+                Some(&serde_json::json!({"artifactPath": version.file_path})),
+            )?;
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(version.file_path),
+                result_set_id: None,
+                artifact_ids: Vec::new(),
+                request,
+            }
+        }
+    };
+    let result_json =
+        serde_json::to_string(&result).map_err(|error| AppError::Database(error.to_string()))?;
+    let complete_index = execute_index + 1;
+    let completed_at = Utc::now().to_rfc3339();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    mark_step(
+        &tx,
+        &detail.run.id,
+        execute_index,
+        "completed",
+        Some(&result_json),
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_completed",
+        Some(execute_step_id),
+        None,
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(execute_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "completed", None)?;
+    tx.execute("UPDATE workflow_runs SET status = 'completed', current_step_index = ?1, completed_at = ?2, updated_at = ?2 WHERE id = ?3", params![complete_index + 1, completed_at, detail.run.id]).map_err(db_error)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "run_completed",
+        Some(complete_step_id),
+        None,
+        &completed_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+    WorkflowRepository::get_run(conn, project_id, &detail.run.id)
+}
+
 fn execute_ready(
     conn: &mut Connection,
     project_root: &Path,
@@ -1557,6 +2044,9 @@ fn execute_ready(
     }
     if operation.id == "scene.create_keyframe" {
         return execute_scene_keyframe_ready(conn, project_root, project_id, detail, operation);
+    }
+    if operation.id == "scene.generate_video" {
+        return execute_scene_video_ready(conn, project_root, project_id, detail, operation);
     }
     let execute_index = detail
         .steps
@@ -1623,33 +2113,7 @@ fn execute_ready(
     tx.commit().map_err(db_error)?;
     let input: Value = serde_json::from_str(&detail.run.input_json)
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
-    let configured_default = ProviderService::configured_default(project_root)?;
-    let provider_id = input
-        .get("providerId")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            configured_default
-                .as_ref()
-                .map(|(provider, _)| provider.clone())
-        })
-        .unwrap_or_else(|| "dry_run".into());
-    let model_id = input
-        .get("modelId")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            configured_default
-                .as_ref()
-                .and_then(|(_, model)| (provider_id != "dry_run").then_some(model.clone()))
-        })
-        .unwrap_or_else(|| {
-            if provider_id == "dry_run" {
-                "dry-run-v1".into()
-            } else {
-                "mock-image-v1".into()
-            }
-        });
+    let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
     let result = if provider_id == "dry_run" {
         DryRunExecutor.execute(
             &request,
@@ -1699,6 +2163,7 @@ fn execute_ready(
         let submission = match ProviderService::submit_provider_request(
             &request,
             reference_attachments,
+            Some(project_root),
             None,
             execute_step_id,
             &compiled_hash,
@@ -1795,6 +2260,7 @@ fn execute_ready(
                         .map(|asset| asset.asset_version_id.clone())
                         .collect(),
                     requested_output_count: 4,
+                    media_kind: "image".into(),
                 },
                 &outcome.result,
             )?;
@@ -2661,7 +3127,12 @@ mod tests {
         WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
         WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
         let err = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap_err();
-        assert!(matches!(err, AppError::ProviderExecution(_)));
+        // An unknown provider fails as a configuration error now that
+        // execution resolves user-defined services instead of a fixed registry.
+        assert!(matches!(
+            err,
+            AppError::ProviderExecution(_) | AppError::ProviderConfiguration(_)
+        ));
         let conn = open_project(&root).unwrap();
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0))

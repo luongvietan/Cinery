@@ -42,7 +42,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  font-size: 0.875rem;
+  font-size: var(--fs-base);
   background: var(--c-panel-soft);
   border: 0;
   box-shadow: var(--sh-chip);
@@ -66,7 +66,7 @@
 
 .checkStatus {
   font-weight: 600;
-  font-size: 0.75rem;
+  font-size: var(--fs-sm);
   text-transform: uppercase;
   min-width: 50px;
 }
@@ -89,7 +89,7 @@
 }
 
 .checkType {
-  font-size: 0.75rem;
+  font-size: var(--fs-sm);
   color: var(--c-muted);
 }
 

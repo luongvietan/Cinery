@@ -91,8 +91,16 @@ export function testCustomProviderConnection(projectRootPath: string, providerId
   return invokeCommand("test_custom_provider_connection", { projectRootPath, providerId });
 }
 
-export function getProviderCapabilities(providerId: string): Promise<ProviderCapabilities> {
-  return invokeCommand("get_provider_capabilities", { providerId });
+export function getProviderCapabilities(projectRootPath: string, providerId: string): Promise<ProviderCapabilities> {
+  return invokeCommand("get_provider_capabilities", { projectRootPath, providerId });
+}
+
+export function suggestVisualSpec(
+  projectRootPath: string,
+  characterName: string,
+  notes: string,
+): Promise<Record<string, string>> {
+  return invokeCommand("suggest_visual_spec", { projectRootPath, characterName, notes });
 }
 
 export function getProviderConfigurationStatus(projectRootPath: string, providerId: string): Promise<ProviderConfigurationStatus> {

@@ -53,6 +53,10 @@ function versionPreviewSrc(
   );
 }
 
+function isVideoVersion(version: AssetVersion): boolean {
+  return version.mimeType.startsWith("video/");
+}
+
 export function AssetInspector({
   projectRootPath,
   assetId,
@@ -234,11 +238,22 @@ export function AssetInspector({
         >
           <h3>Canonical Version</h3>
           <article className="asset-canonical-card">
-            <img
-              className="asset-canonical-preview"
-              src={versionPreviewSrc(projectRootPath, canonicalVersion)}
-              alt={`${asset.label} ${formatVersionNumber(canonicalVersion.versionNumber)} preview`}
-            />
+            {isVideoVersion(canonicalVersion) ? (
+              <video
+                className="asset-canonical-preview asset-video-preview"
+                src={versionPreviewSrc(projectRootPath, canonicalVersion)}
+                controls
+                preload="metadata"
+                playsInline
+                aria-label={`${asset.label} ${formatVersionNumber(canonicalVersion.versionNumber)} video preview`}
+              />
+            ) : (
+              <img
+                className="asset-canonical-preview"
+                src={versionPreviewSrc(projectRootPath, canonicalVersion)}
+                alt={`${asset.label} ${formatVersionNumber(canonicalVersion.versionNumber)} preview`}
+              />
+            )}
             <div className="asset-canonical-meta">
               <p className="asset-version-label">
                 {formatVersionNumber(canonicalVersion.versionNumber)}
@@ -250,10 +265,12 @@ export function AssetInspector({
                 Imported: {formatImportedDate(canonicalVersion.createdAt)}
               </p>
               <p>
-                {formatImageDimensions(
-                  canonicalVersion.width,
-                  canonicalVersion.height,
-                )}{" "}
+                {isVideoVersion(canonicalVersion)
+                  ? "Video"
+                  : formatImageDimensions(
+                      canonicalVersion.width,
+                      canonicalVersion.height,
+                    )}{" "}
                 · {formatImageFormat(canonicalVersion.mimeType)}
               </p>
               <p>{formatByteSize(canonicalVersion.byteSize)}</p>
@@ -266,7 +283,8 @@ export function AssetInspector({
         <h3>Versions</h3>
         {sortedVersions.length === 0 ? (
           <p className="asset-empty-state">
-            No versions yet. Import an image to create the first version.
+            No versions yet. Import an image or video to create the first
+            version.
           </p>
         ) : (
           <ul className="asset-version-list">
@@ -293,10 +311,27 @@ export function AssetInspector({
                     ) : null}
                   </div>
                   <div className="asset-version-card-body">
-                    <img
-                      src={versionThumbnailSrc(projectRootPath, version)}
-                      alt={`${asset.label} ${formatVersionNumber(version.versionNumber)} thumbnail`}
-                    />
+                    {isVideoVersion(version) ? (
+                      <video
+                        className="asset-video-thumb"
+                        src={versionPreviewSrc(projectRootPath, version)}
+                        controls
+                        preload="metadata"
+                        playsInline
+                        muted
+                        aria-label={`${asset.label} ${formatVersionNumber(version.versionNumber)} video preview`}
+                      />
+                    ) : version.thumbnailPath ? (
+                      <img
+                        src={versionThumbnailSrc(projectRootPath, version)}
+                        alt={`${asset.label} ${formatVersionNumber(version.versionNumber)} thumbnail`}
+                      />
+                    ) : (
+                      <img
+                        src={versionPreviewSrc(projectRootPath, version)}
+                        alt={`${asset.label} ${formatVersionNumber(version.versionNumber)} preview`}
+                      />
+                    )}
                     <div className="asset-version-details">
                       <p>{formatStatusLabel(version.status)}</p>
                       {version.origin === "generated" ? (
@@ -306,8 +341,10 @@ export function AssetInspector({
                       ) : null}
                       <p>{version.originalFilename}</p>
                       <p>
-                        {formatImageDimensions(version.width, version.height)} ·{" "}
-                        {formatImageFormat(version.mimeType)} ·{" "}
+                        {isVideoVersion(version)
+                          ? "Video"
+                          : formatImageDimensions(version.width, version.height)}{" "}
+                        · {formatImageFormat(version.mimeType)} ·{" "}
                         {formatByteSize(version.byteSize)}
                       </p>
                       <p>Imported: {formatImportedDate(version.createdAt)}</p>

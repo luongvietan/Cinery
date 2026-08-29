@@ -100,7 +100,7 @@ export function SceneEditor({
           type="button"
           className="back-button"
           onClick={onBack}
-          style={{ marginBottom: "12px" }}
+          style={{ marginBottom: "var(--space-12)" }}
         >
           ← Scenes
         </button>
@@ -125,7 +125,7 @@ export function SceneEditor({
           maxWidth: "100%",
           display: "flex",
           flexDirection: "column",
-          gap: "12px",
+          gap: "var(--space-12)",
         }}
       >
         <div
@@ -133,7 +133,7 @@ export function SceneEditor({
           style={{
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-            gap: "16px",
+            gap: "var(--space-16)",
           }}
         >
           <label htmlFor="scene-title">
@@ -158,15 +158,15 @@ export function SceneEditor({
                 width: "100%",
                 minHeight: "90px",
                 fontFamily: "inherit",
-                padding: "8px 12px",
-                border: "1px solid var(--color-hairline)",
-                borderRadius: "6px",
-                background: "var(--surface-input)",
+                padding: "var(--space-8) var(--space-12)",
+                border: "1px solid var(--c-hairline)",
+                borderRadius: "var(--radius-md)",
+                background: "var(--c-btn-bg)",
               }}
             />
           </label>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", gap: "var(--space-8)" }}>
           <button type="submit" disabled={saving}>
             {saving ? "Saving…" : "Save Scene"}
           </button>
@@ -185,7 +185,7 @@ export function SceneEditor({
             Reset
           </button>
         </div>
-        <p style={{ fontSize: "12px", color: "var(--color-mid-gray)" }}>
+        <p style={{ fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
           Title is required. Summary may be empty during editing but readiness
           requires both.
         </p>

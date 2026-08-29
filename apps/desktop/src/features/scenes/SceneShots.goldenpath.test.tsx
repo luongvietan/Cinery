@@ -163,7 +163,7 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
         "scene-builder",
         "1.0.0",
         "scene.create_keyframe",
-        { sceneId: "scene-001", providerId: "mock", modelId: "mock-image-v1" },
+        { sceneId: "scene-001" },
       ),
     );
     // The run view renders the completed keyframe run for review.

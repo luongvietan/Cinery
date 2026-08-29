@@ -2,6 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { type FormEvent, useEffect, useState } from "react";
 import type { AssetSummary, AssetType } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
+import { openPanel } from "../../lib/panelNavigation";
 import { createAsset, listAssets } from "./api";
 import {
   describeAssetListStatus,
@@ -147,7 +148,11 @@ export function AssetList({
       ) : null}
 
       {loaded && !error && assets.length === 0 ? (
-        <p>No assets yet</p>
+        <div className="empty-state" role="status">
+          <p>No assets yet</p>
+          <p>Approved faces, outfits, and world backdrops appear here once you generate them in Production.</p>
+          <button type="button" onClick={() => openPanel("production")}>Go to Production</button>
+        </div>
       ) : (
         <ul className="asset-sidebar-list">
           {assets.map((asset) => {

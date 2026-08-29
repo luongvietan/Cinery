@@ -53,6 +53,7 @@ fn capture(
             model_id: "mock-image-v1".into(),
             source_asset_version_ids: vec!["face-v002".into()],
             requested_output_count: 1,
+            media_kind: "image".into(),
         },
         &ProviderResult {
             outputs: vec![ProviderOutput {

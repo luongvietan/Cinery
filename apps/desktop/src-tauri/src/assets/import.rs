@@ -57,6 +57,25 @@ pub fn inspect_image(source: &Path) -> Result<InspectedImage, AppError> {
     })
 }
 
+/// Inspects a candidate video file before it is imported as an asset
+/// version. Videos are validated by container signature only (the "ftyp"
+/// brand box of an ISO-BMFF/MP4 file); frames are never decoded here.
+pub fn inspect_video(source: &Path) -> Result<InspectedImage, AppError> {
+    let bytes = fs::read(source).map_err(|e| AppError::FileSystem(e.to_string()))?;
+    if bytes.len() <= 12 || &bytes[4..8] != b"ftyp" {
+        return Err(AppError::UnsupportedImageFormat);
+    }
+    let sha256 = hex_sha256(&bytes);
+    Ok(InspectedImage {
+        mime_type: "video/mp4",
+        extension: "mp4",
+        byte_size: bytes.len() as u64,
+        width: 0,
+        height: 0,
+        sha256,
+    })
+}
+
 fn hex_sha256(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);

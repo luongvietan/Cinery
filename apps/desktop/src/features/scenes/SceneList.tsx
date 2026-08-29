@@ -62,7 +62,7 @@ export function SceneList({
     return (
       <div className="scene-list-empty" aria-label="Scenes">
         <p>No scenes yet</p>
-        <p>Create a Scene to begin assembling your visual narrative.</p>
+        <p>A scene puts your characters in a world with a shot to generate. Create one to begin.</p>
       </div>
     );
   }
@@ -91,8 +91,8 @@ export function SceneList({
                     display: "block",
                     fontWeight: 600,
                     textTransform: "uppercase",
-                    fontSize: "12px",
-                    color: "var(--color-mid-gray)",
+                    fontSize: "var(--fs-sm)",
+                    color: "var(--c-muted)",
                   }}
                 >
                   {ordinalLabel}
@@ -113,8 +113,8 @@ export function SceneList({
                   }
                   style={{
                     display: "inline-block",
-                    marginTop: "4px",
-                    fontSize: "11px",
+                    marginTop: "var(--space-4)",
+                    fontSize: "var(--fs-xs)",
                   }}
                 >
                   {readiness}

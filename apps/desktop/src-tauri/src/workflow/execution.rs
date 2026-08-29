@@ -105,6 +105,7 @@ pub enum ExecutionTask {
     CharacterSheet,
     WorldPlate,
     ShotKeyframe,
+    SceneVideo,
     VisualRepair,
 }
 
@@ -119,6 +120,7 @@ pub enum ExecutionReferenceType {
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionMediaType {
     Image,
+    Video,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

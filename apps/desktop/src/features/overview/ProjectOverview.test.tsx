@@ -34,10 +34,10 @@ describe("ProjectOverview", () => {
     const onNavigate = vi.fn();
     render(<ProjectOverview projectRootPath="/projects/red-door" onNavigate={onNavigate} />);
 
-    expect(await screen.findByRole("heading", { name: "Production Progress" })).toBeInTheDocument();
-    expect(screen.getByText("Create the story foundation before production.")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your path to the first shot" })).toBeInTheDocument();
+    expect(screen.getByText("Add who is in your film and what happens. Everything else builds on this.")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Continue with Story Canon" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open Story" }));
 
     expect(onNavigate).toHaveBeenCalledWith({
       id: "story_canon",
@@ -62,8 +62,8 @@ describe("ProjectOverview", () => {
 
     render(<ProjectOverview projectRootPath="/projects/red-door" onNavigate={vi.fn()} />);
 
-    expect(await screen.findByText("Blocked by protected canon TBD")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue with Resolve protected TBD" })).toBeInTheDocument();
+    expect(await screen.findByText("One open question in your story needs an answer before the next step can run.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Resolve it" })).toBeInTheDocument();
   });
 
   it("uses each readiness card action rather than discarding its scope metadata", async () => {
@@ -90,7 +90,7 @@ describe("ProjectOverview", () => {
     });
     render(<ProjectOverview projectRootPath="/projects/red-door" onNavigate={onNavigate} />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Open Cinema Compilation" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Compile" }));
 
     expect(onNavigate).toHaveBeenCalledWith({
       id: "cinema_compilation",

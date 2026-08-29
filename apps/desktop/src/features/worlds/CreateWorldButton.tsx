@@ -184,8 +184,8 @@ export function CreateWorldButton({
             <div
               style={{
                 display: "flex",
-                gap: "8px",
-                marginTop: "16px",
+                gap: "var(--space-8)",
+                marginTop: "var(--space-16)",
               }}
             >
               <button

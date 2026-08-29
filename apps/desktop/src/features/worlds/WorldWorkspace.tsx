@@ -43,7 +43,7 @@ export function WorldWorkspace({
         />
       </div>
       {error ? <p role="alert">{error}</p> : null}
-      <div className="canon-entity-layout" style={{ marginTop: "16px" }}>
+      <div className="canon-entity-layout" style={{ marginTop: "var(--space-16)" }}>
         <aside aria-label="Worlds list">
           <WorldList
             projectRootPath={projectRootPath}

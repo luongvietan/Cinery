@@ -12,7 +12,7 @@ interface CreateCharacterSheetFormProps {
 
 export function CreateCharacterSheetForm({ projectRootPath, characters, pending, onCancel, onSubmit }: CreateCharacterSheetFormProps) {
   const [characterEntityId, setCharacterEntityId] = useState(characters[0]?.id ?? "");
-  const [providerSelection, setProviderSelection] = useState({ providerId: "mock", modelId: "mock-image-v1" });
+  const [providerSelection, setProviderSelection] = useState({ providerId: "", modelId: "" });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

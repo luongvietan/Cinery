@@ -28,6 +28,10 @@ impl ProviderRegistry {
             .insert(provider.id().into(), Arc::new(provider));
     }
 
+    pub fn register_arc(&mut self, provider: Arc<dyn GenerationProvider>) {
+        self.providers.insert(provider.id().into(), provider);
+    }
+
     pub fn get(&self, provider_id: &str) -> Result<Arc<dyn GenerationProvider>, ProviderError> {
         self.providers.get(provider_id).cloned().ok_or_else(|| {
             ProviderError::new(

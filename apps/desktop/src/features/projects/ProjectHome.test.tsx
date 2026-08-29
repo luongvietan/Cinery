@@ -22,10 +22,10 @@ describe("ProjectHome", () => {
   it("shows create and open actions", async () => {
     render(<ProjectHome onProjectOpened={vi.fn()} />);
     expect(
-      screen.getByRole("button", { name: "Create Project" }),
+      screen.getByRole("button", { name: "Create a project" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Open Project" }),
+      screen.getByRole("button", { name: "Open an existing project" }),
     ).toBeInTheDocument();
   });
 
@@ -88,14 +88,13 @@ describe("ProjectHome", () => {
     const user = userEvent.setup();
     render(<ProjectHome onProjectOpened={onProjectOpened} />);
 
-    await user.click(screen.getByRole("button", { name: "Create Project" }));
+    await user.click(screen.getByRole("button", { name: "Create a project" }));
     const nameInput = await screen.findByLabelText(/project name/i);
     await user.type(nameInput, "New Film");
-    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     await waitFor(() => {
       expect(createProject).toHaveBeenCalledWith({
-        rootPath: "/projects/new-film",
         name: "New Film",
       });
     });
@@ -111,7 +110,7 @@ describe("ProjectHome", () => {
     render(<ProjectHome onProjectOpened={vi.fn()} />);
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Project" }),
+      screen.getByRole("button", { name: "Open an existing project" }),
     );
 
     await waitFor(() => {
@@ -130,7 +129,7 @@ describe("ProjectHome", () => {
 
     render(<ProjectHome onProjectOpened={vi.fn()} />);
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Project" }),
+      screen.getByRole("button", { name: "Open an existing project" }),
     );
 
     expect(
@@ -149,12 +148,12 @@ describe("ProjectHome", () => {
 
     render(<ProjectHome onProjectOpened={vi.fn()} />);
     await userEvent.click(
-      screen.getByRole("button", { name: "Open Project" }),
+      screen.getByRole("button", { name: "Open an existing project" }),
     );
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Open Project" }),
+        screen.getByRole("button", { name: "Open an existing project" }),
       ).toBeDisabled();
     });
 
@@ -169,7 +168,7 @@ describe("ProjectHome", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("button", { name: "Open Project" }),
+        screen.getByRole("button", { name: "Open an existing project" }),
       ).not.toBeDisabled();
     });
   });
@@ -187,10 +186,10 @@ describe("ProjectHome", () => {
     const user = userEvent.setup();
     render(<ProjectHome onProjectOpened={onProjectOpened} />);
 
-    await user.click(screen.getByRole("button", { name: "Create Project" }));
+    await user.click(screen.getByRole("button", { name: "Create a project" }));
     const nameInput = await screen.findByLabelText(/project name/i);
     await user.type(nameInput, "New Film");
-    await user.click(screen.getByRole("button", { name: "Create" }));
+    await user.click(screen.getByRole("button", { name: "Create project" }));
 
     const cancelButton = screen.getByRole("button", { name: "Cancel" });
     await waitFor(() => {

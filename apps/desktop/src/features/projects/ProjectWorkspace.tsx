@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { OverviewAction, ProjectSummary } from "@cinematic/domain";
+import { PANEL_NAVIGATION_EVENT } from "../../lib/panelNavigation";
+import type { PanelView } from "./panelView";
 import { BackButton } from "../../components/BackButton";
 import { GooeyNav, GooeyNavItem } from "../../components/GooeyNav";
 import { AssetInspector } from "../assets/AssetInspector";
@@ -18,13 +20,23 @@ interface ProjectWorkspaceProps {
   onCloseProject: () => void;
 }
 
-type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "worlds" | "scenes" | "providers" | "diagnostics";
-
 export function ProjectWorkspace({
   project,
   onCloseProject,
 }: ProjectWorkspaceProps) {
   const [panelView, setPanelView] = useState<PanelView>("overview");
+
+  useEffect(() => {
+    function handlePanelNavigation(event: Event) {
+      const detail = (event as CustomEvent<PanelView>).detail;
+      if (typeof detail === "string" && detail) {
+        setPanelView(detail as PanelView);
+        setSelectedAssetId(null);
+      }
+    }
+    window.addEventListener(PANEL_NAVIGATION_EVENT, handlePanelNavigation);
+    return () => window.removeEventListener(PANEL_NAVIGATION_EVENT, handlePanelNavigation);
+  }, []);
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [assetRefreshKey, setAssetRefreshKey] = useState(0);
   const [overviewAction, setOverviewAction] = useState<OverviewAction | null>(null);
@@ -52,7 +64,7 @@ export function ProjectWorkspace({
     { view: "production", label: "Production" },
     { view: "worlds", label: "Worlds" },
     { view: "scenes", label: "Scenes" },
-    { view: "providers", label: "Providers" },
+    { view: "providers", label: "AI Services" },
     { view: "diagnostics", label: "Diagnostics" },
   ];
 

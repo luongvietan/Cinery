@@ -193,10 +193,10 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
     try {
       // Ensure the scene's stable keyframe asset exists before generating.
       await ensureSceneKeyframeAsset(projectRootPath, sceneId);
+      // No provider is hardcoded: the backend uses the project's configured
+      // default AI service, or fails with guidance if none is connected.
       const created = await createWorkflowRun(projectRootPath, "scene-builder", "1.0.0", "scene.create_keyframe", {
         sceneId,
-        providerId: "mock",
-        modelId: "mock-image-v1",
       });
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
       setKeyframeRun({ shotId, detail: waiting });
@@ -248,12 +248,12 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
   return (
     <section
       aria-label="Scene shots"
-      style={{ padding: "16px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "12px" }}>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--space-12)" }}>
         <div>
-          <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>SHOTS</h3>
-          <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--color-mid-gray)" }}>
+          <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>SHOTS</h3>
+          <p style={{ margin: "var(--space-4) 0 0", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
             Ordered shot list. Each shot can pin one exact keyframe version.
           </p>
         </div>
@@ -266,12 +266,12 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
       {actionError ? <p role="alert">{actionError}</p> : null}
 
       {adding ? (
-        <div style={{ display: "grid", gap: "8px", margin: "12px 0", padding: "12px", border: "1px solid var(--color-hairline)", borderRadius: "8px" }}>
+        <div style={{ display: "grid", gap: "var(--space-8)", margin: "var(--space-12) 0", padding: "var(--space-12)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)" }}>
           <label htmlFor="new-shot-intent">
             Intent (required)
             <input id="new-shot-intent" value={intent} onChange={(event) => setIntent(event.target.value)} placeholder="e.g. Establish the ops room" />
           </label>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
             <label htmlFor="new-shot-duration">
               Duration (s)
               <input id="new-shot-duration" type="number" min="0.5" max="30" step="0.5" value={duration} onChange={(event) => setDuration(event.target.value)} />
@@ -285,7 +285,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
               <input id="new-shot-camera" value={camera} onChange={(event) => setCamera(event.target.value)} placeholder="e.g. wide" />
             </label>
           </div>
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ display: "flex", gap: "var(--space-8)" }}>
             <button type="button" onClick={() => void handleAdd()} disabled={pending || !intent.trim()}>
               {pending ? "Adding…" : "Create Shot"}
             </button>
@@ -301,16 +301,16 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
       ) : shots.length === 0 ? (
         <p>No shots yet. Add the first shot to make this scene compilable.</p>
       ) : (
-        <ol style={{ margin: "12px 0 0", paddingLeft: "20px", display: "grid", gap: "8px" }}>
+        <ol style={{ margin: "var(--space-12) 0 0", paddingLeft: "var(--space-20)", display: "grid", gap: "var(--space-8)" }}>
           {shots.map((shot, index) => (
-            <li key={shot.id} style={{ borderBottom: "1px solid var(--color-hairline)", paddingBottom: "8px" }}>
+            <li key={shot.id} style={{ borderBottom: "1px solid var(--c-hairline)", paddingBottom: "var(--space-8)" }}>
               {editingId === shot.id ? (
-                <div style={{ display: "grid", gap: "8px" }}>
+                <div style={{ display: "grid", gap: "var(--space-8)" }}>
                   <label htmlFor={`shot-intent-${shot.id}`}>
                     Intent
                     <input id={`shot-intent-${shot.id}`} value={editIntent} onChange={(event) => setEditIntent(event.target.value)} />
                   </label>
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
                     <label htmlFor={`shot-duration-${shot.id}`}>
                       Duration (s)
                       <input id={`shot-duration-${shot.id}`} type="number" min="0.5" max="30" step="0.5" value={editDuration} onChange={(event) => setEditDuration(event.target.value)} />
@@ -324,7 +324,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
                       <input id={`shot-camera-${shot.id}`} value={editCamera} onChange={(event) => setEditCamera(event.target.value)} />
                     </label>
                   </div>
-                  <div style={{ display: "flex", gap: "8px" }}>
+                  <div style={{ display: "flex", gap: "var(--space-8)" }}>
                     <button type="button" onClick={() => void handleSaveEdit(shot.id)} disabled={pending}>
                       Save
                     </button>
@@ -334,22 +334,22 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
                   </div>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "baseline" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
+                  <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap", alignItems: "baseline" }}>
                     <strong>
                       Shot {String(index + 1).padStart(2, "0")}
                     </strong>
                     <span>{shot.intent}</span>
-                    <span style={{ color: "var(--color-mid-gray)" }}>{shot.durationSeconds}s</span>
-                    {shot.camera ? <span style={{ color: "var(--color-mid-gray)" }}>· {shot.camera}</span> : null}
+                    <span style={{ color: "var(--c-muted)" }}>{shot.durationSeconds}s</span>
+                    {shot.camera ? <span style={{ color: "var(--c-muted)" }}>· {shot.camera}</span> : null}
                     {shot.keyframeAssetVersionId ? (
                       <span className="asset-version-badge asset-version-badge--canonical">KEYFRAME PINNED</span>
                     ) : (
-                      <span style={{ color: "var(--color-mid-gray)", fontSize: "12px" }}>no keyframe</span>
+                      <span style={{ color: "var(--c-muted)", fontSize: "var(--fs-sm)" }}>no keyframe</span>
                     )}
                   </div>
-                  {shot.action ? <span style={{ fontSize: "13px", color: "var(--color-mid-gray)" }}>{shot.action}</span> : null}
-                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {shot.action ? <span style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>{shot.action}</span> : null}
+                  <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
                     <button type="button" className="asset-secondary-button" onClick={() => beginEdit(shot)} disabled={pending}>
                       Edit
                     </button>
@@ -381,14 +381,14 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
       )}
 
       {keyframeRun ? (
-        <div style={{ marginTop: "16px" }}>
+        <div style={{ marginTop: "var(--space-16)" }}>
           <WorkflowRunView
             projectRootPath={projectRootPath}
             detail={keyframeRun.detail}
             onChange={(next) => void handleRunChange(next)}
           />
           {keyframeRun.detail.run.status === "completed" ? (
-            <p style={{ fontSize: "13px", color: "var(--color-mid-gray)" }}>
+            <p style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
               The generated candidate was imported into this scene&apos;s keyframe asset. Pinning promotes it to the
               canonical version and binds the exact immutable version to the shot.
             </p>

@@ -45,7 +45,10 @@ fn face_lock_input(root: &std::path::Path) -> serde_json::Value {
             "nose": "narrow", "lips": "neutral", "skin": "olive",
             "hair": "black shoulder-length", "build": "athletic", "expression": "neutral"
         },
-        "baselineWardrobe": "charcoal crew neck"
+        "baselineWardrobe": "charcoal crew neck",
+        // Dry-run must now be explicit; execution no longer falls back to it.
+        "providerId": "dry_run",
+        "modelId": "dry-run-v1"
     })
 }
 

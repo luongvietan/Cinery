@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
 import { describeError } from "../../lib/errors";
+import { ProviderModelFields } from "../providers/ProviderModelFields";
+import { WorkflowRunView } from "../workflows/WorkflowRunView";
+import {
+  advanceWorkflowRun,
+  createWorkflowRun,
+} from "../workflows/api";
+import type { WorkflowRunDetail } from "@cinematic/domain";
 import {
   compileCinema,
   getCompileReadiness,
@@ -27,6 +34,9 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
   const [compiling, setCompiling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastCompilation, setLastCompilation] = useState<CinemaCompilation | null>(null);
+  const [videoSelection, setVideoSelection] = useState({ providerId: "", modelId: "" });
+  const [generatingVideo, setGeneratingVideo] = useState(false);
+  const [videoRun, setVideoRun] = useState<WorkflowRunDetail | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,6 +64,36 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
     };
   }, [projectRootPath, sceneId]);
 
+  async function handleGenerateVideo() {
+    if (!videoSelection.providerId || !videoSelection.modelId) {
+      setError("Connect an AI service before generating video.");
+      return;
+    }
+    setGeneratingVideo(true);
+    setError(null);
+    try {
+      // First run goes to the approval step; the run view below takes over.
+      const created = await createWorkflowRun(
+        projectRootPath,
+        "scene-builder",
+        "1.0.0",
+        "scene.generate_video",
+        {
+          sceneId,
+          providerId: videoSelection.providerId,
+          modelId: videoSelection.modelId,
+        },
+      );
+      const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
+      setVideoRun(waiting);
+      onChanged?.();
+    } catch (caught: unknown) {
+      setError(describeError(caught));
+    } finally {
+      setGeneratingVideo(false);
+    }
+  }
+
   async function handleCompile() {
     const seconds = Number(totalDuration);
     if (!Number.isFinite(seconds) || seconds < 1 || seconds > 120) {
@@ -80,11 +120,11 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
   return (
     <section
       aria-label="Scene compile"
-      style={{ padding: "16px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>COMPILE / EXPORT</h3>
-        <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--color-mid-gray)" }}>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>COMPILE / EXPORT</h3>
+        <p style={{ margin: "var(--space-4) 0 0", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
           Compile the scene into a deterministic provider-neutral production prompt.
         </p>
       </header>
@@ -92,9 +132,9 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       {error ? <p role="alert">{error}</p> : null}
 
       {readiness && !readiness.ready ? (
-        <div role="status" style={{ margin: "12px 0" }}>
-          <p style={{ margin: "0 0 4px", fontWeight: 600 }}>Not ready to compile:</p>
-          <ul style={{ margin: 0, paddingLeft: "20px" }}>
+        <div role="status" style={{ margin: "var(--space-12) 0" }}>
+          <p style={{ margin: "0 0 var(--space-4)", fontWeight: 600 }}>Not ready to compile:</p>
+          <ul style={{ margin: 0, paddingLeft: "var(--space-20)" }}>
             {readiness.blockers.map((blocker) => (
               <li key={`${blocker.code}-${blocker.shotId ?? blocker.entityId ?? "scene"}`}>{blocker.message}</li>
             ))}
@@ -102,7 +142,7 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
         </div>
       ) : null}
 
-      <div style={{ display: "flex", gap: "8px", alignItems: "end", flexWrap: "wrap", marginTop: "12px" }}>
+      <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "end", flexWrap: "wrap", marginTop: "var(--space-12)" }}>
         <label htmlFor="compile-duration">
           Total runtime (s)
           <input
@@ -126,17 +166,58 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       </div>
 
       {lastCompilation ? (
-        <div style={{ marginTop: "12px", fontSize: "13px" }}>
-          <p style={{ margin: "0 0 4px", fontWeight: 600 }}>Latest compilation</p>
+        <div style={{ marginTop: "var(--space-12)", fontSize: "var(--fs-md)" }}>
+          <p style={{ margin: "0 0 var(--space-4)", fontWeight: 600 }}>Latest compilation</p>
           <p style={{ margin: 0 }}>Export: {lastCompilation.exportPath}</p>
           <p style={{ margin: 0 }}>SHA-256: {lastCompilation.exportSha256}</p>
         </div>
       ) : null}
 
       {compilations.length > 0 ? (
-        <div style={{ marginTop: "12px" }}>
-          <h4 style={{ margin: "0 0 4px" }}>Compilation history</h4>
-          <ul style={{ margin: 0, paddingLeft: "20px", fontSize: "13px" }}>
+        <div className="scene-video-generate" style={{ marginTop: "var(--space-16)", paddingTop: "var(--space-12)", borderTop: "1px solid var(--c-hairline)" }}>
+          <h4 style={{ margin: "0 0 var(--space-4)" }}>Generate video</h4>
+          <p style={{ margin: "0 0 var(--space-8)", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
+            Animate the latest compiled prompt into a real video through a connected AI service. The request is
+            shown for approval before anything is generated.
+          </p>
+          <ProviderModelFields
+            projectRootPath={projectRootPath}
+            value={videoSelection}
+            mediaType="video"
+            requiresReferences={false}
+            onChange={setVideoSelection}
+          />
+          <button
+            type="button"
+            style={{ marginTop: "var(--space-8)" }}
+            onClick={() => void handleGenerateVideo()}
+            disabled={generatingVideo || compilations.length === 0}
+          >
+            {generatingVideo ? "Preparing video request…" : "Generate video from latest compilation"}
+          </button>
+        </div>
+      ) : null}
+
+      {videoRun ? (
+        <div style={{ marginTop: "var(--space-16)" }}>
+          <WorkflowRunView
+            projectRootPath={projectRootPath}
+            detail={videoRun}
+            onChange={(next) => setVideoRun(next)}
+          />
+          {videoRun.run.status === "completed" ? (
+            <p style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
+              The generated video was imported into this scene&apos;s video asset as a candidate. Promote it from
+              Assets when you want it as the official version.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {compilations.length > 0 ? (
+        <div style={{ marginTop: "var(--space-12)" }}>
+          <h4 style={{ margin: "0 0 var(--space-4)" }}>Compilation history</h4>
+          <ul style={{ margin: 0, paddingLeft: "var(--space-20)", fontSize: "var(--fs-md)" }}>
             {compilations.map((compilation) => (
               <li key={compilation.id}>
                 {new Date(compilation.createdAt).toLocaleString()} — {compilation.exportPath} (sha {compilation.exportSha256.slice(0, 12)}…)

@@ -199,7 +199,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
       "Canon",
       "Workflows",
       "Production",
-      "Providers",
+      "AI Services",
       "Diagnostics",
     ]) {
       await user.click(screen.getByRole("button", { name: route }));
@@ -235,7 +235,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
     render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
 
     const continueButton = await screen.findByRole("button", {
-      name: /Continue with Cinema Compilation/,
+      name: "Continue: Compile the final prompt",
     });
     await user.click(continueButton);
 

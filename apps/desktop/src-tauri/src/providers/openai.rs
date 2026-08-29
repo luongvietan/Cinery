@@ -109,8 +109,10 @@ use std::sync::{Arc, Mutex};
 const MAX_RESPONSE_BYTES: usize = 50 * 1024 * 1024;
 
 pub struct OpenAiImageProvider {
+    provider_id: String,
     endpoint: String,
     bearer_token: String,
+    supported_models: Vec<String>,
     transport: Box<dyn HttpTransport>,
     results: Arc<Mutex<BTreeMap<String, ProviderResult>>>,
 }
@@ -130,11 +132,27 @@ impl OpenAiImageProvider {
         transport: T,
     ) -> Self {
         Self {
+            provider_id: "openai".into(),
             endpoint: endpoint.into().trim_end_matches('/').into(),
             bearer_token: bearer_token.into(),
+            supported_models: vec![super::super::providers::service::OPENAI_DEFAULT_MODEL.into()],
             transport: Box::new(transport),
             results: Arc::new(Mutex::new(BTreeMap::new())),
         }
+    }
+
+    /// Re-identifies the adapter for OpenAI-compatible custom providers, so a
+    /// user-defined service submits and reports under its own provider id.
+    pub fn with_provider_id(mut self, provider_id: impl Into<String>) -> Self {
+        self.provider_id = provider_id.into();
+        self
+    }
+
+    pub fn with_models(mut self, models: Vec<String>) -> Self {
+        if !models.is_empty() {
+            self.supported_models = models;
+        }
+        self
     }
 
     fn generations_endpoint(&self) -> String {
@@ -181,8 +199,8 @@ fn normalize_output(item: &serde_json::Value) -> Option<ProviderOutput> {
 }
 
 impl GenerationProvider for OpenAiImageProvider {
-    fn id(&self) -> &'static str {
-        "openai"
+    fn id(&self) -> &str {
+        &self.provider_id
     }
     fn adapter_version(&self) -> u32 {
         2
@@ -199,7 +217,7 @@ impl GenerationProvider for OpenAiImageProvider {
             supports_cancel: false,
             supports_progress: false,
             supported_aspect_ratios: vec!["square".into()],
-            supported_models: vec![super::super::providers::service::OPENAI_DEFAULT_MODEL.into()],
+            supported_models: self.supported_models.clone(),
             // The edits endpoint accepts one `image[]` part per attachment
             // (see submit's multipart path), so the declared limit must match
             // what the adapter actually sends.
@@ -314,7 +332,7 @@ impl GenerationProvider for OpenAiImageProvider {
             })?;
             outputs.push(output);
         }
-        let job_id = format!("openai:{}", request.idempotency_key);
+        let job_id = format!("{}:{}", self.provider_id, request.idempotency_key);
         self.results.lock().unwrap().insert(
             job_id.clone(),
             ProviderResult {
@@ -330,7 +348,7 @@ impl GenerationProvider for OpenAiImageProvider {
         );
         Ok(ProviderSubmission {
             job: ProviderJobRef {
-                provider_id: self.id().into(),
+                provider_id: self.provider_id.clone(),
                 provider_job_id: job_id,
                 run_id: request.run_id.clone(),
                 step_id: request.step_id.clone(),

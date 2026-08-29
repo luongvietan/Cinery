@@ -6,18 +6,69 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 /// Creates a new project on disk and registers it as the most recent.
+///
+/// The user never picks a folder: when `root_path` is omitted the app
+/// derives the project location from the project name itself
+/// (`<Documents>/Cinery/<name-slug>`), so creating a project is a
+/// name-only flow. An explicit `root_path` stays supported for
+/// power users and tests.
 #[tauri::command]
 pub fn create_project(
     app: tauri::AppHandle,
-    root_path: String,
+    root_path: Option<String>,
     name: String,
 ) -> Result<ProjectSummary, AppCommandError> {
-    service::validate_root_path(&root_path)?;
-    let root = PathBuf::from(root_path);
+    let root = match root_path.filter(|value| !value.trim().is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => default_project_root(&app, &name)?,
+    };
     let summary = ProjectService::create(&root, &name)?;
     record_recent(&app, &summary);
     allow_asset_protocol_access(&app, &root);
     Ok(summary)
+}
+
+/// Derives a fresh, non-colliding project directory from the project name:
+/// `<Documents>/Cinery/<slug>`, then `<slug>-2`, `<slug>-3`, …
+fn default_project_root(
+    app: &tauri::AppHandle,
+    name: &str,
+) -> Result<PathBuf, AppCommandError> {
+    let documents = app
+        .path()
+        .document_dir()
+        .map_err(|e| AppError::FileSystem(e.to_string()))?;
+    let base = documents.join("Cinery");
+    let slug = slugify_project_name(name);
+    let mut candidate = base.join(&slug);
+    let mut counter = 2;
+    while candidate.exists() {
+        candidate = base.join(format!("{slug}-{counter}"));
+        counter += 1;
+    }
+    Ok(candidate)
+}
+
+/// Turns a project name into a filesystem-friendly slug. Non-ASCII names
+/// keep their characters where the filesystem allows them; only path-hostile
+/// characters are replaced. Falls back to "project" when nothing survives.
+fn slugify_project_name(name: &str) -> String {
+    let slug: String = name
+        .trim()
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character.to_ascii_lowercase(),
+            ' ' | '.' => '-',
+            other if !other.is_control() && other != '/' && other != '\\' => other,
+            _ => '-',
+        })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() {
+        "project".into()
+    } else {
+        slug
+    }
 }
 
 /// Opens an existing project and registers it as the most recent.
@@ -104,4 +155,21 @@ pub fn create_project_standalone(
 pub fn open_project_standalone(root_path: String) -> Result<ProjectSummary, AppCommandError> {
     service::validate_root_path(&root_path)?;
     ProjectService::open(&PathBuf::from(root_path)).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slugify_project_name;
+
+    #[test]
+    fn slugifies_names_into_safe_unique_friendly_folders() {
+        assert_eq!(slugify_project_name("Night Harbor"), "night-harbor");
+        assert_eq!(slugify_project_name("  Mixed_Case-99 "), "mixed_case-99");
+        // Path-hostile characters never survive into the folder name.
+        assert_eq!(slugify_project_name("a/b\\c"), "a-b-c");
+        assert_eq!(slugify_project_name("///"), "project");
+        assert_eq!(slugify_project_name(""), "project");
+        // Non-ASCII names keep their letters where the filesystem allows.
+        assert_eq!(slugify_project_name("Bến cảng"), "bến-cảng");
+    }
 }

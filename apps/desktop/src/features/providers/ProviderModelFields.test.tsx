@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ProviderCapabilities, ProviderConfigurationStatus } from "@cinematic/domain";
 import { describe, expect, it, vi, beforeEach } from "vitest";
@@ -43,10 +43,10 @@ describe("ProviderModelFields", () => {
 
   it("keeps OpenAI visible and clearly labelled when it is not configured", async () => {
     render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "openai", modelId: "gpt-image-2" }} mediaType="image" requiresReferences onChange={vi.fn()} />);
-    const providerSelect = (await screen.findByLabelText(/Provider/)) as HTMLSelectElement;
+    const providerSelect = (await screen.findByLabelText(/AI service/)) as HTMLSelectElement;
     const options = Array.from(providerSelect.options);
     expect(options.map((option) => option.value)).toContain("openai");
-    expect(await screen.findByText("Credential not configured")).toBeInTheDocument();
+    expect(await screen.findByText("This service needs its API key before it can generate anything")).toBeInTheDocument();
   });
 
   it("defaults to the provider's default model and keeps the user's explicit selection", async () => {
@@ -68,7 +68,7 @@ describe("ProviderModelFields", () => {
       return providerId === "openai" ? openaiCapabilities : mockCapabilities;
     });
     render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "openai", modelId: "gpt-image-2" }} mediaType="image" requiresReferences onChange={vi.fn()} />);
-    const providerSelect = (await screen.findByLabelText(/Provider/)) as HTMLSelectElement;
+    const providerSelect = (await screen.findByLabelText(/AI service/)) as HTMLSelectElement;
     const videoOption = Array.from(providerSelect.options).find((option) => option.value === "mock-video");
     expect(videoOption).toBeDefined();
     expect(videoOption!.disabled).toBe(true);
@@ -77,8 +77,48 @@ describe("ProviderModelFields", () => {
 
   it("exposes configuration status through an aria-describedby hook", async () => {
     render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "openai", modelId: "gpt-image-2" }} mediaType="image" requiresReferences onChange={vi.fn()} />);
-    const providerSelect = await screen.findByLabelText(/Provider/);
-    expect(providerSelect).toHaveAccessibleDescription(/Credential not configured/);
+    const providerSelect = await screen.findByLabelText(/AI service/);
+    expect(providerSelect).toHaveAccessibleDescription(/needs its API key/);
+  });
+
+  it("hides the local mock and dry-run providers from the picker", async () => {
+    render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "", modelId: "" }} mediaType="image" requiresReferences={false} onChange={vi.fn()} />);
+    const providerSelect = (await screen.findByLabelText(/AI service/)) as HTMLSelectElement;
+    const values = Array.from(providerSelect.options).map((option) => option.value);
+    expect(values).not.toContain("mock");
+    expect(values).not.toContain("dry_run");
+    expect(values).toContain("openai");
+  });
+
+  it("auto-selects the first configured compatible custom provider when nothing is chosen", async () => {
+    vi.mocked(listProviders).mockResolvedValue(["my-studio", "unconfigured-one"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([
+      {
+        providerId: "my-studio", displayName: "My Studio", baseUrl: "https://api.my-studio.test/v1",
+        purpose: "image", models: [{ id: "studio-image-1", name: "Studio Image 1" }], headers: [],
+      },
+      {
+        providerId: "unconfigured-one", displayName: "Unconfigured", baseUrl: "https://api.other.test/v1",
+        purpose: "image", models: [{ id: "other-1", name: "Other 1" }], headers: [],
+      },
+    ]);
+    vi.mocked(getProviderCapabilities).mockResolvedValue(openaiCapabilities);
+    vi.mocked(listProviderModels).mockImplementation(async (providerId) =>
+      providerId === "my-studio" ? ["studio-image-1"] : ["other-1"]);
+    vi.mocked(getProviderConfigurationStatus).mockImplementation(async (_root, providerId) => ({
+      providerId,
+      enabled: true,
+      credentialConfigured: providerId === "my-studio",
+      defaultModel: providerId === "my-studio" ? "studio-image-1" : "other-1",
+      models: providerId === "my-studio" ? ["studio-image-1"] : ["other-1"],
+    }));
+
+    const onChange = vi.fn();
+    render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "", modelId: "" }} mediaType="image" requiresReferences={false} onChange={onChange} />);
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({ providerId: "my-studio", modelId: "studio-image-1" });
+    });
   });
 
   it("does not offer an LLM-only custom provider to image workflows", async () => {
@@ -96,7 +136,7 @@ describe("ProviderModelFields", () => {
 
     render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "", modelId: "" }} mediaType="image" requiresReferences={false} onChange={vi.fn()} />);
 
-    const option = Array.from(((await screen.findByLabelText(/Provider/)) as HTMLSelectElement).options)[0];
+    const option = Array.from(((await screen.findByLabelText(/AI service/)) as HTMLSelectElement).options)[0];
     expect(option.value).toBe("llm_only");
     expect(option.disabled).toBe(true);
     expect(option.textContent).toContain("not compatible");

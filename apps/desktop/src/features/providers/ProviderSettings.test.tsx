@@ -16,7 +16,7 @@ describe("ProviderSettings", () => {
 
   it("shows only custom provider management and no built-in provider selector", async () => {
     render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
-    expect(await screen.findByRole("heading", { name: "Custom providers" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Connect an AI service" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Provider", { selector: "select" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Purpose")).toHaveValue("image");
   });
@@ -25,9 +25,9 @@ describe("ProviderSettings", () => {
     const user = userEvent.setup();
     render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
     await user.selectOptions(screen.getByLabelText("Purpose"), "video");
-    await user.type(screen.getByLabelText("Provider ID"), "video_provider");
+    await user.type(screen.getByRole("textbox", { name: /Provider ID/ }), "video_provider");
     await user.type(screen.getByLabelText("Display name"), "Video Provider");
-    await user.type(screen.getByLabelText("Base URL"), "https://video.example.test/v1");
+    await user.type(screen.getByRole("textbox", { name: /Base URL/ }), "https://video.example.test/v1");
     await user.type(screen.getByLabelText("API key (optional)"), "video-secret");
     await user.type(screen.getByLabelText("Model ID"), "video-v1");
     await user.type(screen.getByLabelText("Model name"), "Video V1");
@@ -42,9 +42,9 @@ describe("ProviderSettings", () => {
   it("shows the masked vault hint after saving and when selecting a saved provider", async () => {
     const user = userEvent.setup();
     render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
-    await user.type(screen.getByLabelText("Provider ID"), "video_provider");
+    await user.type(screen.getByRole("textbox", { name: /Provider ID/ }), "video_provider");
     await user.type(screen.getByLabelText("Display name"), "Video Provider");
-    await user.type(screen.getByLabelText("Base URL"), "https://video.example.test/v1");
+    await user.type(screen.getByRole("textbox", { name: /Base URL/ }), "https://video.example.test/v1");
     await user.type(screen.getByLabelText("API key (optional)"), "sk-j9mlQwErTyXzray");
     await user.type(screen.getByLabelText("Model ID"), "video-v1");
     await user.type(screen.getByLabelText("Model name"), "Video V1");

@@ -5,7 +5,9 @@ use super::credential_store::{
 };
 use super::error::{ProviderError, ProviderErrorKind};
 use super::model::*;
+use super::model::CustomProviderPurpose;
 use super::openai::OpenAiImageProvider;
+use super::openai_video::OpenAiVideoProvider;
 use super::registry::ProviderRegistry;
 use crate::db;
 use crate::error::AppError;
@@ -756,6 +758,7 @@ impl ProviderService {
 
     pub fn execute_compiled_request(
         request: &ExecutionRequest,
+        project_root: Option<&Path>,
         step_id: &str,
         compiled_request_id: &str,
         provider_id: &str,
@@ -764,6 +767,7 @@ impl ProviderService {
     ) -> Result<ProviderExecutionOutcome, AppError> {
         let handle = Self::submit_compiled_request(
             request,
+            project_root,
             step_id,
             compiled_request_id,
             provider_id,
@@ -782,6 +786,7 @@ impl ProviderService {
 
     pub fn submit_compiled_request(
         request: &ExecutionRequest,
+        project_root: Option<&Path>,
         step_id: &str,
         compiled_request_id: &str,
         provider_id: &str,
@@ -790,6 +795,7 @@ impl ProviderService {
     ) -> Result<ProviderSubmissionHandle, AppError> {
         Self::submit_prepared_request(
             request,
+            project_root,
             None,
             step_id,
             compiled_request_id,
@@ -804,6 +810,7 @@ impl ProviderService {
     /// from the vault when the caller supplies a credential store.
     pub fn submit_prepared_request(
         request: &ExecutionRequest,
+        project_root: Option<&Path>,
         credentials: Option<&dyn CredentialStore>,
         step_id: &str,
         compiled_request_id: &str,
@@ -814,6 +821,7 @@ impl ProviderService {
         Self::submit_provider_request(
             request,
             Vec::new(),
+            project_root,
             credentials,
             step_id,
             compiled_request_id,
@@ -828,6 +836,7 @@ impl ProviderService {
     pub fn submit_provider_request(
         request: &ExecutionRequest,
         reference_attachments: Vec<ProviderReferenceAttachment>,
+        project_root: Option<&Path>,
         credentials: Option<&dyn CredentialStore>,
         step_id: &str,
         compiled_request_id: &str,
@@ -836,32 +845,24 @@ impl ProviderService {
         attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
         let mut registry = ProviderRegistry::builtin();
-        if provider_id == "openai" {
-            let token = match credentials {
-                Some(store) => {
-                    let project_root = std::env::var("CINERY_PROJECT_ROOT").map_err(|_| {
-                        AppError::ProviderConfiguration(
-                            "project context is unavailable for credential resolution".into(),
-                        )
-                    })?;
-                    let conn =
-                        db::open_existing_connection(&Path::new(&project_root).join("project.db"))?;
-                    let project_id = read_project(&conn)?.id;
-                    let account = credential_account(&project_id, provider_id);
-                    store
-                        .get_secret(&account)
-                        .map_err(|_| credential_store_error("reading the credential"))?
-                        .ok_or_else(|| {
-                            AppError::ProviderConfiguration(format!(
-                                "provider {provider_id} has no credential configured for this project"
-                            ))
-                        })?
-                }
-                None => std::env::var("OPENAI_API_KEY").map_err(|_| {
-                    AppError::ProviderConfiguration("OPENAI_API_KEY is not configured".into())
-                })?,
-            };
-            registry.register(OpenAiImageProvider::new("https://api.openai.com/v1", token));
+        match provider_id {
+            // Local test/diagnostic providers need no external credential.
+            "mock" | "dry_run" => {}
+            "openai" => {
+                let token = Self::resolve_openai_token(project_root, credentials)?;
+                registry.register(OpenAiImageProvider::new("https://api.openai.com/v1", token));
+            }
+            _ => {
+                // A user-defined AI service: build a real HTTP adapter from
+                // the stored definition and its vault credential.
+                let root = project_root.ok_or_else(|| {
+                    AppError::ProviderConfiguration(
+                        "project context is unavailable for provider execution".into(),
+                    )
+                })?;
+                let adapter = Self::custom_execution_adapter(root, credentials, provider_id, true)?;
+                registry.register_arc(adapter);
+            }
         }
         let provider = registry.get(provider_id).map_err(provider_error)?;
         let mut provider_request = ProviderExecutionRequest::from_execution_request(
@@ -891,6 +892,148 @@ impl ProviderService {
             provider,
             submission,
         })
+    }
+
+    /// Built-in "openai" credential resolution: the project's OS-keyring
+    /// secret first, then the developer-time OPENAI_API_KEY environment
+    /// variable. Raw secrets never leave this function.
+    fn resolve_openai_token(
+        project_root: Option<&Path>,
+        credentials: Option<&dyn CredentialStore>,
+    ) -> Result<String, AppError> {
+        let store_owned;
+        let store: &dyn CredentialStore = match credentials {
+            Some(store) => store,
+            None => {
+                store_owned = KeyringCredentialStore::new();
+                &store_owned
+            }
+        };
+        if let Some(root) = project_root {
+            let conn = db::open_existing_connection(&root.join("project.db"))?;
+            let project_id = read_project(&conn)?.id;
+            let account = credential_account(&project_id, "openai");
+            if let Some(secret) = resolve_configured_secret_impl(store, &account)? {
+                if !secret.trim().is_empty() {
+                    return Ok(secret);
+                }
+            }
+        }
+        std::env::var("OPENAI_API_KEY").map_err(|_| {
+            AppError::ProviderConfiguration(
+                "the OpenAI credential is not configured for this project".into(),
+            )
+        })
+    }
+
+    /// Builds a real HTTP execution adapter for a user-defined AI service.
+    /// `require_credential` is false when only capabilities are needed.
+    fn custom_execution_adapter(
+        project_root: &Path,
+        credentials: Option<&dyn CredentialStore>,
+        provider_id: &str,
+        require_credential: bool,
+    ) -> Result<Arc<dyn GenerationProvider>, AppError> {
+        let definition = Self::load_custom_definition(project_root, provider_id)?;
+        let definition = definition.ok_or_else(|| {
+            AppError::ProviderConfiguration(format!(
+                "provider {provider_id} is not a configured AI service"
+            ))
+        })?;
+        let models: Vec<String> = definition.models.iter().map(|model| model.id.clone()).collect();
+        let mut token = String::new();
+        if require_credential {
+            let store_owned;
+            let store: &dyn CredentialStore = match credentials {
+                Some(store) => store,
+                None => {
+                    store_owned = KeyringCredentialStore::new();
+                    &store_owned
+                }
+            };
+            let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+            let project_id = read_project(&conn)?.id;
+            drop(conn);
+            let account = credential_account(&project_id, provider_id);
+            if let Some(secret) = resolve_configured_secret_impl(store, &account)? {
+                if !secret.trim().is_empty() {
+                    token = secret;
+                }
+            }
+            if token.is_empty() {
+                for header in &definition.headers {
+                    if header.name.eq_ignore_ascii_case("authorization") {
+                        if let Some(value) =
+                            resolve_header_secret(store, &project_id, provider_id, &header.name)?
+                        {
+                            token = value;
+                            break;
+                        }
+                    }
+                }
+            }
+            if token.is_empty() {
+                return Err(AppError::ProviderConfiguration(format!(
+                    "provider {provider_id} has no API key configured. Add the key in AI Services, then run this step again."
+                )));
+            }
+        }
+        let adapter: Arc<dyn GenerationProvider> = match definition.purpose {
+            CustomProviderPurpose::Image => Arc::new(
+                OpenAiImageProvider::new(&definition.base_url, token)
+                    .with_provider_id(definition.provider_id.clone())
+                    .with_models(models),
+            ),
+            CustomProviderPurpose::Video => Arc::new(
+                OpenAiVideoProvider::new(&definition.base_url, token)
+                    .with_provider_id(definition.provider_id.clone())
+                    .with_models(models),
+            ),
+            other => {
+                return Err(AppError::ProviderConfiguration(format!(
+                    "provider {provider_id} cannot generate images or video (purpose: {other:?})"
+                )))
+            }
+        };
+        Ok(adapter)
+    }
+
+    fn load_custom_definition(
+        project_root: &Path,
+        provider_id: &str,
+    ) -> Result<Option<CustomProviderDefinition>, AppError> {
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        super::repository::get_custom_provider(&conn, provider_id).map_err(Into::into)
+    }
+
+    /// Capability lookup that also resolves user-defined AI services. Used by
+    /// the capability precheck in the workflow runtime and the provider picker.
+    pub fn capabilities_for(
+        project_root: &Path,
+        provider_id: &str,
+    ) -> Result<ProviderCapabilities, AppError> {
+        match ProviderRegistry::builtin().get(provider_id) {
+            Ok(provider) => Ok(provider.capabilities()),
+            Err(_) => {
+                let adapter =
+                    Self::custom_execution_adapter(project_root, None, provider_id, false)?;
+                Ok(adapter.capabilities())
+            }
+        }
+    }
+
+    /// Default model for a provider, from its config record or its custom
+    /// definition's first model. No credential access is required.
+    pub fn default_model_for(
+        project_root: &Path,
+        provider_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let config = super::repository::get_provider_config(&conn, provider_id)?;
+        let custom = super::repository::get_custom_provider(&conn, provider_id)?;
+        Ok(config
+            .and_then(|record| record.default_model)
+            .or_else(|| custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))))
     }
 
     pub fn finish_submission(

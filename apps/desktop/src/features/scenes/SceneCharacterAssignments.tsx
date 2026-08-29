@@ -259,21 +259,21 @@ export function SceneCharacterAssignments({
   return (
     <section
       aria-label="Character assignments"
-      style={{ padding: "16px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>CHARACTERS</h3>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>CHARACTERS</h3>
         <button type="button" ref={triggerRef} onClick={() => setIsDialogOpen(true)}>
           Add Character
         </button>
       </header>
 
-      {actionError ? <p role="alert" style={{ marginTop: "8px" }}>{actionError}</p> : null}
+      {actionError ? <p role="alert" style={{ marginTop: "var(--space-8)" }}>{actionError}</p> : null}
 
       {assignments.length === 0 ? (
-        <p style={{ marginTop: "12px" }}>No characters assigned. Pin exact Look versions.</p>
+        <p style={{ marginTop: "var(--space-12)" }}>No characters assigned. Pin exact Look versions.</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: "12px 0 0", display: "flex", flexDirection: "column", gap: "12px" }}>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-12) 0 0", display: "flex", flexDirection: "column", gap: "var(--space-12)" }}>
           {assignments.map((assignment) => {
             const character = characters.find((c) => c.id === assignment.characterEntityId);
             const characterName = character?.name ?? assignment.characterEntityId;
@@ -295,7 +295,7 @@ export function SceneCharacterAssignments({
             return (
               <li
                 key={assignment.id}
-                style={{ padding: "12px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "6px" }}
+                style={{ padding: "var(--space-12)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)" }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <strong>{characterName}</strong>
@@ -307,23 +307,23 @@ export function SceneCharacterAssignments({
                     Remove
                   </button>
                 </div>
-                <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
+                <div style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-8)", fontSize: "var(--fs-md)" }}>
                   <div>
                     <span style={{ fontWeight: 500 }}>Character:</span> {characterName} ({assignment.characterEntityId})
                   </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center", flexWrap: "wrap" }}>
                     <span style={{ fontWeight: 500 }}>Look:</span>
-                    <span style={{ fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                    <span style={{ fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
                       {lookLabel} — {lookPinned} {resolvedEntry ? `· ${formatVersionNumber(resolvedEntry.look.versionNumber)}` : ""}
                     </span>
                     {resolvedEntry ? (
-                      <span className="asset-version-badge" style={{ fontSize: "11px" }}>
+                      <span className="asset-version-badge" style={{ fontSize: "var(--fs-xs)" }}>
                         {lookHealth.toUpperCase()}
                       </span>
                     ) : null}
                   </div>
                   {resolvedEntry ? (
-                    <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                       PINNED V{String(resolvedEntry.look.versionNumber).padStart(2, "0")} ({formatVersionNumber(resolvedEntry.look.versionNumber)}) · CURRENT CANONICAL{" "}
                       {resolvedEntry.look.currentCanonicalVersionId ?? "none"} · {lookHealth.toUpperCase()}
                     </div>
@@ -346,22 +346,22 @@ export function SceneCharacterAssignments({
                     </button>
                   ) : null}
                   {sheetPinned ? (
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ fontWeight: 500 }}>Sheet:</span>
-                      <span style={{ fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                      <span style={{ fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
                         {sheetLabel} — {sheetPinned} {resolvedEntry?.sheet ? `· ${formatVersionNumber(resolvedEntry.sheet.versionNumber)}` : ""}
                       </span>
                       {sheetHealth ? (
-                        <span className="asset-version-badge" style={{ fontSize: "11px" }}>
+                        <span className="asset-version-badge" style={{ fontSize: "var(--fs-xs)" }}>
                           {sheetHealth.toUpperCase()}
                         </span>
                       ) : null}
                     </div>
                   ) : (
-                    <div style={{ fontSize: "12px", color: "var(--color-mid-gray)" }}>No Sheet (optional)</div>
+                    <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>No Sheet (optional)</div>
                   )}
                   {resolvedEntry?.sheet ? (
-                    <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                       PINNED V{String(resolvedEntry.sheet.versionNumber).padStart(2, "0")} ({formatVersionNumber(resolvedEntry.sheet.versionNumber)}) · CURRENT CANONICAL{" "}
                       {resolvedEntry.sheet.currentCanonicalVersionId ?? "none"} · {sheetHealth?.toUpperCase()}
                     </div>
@@ -412,7 +412,7 @@ export function SceneCharacterAssignments({
             </header>
             <p>Pin an exact canonical Look version for the Character. Optional Sheet must also be canonical and owned by the same Character.</p>
             {actionError ? <p role="alert">{actionError}</p> : null}
-            <div className="canon-field-grid" style={{ marginTop: "12px" }}>
+            <div className="canon-field-grid" style={{ marginTop: "var(--space-12)" }}>
               <label htmlFor="char-select">
                 Character
                 <select
@@ -465,7 +465,7 @@ export function SceneCharacterAssignments({
                 <input id="char-notes" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Optional notes" />
               </label>
             </div>
-            <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+            <div style={{ display: "flex", gap: "var(--space-8)", marginTop: "var(--space-16)" }}>
               <button type="button" onClick={() => void handleAdd()} disabled={!selectedCharacterId || !selectedLookVersionId}>
                 Add Character
               </button>
@@ -492,18 +492,18 @@ export function SceneCharacterAssignments({
                 ✕
               </button>
             </header>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-12)", marginTop: "var(--space-12)" }}>
               <p>
                 Upgrade <strong>{confirmUpgrade.kind === "look" ? "Character Look" : "Character Sheet"}</strong> for scene {sceneId}?
               </p>
-              <div style={{ display: "grid", gap: "8px", padding: "12px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "6px", fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+              <div style={{ display: "grid", gap: "var(--space-8)", padding: "var(--space-12)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                 <div>Pinned: {confirmUpgrade.pinned} (V{String(confirmUpgrade.versionNumber).padStart(2, "0")} / {formatVersionNumber(confirmUpgrade.versionNumber)})</div>
                 <div>Current canonical: {confirmUpgrade.canonical ?? "none"}</div>
                 <div>Old version: {confirmUpgrade.pinned}</div>
                 <div>New version: {confirmUpgrade.canonical}</div>
                 <div>Scene: {sceneId}</div>
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "var(--space-8)" }}>
                 <button
                   type="button"
                   ref={confirmRef}
@@ -519,7 +519,7 @@ export function SceneCharacterAssignments({
                   Cancel
                 </button>
               </div>
-              <p style={{ fontSize: "12px", fontWeight: 600 }}>
+              <p style={{ fontSize: "var(--fs-sm)", fontWeight: 600 }}>
                 Upgrade Scene to V{String(confirmUpgrade.versionNumber + 1).padStart(2, "0")}
               </p>
             </div>

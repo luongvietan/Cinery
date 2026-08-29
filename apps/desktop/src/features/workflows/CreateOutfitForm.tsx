@@ -13,7 +13,7 @@ interface CreateOutfitFormProps {
 export function CreateOutfitForm({ projectRootPath, characters, pending, onCancel, onSubmit }: CreateOutfitFormProps) {
   const [characterEntityId, setCharacterEntityId] = useState(characters[0]?.id ?? "");
   const [wardrobeDescription, setWardrobeDescription] = useState("");
-  const [providerSelection, setProviderSelection] = useState({ providerId: "mock", modelId: "mock-image-v1" });
+  const [providerSelection, setProviderSelection] = useState({ providerId: "", modelId: "" });
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

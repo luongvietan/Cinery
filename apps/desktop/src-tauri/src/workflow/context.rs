@@ -791,6 +791,69 @@ pub fn resolve_world_plate_context(
     })
 }
 
+/// Context for video generation: the full scene readiness validation from
+/// the keyframe resolver plus the latest durable cinema compilation, which
+/// carries the provider-neutral video production prompt.
+pub fn resolve_scene_video_context(
+    conn: &Connection,
+    project_id: &str,
+    skill_id: &str,
+    skill_version: &str,
+    operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let mut snapshot = resolve_scene_keyframe_context(
+        conn,
+        project_id,
+        skill_id,
+        skill_version,
+        operation_id,
+        input,
+        prerequisite_report,
+    )?;
+    let scene_id = input
+        .get("sceneId")
+        .or_else(|| input.get("scene_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let compilation_json: Option<String> = conn
+        .query_row(
+            "SELECT compilation_json FROM scene_compilations WHERE scene_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1",
+            params![scene_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let compilation_json = compilation_json.ok_or_else(|| {
+        AppError::SceneNotReady(
+            "compile the scene first: video generation animates a compiled cinema prompt".into(),
+        )
+    })?;
+    let compilation: serde_json::Value = serde_json::from_str(&compilation_json)
+        .map_err(|e| AppError::WorkflowRunInconsistent(e.to_string()))?;
+    if !snapshot.resolved_context.is_object() {
+        return Err(AppError::WorkflowRunInconsistent(
+            "resolved context is not an object".into(),
+        ));
+    }
+    snapshot
+        .resolved_context
+        .as_object_mut()
+        .expect("checked object")
+        .insert(
+        "compilation".into(),
+        serde_json::json!({
+            "compilationId": compilation.get("compilationId"),
+            "providerPrompt": compilation.get("providerPrompt"),
+            "totalDurationSeconds": compilation.get("totalDurationSeconds"),
+            "lastFrame": compilation.get("lastFrame"),
+            "audioInstructions": compilation.get("audioInstructions"),
+        }),
+        );
+    Ok(snapshot)
+}
+
 pub fn resolve_scene_keyframe_context(
     conn: &Connection,
     project_id: &str,

@@ -169,21 +169,21 @@ export function ScenePropAssignments({
   return (
     <section
       aria-label="Prop assignments"
-      style={{ padding: "16px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>PROPS</h3>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>PROPS</h3>
         <button type="button" ref={triggerRef} onClick={() => setIsDialogOpen(true)}>
           Add Prop
         </button>
       </header>
 
-      {actionError ? <p role="alert" style={{ marginTop: "8px" }}>{actionError}</p> : null}
+      {actionError ? <p role="alert" style={{ marginTop: "var(--space-8)" }}>{actionError}</p> : null}
 
       {assignments.length === 0 ? (
-        <p style={{ marginTop: "12px" }}>No props assigned. Pin exact canonical prop_plate versions.</p>
+        <p style={{ marginTop: "var(--space-12)" }}>No props assigned. Pin exact canonical prop_plate versions.</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: "12px 0 0", display: "flex", flexDirection: "column", gap: "12px" }}>
+        <ul style={{ listStyle: "none", padding: 0, margin: "var(--space-12) 0 0", display: "flex", flexDirection: "column", gap: "var(--space-12)" }}>
           {assignments.map((assignment) => {
             const resolvedEntry = resolved.find((r) => r.assignmentId === assignment.id);
             const versionNumber = resolvedEntry?.reference.versionNumber ?? 0;
@@ -193,7 +193,7 @@ export function ScenePropAssignments({
             return (
               <li
                 key={assignment.id}
-                style={{ padding: "12px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "6px" }}
+                style={{ padding: "var(--space-12)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)" }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <strong>{assignment.label ?? assetLabel}</strong>
@@ -201,17 +201,17 @@ export function ScenePropAssignments({
                     Remove
                   </button>
                 </div>
-                <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px" }}>
-                  <div style={{ fontFamily: "ui-monospace, monospace", wordBreak: "break-all" }}>
+                <div style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-8)", fontSize: "var(--fs-md)" }}>
+                  <div style={{ fontFamily: "var(--font-mono)", wordBreak: "break-all" }}>
                     {pinned} · {resolvedEntry ? formatVersionNumber(versionNumber) : ""} {assignment.label ? `· ${assignment.label}` : ""}
                   </div>
-                  <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center", flexWrap: "wrap" }}>
                     <span>Exact pinned version:</span>
-                    <span style={{ fontFamily: "ui-monospace, monospace" }}>{pinned}</span>
-                    {resolvedEntry ? <span className="asset-version-badge" style={{ fontSize: "11px" }}>{health.toUpperCase()}</span> : null}
+                    <span style={{ fontFamily: "var(--font-mono)" }}>{pinned}</span>
+                    {resolvedEntry ? <span className="asset-version-badge" style={{ fontSize: "var(--fs-xs)" }}>{health.toUpperCase()}</span> : null}
                   </div>
                   {resolvedEntry ? (
-                    <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                       PINNED V{String(versionNumber).padStart(2, "0")} ({formatVersionNumber(versionNumber)}) · CURRENT CANONICAL {resolvedEntry.reference.currentCanonicalVersionId ?? "none"} · {health.toUpperCase()}
                     </div>
                   ) : null}
@@ -256,7 +256,7 @@ export function ScenePropAssignments({
             </header>
             <p>Select an exact canonical prop_plate version. Only canonical prop versions can be pinned.</p>
             {actionError ? <p role="alert">{actionError}</p> : null}
-            <div className="canon-field-grid" style={{ marginTop: "12px" }}>
+            <div className="canon-field-grid" style={{ marginTop: "var(--space-12)" }}>
               <label htmlFor="prop-select">
                 Prop version
                 <select
@@ -283,9 +283,9 @@ export function ScenePropAssignments({
               </label>
             </div>
             {availableVersions.length === 0 ? (
-              <p style={{ marginTop: "8px", color: "var(--color-mid-gray)", fontSize: "12px" }}>No canonical prop_plate versions available. Import and promote a prop_plate asset first.</p>
+              <p style={{ marginTop: "var(--space-8)", color: "var(--c-muted)", fontSize: "var(--fs-sm)" }}>No canonical prop_plate versions available. Import and promote a prop_plate asset first.</p>
             ) : null}
-            <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+            <div style={{ display: "flex", gap: "var(--space-8)", marginTop: "var(--space-16)" }}>
               <button type="button" onClick={() => void handleAdd()} disabled={!selectedVersionId}>
                 Add Prop
               </button>
@@ -306,18 +306,18 @@ export function ScenePropAssignments({
                 ✕
               </button>
             </header>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-12)", marginTop: "var(--space-12)" }}>
               <p>
                 Upgrade prop reference for scene {sceneId}?
               </p>
-              <div style={{ display: "grid", gap: "8px", padding: "12px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "6px", fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+              <div style={{ display: "grid", gap: "var(--space-8)", padding: "var(--space-12)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                 <div>Pinned: {confirmUpgrade.pinned} (V{String(confirmUpgrade.versionNumber).padStart(2, "0")} / {formatVersionNumber(confirmUpgrade.versionNumber)})</div>
                 <div>Current canonical: {confirmUpgrade.canonical ?? "none"}</div>
                 <div>Old version: {confirmUpgrade.pinned}</div>
                 <div>New version: {confirmUpgrade.canonical}</div>
                 <div>Scene: {sceneId}</div>
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "var(--space-8)" }}>
                 <button type="button" ref={confirmRef} onClick={() => void handleUpgrade(confirmUpgrade.assignmentId)}>
                   Upgrade Scene to V{String(confirmUpgrade.versionNumber + 1).padStart(2, "0")}
                 </button>
@@ -325,7 +325,7 @@ export function ScenePropAssignments({
                   Cancel
                 </button>
               </div>
-              <p style={{ fontSize: "12px", fontWeight: 600 }}>Upgrade Scene to V{String(confirmUpgrade.versionNumber + 1).padStart(2, "0")}</p>
+              <p style={{ fontSize: "var(--fs-sm)", fontWeight: 600 }}>Upgrade Scene to V{String(confirmUpgrade.versionNumber + 1).padStart(2, "0")}</p>
             </div>
           </div>
         </div>

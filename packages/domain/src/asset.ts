@@ -49,7 +49,7 @@ export interface AssetVersion {
   thumbnailPath: string;
   sha256: string;
   originalFilename: string;
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
+  mimeType: "image/png" | "image/jpeg" | "image/webp" | "video/mp4";
   byteSize: number;
   width: number | null;
   height: number | null;

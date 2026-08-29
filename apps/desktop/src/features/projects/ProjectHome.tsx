@@ -11,11 +11,26 @@ interface ProjectHomeProps {
 
 type PendingAction = "create" | "open" | null;
 
+const FIRST_STEPS = [
+  {
+    title: "Create a project",
+    detail: "One folder on your computer holds everything: story, characters, and scenes.",
+  },
+  {
+    title: "Connect an AI service",
+    detail: "Paste in the address and key of any image or video API you already use.",
+  },
+  {
+    title: "Generate your first shot",
+    detail: "Cinery keeps each character looking the same across every scene.",
+  },
+];
+
 export function ProjectHome({ onProjectOpened }: ProjectHomeProps) {
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const [pendingRootPath, setPendingRootPath] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [projectName, setProjectName] = useState("");
 
   useEffect(() => {
@@ -43,35 +58,29 @@ export function ProjectHome({ onProjectOpened }: ProjectHomeProps) {
     return typeof selected === "string" ? selected : null;
   }
 
-  async function handleCreateClick() {
+  function handleCreateClick() {
     setError(null);
-    const rootPath = await pickDirectory();
-    if (!rootPath) {
-      return;
-    }
-    setPendingRootPath(rootPath);
+    setCreating(true);
     setProjectName("");
   }
 
   function handleCreateCancel() {
-    setPendingRootPath(null);
+    setCreating(false);
     setProjectName("");
   }
 
   async function handleCreateSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!pendingRootPath) {
-      return;
-    }
 
     setPendingAction("create");
     setError(null);
     try {
+      // No folder picking: the backend derives the project folder from the
+      // project name, so the whole flow is name-only.
       const project = await createProject({
-        rootPath: pendingRootPath,
         name: projectName,
       });
-      setPendingRootPath(null);
+      handleCreateCancel();
       onProjectOpened(project);
     } catch (err) {
       setError(describeError(err));
@@ -107,48 +116,78 @@ export function ProjectHome({ onProjectOpened }: ProjectHomeProps) {
   }
 
   return (
-    <main>
-      <h1>AI Cinematic Production OS</h1>
-      <p>Local-first cinematic project workspace.</p>
+    <main className="home">
+      <header className="home__hero">
+        <h1>Make films with AI, without losing your characters.</h1>
+        <p className="home__lede">
+          Cinery is a workspace for AI filmmaking. It keeps your story, cast, and
+          every generated image or video organized in one project, so your
+          characters look the same from the first shot to the last.
+        </p>
+      </header>
+
+      <ol className="home__steps" aria-label="How Cinery works">
+        {FIRST_STEPS.map((step, index) => (
+          <li key={step.title} className="home__step">
+            <span className="home__step-number" aria-hidden="true">{index + 1}</span>
+            <div>
+              <strong>{step.title}</strong>
+              <p>{step.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
 
       {error && <p role="alert">{error}</p>}
 
-      <div>
+      <div className="home__actions">
         <button
           type="button"
+          className="home__primary"
           onClick={handleCreateClick}
-          disabled={pendingAction === "create" || pendingRootPath !== null}
+          disabled={pendingAction !== null}
         >
-          Create Project
+          Create a project
         </button>
         <button
           type="button"
           onClick={handleOpenClick}
-          disabled={pendingAction === "open"}
+          disabled={pendingAction !== null}
         >
-          Open Project
+          Open an existing project
         </button>
       </div>
 
-      {pendingRootPath && (
-        <form onSubmit={handleCreateSubmit}>
-          <label htmlFor="new-project-name">Project name</label>
-          <input
-            id="new-project-name"
-            value={projectName}
-            onChange={(event) => setProjectName(event.target.value)}
-            required
-          />
-          <button type="submit" disabled={pendingAction === "create"}>
-            Create
-          </button>
-          <button
-            type="button"
-            onClick={handleCreateCancel}
-            disabled={pendingAction === "create"}
-          >
-            Cancel
-          </button>
+      {creating && (
+        <form className="home__create-form" onSubmit={handleCreateSubmit}>
+          <h2>New project</h2>
+          <label htmlFor="new-project-name">
+            <span>Project name</span>
+            <input
+              id="new-project-name"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="e.g. Night Harbor"
+              autoFocus
+              required
+            />
+          </label>
+          <p className="home__folder-hint">
+            Saved as a normal folder on your computer, named after your
+            project. It works offline and stays yours.
+          </p>
+          <div className="workflow-form-actions">
+            <button type="submit" disabled={pendingAction === "create"}>
+              {pendingAction === "create" ? "Creating…" : "Create project"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateCancel}
+              disabled={pendingAction === "create"}
+            >
+              Cancel
+            </button>
+          </div>
         </form>
       )}
 

@@ -79,6 +79,7 @@ fn approved_provider_output_becomes_four_durable_candidates_without_an_asset_ver
             model_id: "mock-image-v1".into(),
             source_asset_version_ids: vec!["version-2".into()],
             requested_output_count: 4,
+            media_kind: "image".into(),
         },
         &result,
     )
@@ -150,6 +151,7 @@ fn lineage_capture_failure_removes_materialized_candidate_files() {
             model_id: "mock-image-v1".into(),
             source_asset_version_ids: vec!["version-2".into()],
             requested_output_count: 1,
+            media_kind: "image".into(),
         },
         &result,
     )

@@ -94,7 +94,7 @@ export function SceneWorkspace({
 
       {createError ? <p role="alert">{createError}</p> : null}
 
-      <div className="canon-entity-layout" style={{ marginTop: "16px" }}>
+      <div className="canon-entity-layout" style={{ marginTop: "var(--space-16)" }}>
         <aside aria-label="Scenes list">
           <SceneList
             projectRootPath={projectRootPath}
@@ -103,7 +103,7 @@ export function SceneWorkspace({
             refreshKey={refreshKey}
           />
         </aside>
-        <div className="canon-editor-pane" style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div className="canon-editor-pane" style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}>
           {selectedSceneId ? (
             <>
               <SceneEditor
@@ -169,7 +169,7 @@ export function SceneWorkspace({
             </header>
             <p>Scenes assemble exact immutable references. New scenes are numbered sequentially (SCENE-001, SCENE-002…) and persist across restarts.</p>
             {createError ? <p role="alert">{createError}</p> : null}
-            <div className="canon-field-grid" style={{ marginTop: "12px" }}>
+            <div className="canon-field-grid" style={{ marginTop: "var(--space-12)" }}>
               <label htmlFor="new-scene-title">
                 Title
                 <input
@@ -190,15 +190,15 @@ export function SceneWorkspace({
                   rows={3}
                   style={{
                     width: "100%",
-                    padding: "8px 12px",
-                    border: "1px solid var(--color-hairline)",
-                    borderRadius: "6px",
+                    padding: "var(--space-8) var(--space-12)",
+                    border: "1px solid var(--c-hairline)",
+                    borderRadius: "var(--radius-md)",
                     fontFamily: "inherit",
                   }}
                 />
               </label>
             </div>
-            <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
+            <div style={{ display: "flex", gap: "var(--space-8)", marginTop: "var(--space-16)" }}>
               <button type="button" onClick={() => void handleCreate()} disabled={creating || !newTitle.trim()}>
                 {creating ? "Creating…" : "Create Scene"}
               </button>

@@ -7,6 +7,8 @@ pub mod http;
 pub mod mock;
 pub mod model;
 pub mod openai;
+pub mod openai_video;
+pub mod llm;
 pub mod registry;
 pub mod repository;
 pub mod service;

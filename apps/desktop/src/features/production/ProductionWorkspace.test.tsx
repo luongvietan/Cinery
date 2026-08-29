@@ -57,6 +57,6 @@ describe("ProductionWorkspace first-face regression", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Create Face Lock" }));
     const review = await screen.findByRole("button", { name: "Review Request" });
     expect(review).toBeEnabled();
-    expect(screen.getByText(/Requires a canonical Face/)).toBeInTheDocument();
+    expect(screen.getByText(/No approved face yet/)).toBeInTheDocument();
   });
 });

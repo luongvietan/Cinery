@@ -34,7 +34,7 @@ describe("SceneList", () => {
       <SceneList projectRootPath="/projects/red-door" selectedSceneId={null} onSelectScene={vi.fn()} />,
     );
     expect(await screen.findByText("No scenes yet")).toBeInTheDocument();
-    expect(screen.getByText("Create a Scene to begin assembling your visual narrative.")).toBeInTheDocument();
+    expect(screen.getByText("A scene puts your characters in a world with a shot to generate. Create one to begin.")).toBeInTheDocument();
   });
 
   it("shows SCENE-001 title", async () => {

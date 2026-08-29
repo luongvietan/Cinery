@@ -212,6 +212,7 @@ impl ProviderCapabilities {
     pub fn supports(&self, request: &ProviderExecutionRequest) -> Result<(), String> {
         let media_type = match request.media_type {
             ExecutionMediaType::Image => ProviderMediaType::Image,
+            ExecutionMediaType::Video => ProviderMediaType::Video,
         };
         if !self.media_types.contains(&media_type) {
             return Err(format!("media type {:?} is not supported", media_type));

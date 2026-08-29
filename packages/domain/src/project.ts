@@ -8,7 +8,8 @@ export interface ProjectSummary {
 }
 
 export interface CreateProjectInput {
-  rootPath: string;
+  /** Omitted: the app derives the project folder from the project name. */
+  rootPath?: string;
   name: string;
 }
 

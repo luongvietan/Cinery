@@ -5,7 +5,7 @@ use super::model::{
 };
 
 pub trait GenerationProvider: Send + Sync {
-    fn id(&self) -> &'static str;
+    fn id(&self) -> &str;
     fn adapter_version(&self) -> u32;
     fn capabilities(&self) -> ProviderCapabilities;
     fn submit(

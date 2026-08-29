@@ -1,8 +1,23 @@
 import { useEffect, useState } from "react";
-import type { OverviewAction, ProjectOverview as ProjectOverviewData } from "@cinematic/domain";
+import type { OverviewAction, ProjectOverview as ProjectOverviewData, ReadinessStep } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { getProjectOverview } from "./api";
 import { getProjectHealth } from "./healthApi";
+import { readinessCopy } from "./readinessCopy";
+
+function stepCopy(step: ReadinessStep): { title: string; detail: string; actionLabel: string | null } {
+  const plain = readinessCopy(step.id);
+  // Scene-specific backend detail (e.g. "Compile Scene 002.") carries scope the
+  // generic copy can't, so it wins over the plain-language template.
+  const detail = /scene \d+/i.test(step.detail) ? step.detail : plain?.detail ?? step.detail;
+  const actionId = step.action?.id;
+  const actionCopy = actionId ? readinessCopy(actionId) : null;
+  return {
+    title: plain?.title ?? step.title,
+    detail,
+    actionLabel: actionCopy?.actionLabel ?? plain?.actionLabel ?? (step.action ? `Open ${step.action.title}` : null),
+  };
+}
 
 export function ProjectOverview({
   projectRootPath,
@@ -29,27 +44,41 @@ export function ProjectOverview({
   if (!overview) return <p role="status">Loading project overview…</p>;
 
   const blocked = overview.readiness.status === "blocked";
+  const nextAction = overview.readiness.nextAction;
+  const nextCopy = nextAction ? readinessCopy(nextAction.id) : null;
+
   return (
     <section className="project-overview" aria-labelledby="production-progress-title">
       <header className="project-overview__header">
         <div>
           <span className="production-kicker">Production / Readiness</span>
-          <h2 id="production-progress-title">Production Progress</h2>
-          <p>{blocked ? "Blocked by protected canon TBD" : "Follow the next durable production step."}</p>
+          <h2 id="production-progress-title">Your path to the first shot</h2>
+          <p>
+            {blocked
+              ? "One open question in your story needs an answer before the next step can run."
+              : "Work top to bottom. Each step locks in a piece of your film so later scenes stay consistent."}
+          </p>
         </div>
-        {overview.readiness.nextAction ? (
-          <button type="button" onClick={() => onNavigate(overview.readiness.nextAction!)}>
-            Continue with {overview.readiness.nextAction.title}
+        {nextAction ? (
+          <button type="button" className="home__primary" onClick={() => onNavigate(nextAction)}>
+            {nextCopy ? `Continue: ${nextCopy.title}` : `Continue with ${nextAction.title}`}
           </button>
         ) : <span className="project-overview__complete">Production path complete</span>}
       </header>
       <ol className="project-overview__steps">
-        {overview.readiness.steps.map((step) => (
-          <li key={step.id} className={`project-overview__step project-overview__step--${step.status}`}>
-            <span aria-hidden="true">{step.status === "complete" ? "✓" : step.status === "blocked" ? "!" : "○"}</span>
-            <div><strong>{step.title}</strong><p>{step.detail}</p>{step.action ? <button type="button" onClick={() => onNavigate(step.action!)}>Open {step.action.title}</button> : null}</div>
-          </li>
-        ))}
+        {overview.readiness.steps.map((step) => {
+          const copy = stepCopy(step);
+          return (
+            <li key={step.id} className={`project-overview__step project-overview__step--${step.status}`}>
+              <span aria-hidden="true">{step.status === "complete" ? "✓" : step.status === "blocked" ? "!" : "○"}</span>
+              <div>
+                <strong>{copy.title}</strong>
+                <p>{copy.detail}</p>
+                {step.status !== "complete" && step.action ? <button type="button" onClick={() => onNavigate(step.action!)}>{copy.actionLabel}</button> : null}
+              </div>
+            </li>
+          );
+        })}
       </ol>
       <section className="project-overview__health-panel" aria-labelledby="project-health-title">
         <h3 id="project-health-title">Project Health</h3>

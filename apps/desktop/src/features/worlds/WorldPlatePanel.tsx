@@ -119,11 +119,11 @@ export function WorldPlatePanel({
         className="world-plate-preview"
         style={{
           display: "grid",
-          gap: "12px",
-          padding: "16px",
-          background: "var(--surface-canvas)",
-          border: "1px solid var(--color-hairline)",
-          borderRadius: "10px",
+          gap: "var(--space-12)",
+          padding: "var(--space-16)",
+          background: "var(--c-panel)",
+          border: "1px solid var(--c-hairline)",
+          borderRadius: "var(--radius-lg)",
         }}
       >
         {hasCanonical && canonicalVersion ? (
@@ -140,11 +140,11 @@ export function WorldPlatePanel({
                 width: "100%",
                 maxHeight: "360px",
                 objectFit: "contain",
-                background: "var(--color-hairline)",
-                borderRadius: "6px",
+                background: "var(--c-hairline)",
+                borderRadius: "var(--radius-md)",
               }}
             />
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
               <span style={{ fontWeight: 600 }}>
                 {detail.worldPlateAsset.label}-{formatVersionNumber(canonicalVersion.versionNumber)}
               </span>
@@ -160,7 +160,7 @@ export function WorldPlatePanel({
           <p>NO WORLD PLATE YET — generate a candidate to create the first version.</p>
         )}
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => void handleGenerate()}
@@ -180,7 +180,7 @@ export function WorldPlatePanel({
 
       {/* Version handling */}
       {showVersions ? (
-        <div style={{ marginTop: "16px" }}>
+        <div style={{ marginTop: "var(--space-16)" }}>
           <AssetInspector
             projectRootPath={projectRootPath}
             assetId={worldPlateAssetId}
@@ -195,7 +195,7 @@ export function WorldPlatePanel({
 
       {/* Workflow review: reuse existing WorkflowRunView, do not create second approval dialog */}
       {workflowRun ? (
-        <div style={{ marginTop: "16px" }}>
+        <div style={{ marginTop: "var(--space-16)" }}>
           <WorkflowRunView
             projectRootPath={projectRootPath}
             detail={workflowRun}

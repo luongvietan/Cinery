@@ -134,39 +134,39 @@ export function SceneReadinessPanel({ projectRootPath, sceneId, refreshKey = 0 }
   return (
     <section
       aria-label="Scene readiness"
-      style={{ padding: "16px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "10px" }}
+      style={{ padding: "var(--space-16)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>READINESS</h3>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>READINESS</h3>
         <span
           className={readiness.readyForKeyframe ? "canon-badge" : "canon-status canon-status--draft"}
-          style={{ fontSize: "12px", fontWeight: 600 }}
+          style={{ fontSize: "var(--fs-sm)", fontWeight: 600 }}
         >
           {readiness.readyForKeyframe ? "READY FOR KEYFRAME" : "NOT READY"}
         </span>
       </header>
 
       {readiness.blockers.length > 0 ? (
-        <div style={{ marginTop: "12px" }}>
-          <h4 style={{ margin: 0, fontSize: "12px", color: "var(--color-danger)" }}>Blockers</h4>
-          <ul style={{ margin: "4px 0 0", paddingLeft: "16px" }}>
+        <div style={{ marginTop: "var(--space-12)" }}>
+          <h4 style={{ margin: 0, fontSize: "var(--fs-sm)", color: "var(--c-danger)" }}>Blockers</h4>
+          <ul style={{ margin: "var(--space-4) 0 0", paddingLeft: "var(--space-16)" }}>
             {readiness.blockers.map((blocker, idx) => (
-              <li key={idx} style={{ fontSize: "13px", color: "var(--color-danger)" }}>
+              <li key={idx} style={{ fontSize: "var(--fs-md)", color: "var(--c-danger)" }}>
                 {blocker.kind}: {blocker.message} {blocker.context ? `(${blocker.context})` : ""}
               </li>
             ))}
           </ul>
         </div>
       ) : (
-        <p style={{ marginTop: "12px", fontSize: "13px", color: "var(--color-success)" }}>No blockers — Scene can generate a keyframe.</p>
+        <p style={{ marginTop: "var(--space-12)", fontSize: "var(--fs-md)", color: "var(--c-success)" }}>No blockers — Scene can generate a keyframe.</p>
       )}
 
       {readiness.warnings.length > 0 ? (
-        <div style={{ marginTop: "12px" }}>
-          <h4 style={{ margin: 0, fontSize: "12px", color: "var(--color-warning)" }}>Warnings</h4>
-          <ul style={{ margin: "4px 0 0", paddingLeft: "16px" }}>
+        <div style={{ marginTop: "var(--space-12)" }}>
+          <h4 style={{ margin: 0, fontSize: "var(--fs-sm)", color: "var(--c-warning)" }}>Warnings</h4>
+          <ul style={{ margin: "var(--space-4) 0 0", paddingLeft: "var(--space-16)" }}>
             {readiness.warnings.map((warning, idx) => (
-              <li key={idx} style={{ fontSize: "13px", color: "var(--color-warning)" }}>
+              <li key={idx} style={{ fontSize: "var(--fs-md)", color: "var(--c-warning)" }}>
                 {warning.kind}: {warning.message}
               </li>
             ))}
@@ -174,7 +174,7 @@ export function SceneReadinessPanel({ projectRootPath, sceneId, refreshKey = 0 }
         </div>
       ) : null}
 
-      <p style={{ marginTop: "8px", fontSize: "12px", color: "var(--color-mid-gray)" }}>
+      <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
         Upgrade available is a warning, not a blocker. Historical pins remain executable.
       </p>
     </section>

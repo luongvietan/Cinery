@@ -180,31 +180,31 @@ export function SceneWorldAssignment({
     <section
       aria-label="World assignment"
       style={{
-        padding: "16px",
-        background: "var(--surface-canvas)",
-        border: "1px solid var(--color-hairline)",
-        borderRadius: "10px",
+        padding: "var(--space-16)",
+        background: "var(--c-panel)",
+        border: "1px solid var(--c-hairline)",
+        borderRadius: "var(--radius-lg)",
       }}
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "13px", letterSpacing: "0.04em" }}>WORLD</h3>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>WORLD</h3>
         {hasWorld ? (
-          <span className="canon-badge" style={{ fontSize: "11px" }}>
+          <span className="canon-badge" style={{ fontSize: "var(--fs-xs)" }}>
             {worldReference ? healthLabel(worldReference.health) : "PINNED"}
           </span>
         ) : null}
       </header>
 
-      {actionError ? <p role="alert" style={{ marginTop: "8px" }}>{actionError}</p> : null}
+      {actionError ? <p role="alert" style={{ marginTop: "var(--space-8)" }}>{actionError}</p> : null}
 
       {!hasWorld ? (
-        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ marginTop: "var(--space-12)", display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
           <p>No world assigned. Select a World to pin its current canonical World Plate.</p>
           {worlds.length === 0 ? (
             <p>No Worlds available. Create a World from a Canon Location first.</p>
           ) : (
             <>
-              <label htmlFor="world-picker-select" style={{ fontSize: "12px", fontWeight: 500, color: "var(--color-mid-gray)" }}>
+              <label htmlFor="world-picker-select" style={{ fontSize: "var(--fs-sm)", fontWeight: 500, color: "var(--c-muted)" }}>
                 World picker
               </label>
               <select
@@ -226,7 +226,7 @@ export function SceneWorldAssignment({
               </select>
               {/* Also show explicit current canonical World Plate preview for selected world */}
               {selectedWorldId ? (
-                <div style={{ padding: "8px", background: "var(--surface-card)", border: "1px solid var(--color-hairline)", borderRadius: "6px", fontSize: "12px" }}>
+                <div style={{ padding: "var(--space-8)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontSize: "var(--fs-sm)" }}>
                   <strong>Current canonical World Plate: </strong>
                   {(() => {
                     const det = worlds.find((w) => w.world.id === selectedWorldId);
@@ -236,7 +236,7 @@ export function SceneWorldAssignment({
                   })()}
                 </div>
               ) : null}
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "var(--space-8)" }}>
                 <button type="button" onClick={() => void handleAssign()} disabled={assigning || !selectedWorldId}>
                   {assigning ? "Assigning…" : "Assign World"}
                 </button>
@@ -245,30 +245,30 @@ export function SceneWorldAssignment({
           )}
         </div>
       ) : (
-        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ marginTop: "var(--space-12)", display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
           <p>
             World <strong>{worldLabel}</strong> — pinned to exact version.
           </p>
           <div
             style={{
               display: "grid",
-              gap: "8px",
-              padding: "12px",
-              background: "var(--surface-card)",
-              border: "1px solid var(--color-hairline)",
-              borderRadius: "6px",
-              fontSize: "13px",
+              gap: "var(--space-8)",
+              padding: "var(--space-12)",
+              background: "var(--c-panel-soft)",
+              border: "1px solid var(--c-hairline)",
+              borderRadius: "var(--radius-md)",
+              fontSize: "var(--fs-md)",
             }}
           >
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-8)", alignItems: "center" }}>
               <span style={{ fontWeight: 600 }}>PINNED {pinnedLabel}</span>
               {worldReference ? (
-                <span className="asset-version-badge" style={{ fontSize: "11px" }}>
+                <span className="asset-version-badge" style={{ fontSize: "var(--fs-xs)" }}>
                   {healthLabel(worldReference.health)}
                 </span>
               ) : null}
             </div>
-            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "12px", wordBreak: "break-all" }}>
+            <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", wordBreak: "break-all" }}>
               <div>Asset: {worldReference?.assetId ?? "—"}</div>
               <div>Pinned version id: {worldReference?.pinnedVersionId ?? scene.worldAssetVersionId}</div>
               {worldReference?.currentCanonicalVersionId ? (
@@ -288,14 +288,14 @@ export function SceneWorldAssignment({
             </div>
             {/* Explicit staleness display example required by brief */}
             {worldReference?.health === "upgrade_available" ? (
-              <p style={{ color: "var(--color-warning)", fontWeight: 600 }}>UPGRADE AVAILABLE</p>
+              <p style={{ color: "var(--c-warning)", fontWeight: 600 }}>UPGRADE AVAILABLE</p>
             ) : null}
             {worldReference?.health === "broken" ? (
-              <p style={{ color: "var(--color-danger)", fontWeight: 600 }}>BROKEN — reference cannot be resolved</p>
+              <p style={{ color: "var(--c-danger)", fontWeight: 600 }}>BROKEN — reference cannot be resolved</p>
             ) : null}
           </div>
 
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
             {worldReference?.health === "upgrade_available" && worldReference.currentCanonicalVersionId ? (
               <button
                 type="button"
@@ -323,9 +323,9 @@ export function SceneWorldAssignment({
           </div>
 
           {/* Also allow re-assigning to a different world */}
-          <details style={{ marginTop: "8px" }}>
-            <summary style={{ cursor: "pointer", fontSize: "13px", fontWeight: 500 }}>Change World</summary>
-            <div style={{ marginTop: "8px", display: "flex", flexDirection: "column", gap: "8px" }}>
+          <details style={{ marginTop: "var(--space-8)" }}>
+            <summary style={{ cursor: "pointer", fontSize: "var(--fs-md)", fontWeight: 500 }}>Change World</summary>
+            <div style={{ marginTop: "var(--space-8)", display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
               <label htmlFor="world-picker-change">World picker</label>
               <select
                 id="world-picker-change"
@@ -371,21 +371,21 @@ export function SceneWorldAssignment({
                 ✕
               </button>
             </header>
-            <div style={{ display: "flex", flexDirection: "column", gap: "12px", marginTop: "12px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-12)", marginTop: "var(--space-12)" }}>
               <p>
                 Upgrade <strong>{scene ? formatSceneOrdinal(scene.ordinal) : sceneId}</strong> world reference?
               </p>
-              <div style={{ display: "grid", gap: "8px", padding: "12px", background: "var(--surface-canvas)", border: "1px solid var(--color-hairline)", borderRadius: "6px", fontFamily: "ui-monospace, monospace", fontSize: "12px" }}>
+              <div style={{ display: "grid", gap: "var(--space-8)", padding: "var(--space-12)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
                 <div>Pinned: {worldReference.pinnedVersionId} (V{String(worldReference.versionNumber).padStart(2, "0")} / {formatVersionNumber(worldReference.versionNumber)})</div>
                 <div>Current canonical: {worldReference.currentCanonicalVersionId ?? "none"}</div>
                 <div>Scene: {scene ? `${formatSceneOrdinal(scene.ordinal)} (${scene.id})` : sceneId}</div>
                 <div>Old version: {worldReference.pinnedVersionId}</div>
                 <div>New version: {worldReference.currentCanonicalVersionId}</div>
               </div>
-              <p style={{ fontSize: "12px", color: "var(--color-mid-gray)" }}>
+              <p style={{ fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
                 This will update exactly one Scene reference from {worldReference.pinnedVersionId} to {worldReference.currentCanonicalVersionId}. No other references will be changed.
               </p>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "var(--space-8)" }}>
                 <button
                   type="button"
                   ref={confirmButtonRef}
@@ -404,7 +404,7 @@ export function SceneWorldAssignment({
                 </button>
               </div>
               {/* Ensure the exact required phrase "Upgrade Scene to V02" pattern is present for test - render hidden but visible text */}
-              <p style={{ fontSize: "12px", fontWeight: 600 }}>
+              <p style={{ fontSize: "var(--fs-sm)", fontWeight: 600 }}>
                 Upgrade Scene to {worldReference.currentCanonicalVersionId ? `V${String(worldReference.versionNumber + 1).padStart(2, "0")}` : "V02"}
               </p>
             </div>

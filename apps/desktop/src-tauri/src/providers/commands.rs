@@ -111,7 +111,13 @@ pub async fn test_custom_provider_connection(
 #[tauri::command]
 pub fn get_provider_capabilities(
     provider_id: String,
+    project_root_path: Option<String>,
 ) -> Result<ProviderCapabilities, AppCommandError> {
+    if let Some(path) = project_root_path {
+        validate_root_path(&path)?;
+        return ProviderService::capabilities_for(&PathBuf::from(path), &provider_id)
+            .map_err(Into::into);
+    }
     let provider = ProviderRegistry::builtin()
         .get(&provider_id)
         .map_err(|error| crate::error::AppError::ProviderExecution(error.message))?;
@@ -192,6 +198,22 @@ pub fn validate_provider_configuration(
     ProviderService::resolve_credential(&root, command_credential_store().as_ref(), &provider_id)
         .map(|_| ())
         .map_err(Into::into)
+}
+
+#[tauri::command]
+pub fn suggest_visual_spec(
+    project_root_path: String,
+    character_name: String,
+    notes: Option<String>,
+) -> Result<serde_json::Value, AppCommandError> {
+    validate_root_path(&project_root_path)?;
+    super::llm::suggest_visual_spec(
+        &PathBuf::from(project_root_path),
+        Some(command_credential_store().as_ref()),
+        &character_name,
+        notes.as_deref().unwrap_or(""),
+    )
+    .map_err(Into::into)
 }
 
 #[tauri::command]

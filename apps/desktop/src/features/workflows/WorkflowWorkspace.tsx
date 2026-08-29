@@ -112,8 +112,8 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
       <div className="workflow-overview" aria-busy={loading}>
         <OperationCatalog operations={operations} onSelect={selectOperation} />
         <section className="workflow-recent" aria-labelledby="recent-runs-title" aria-busy={loading}>
-          <header className="workflow-panel-header"><div><h2 id="recent-runs-title">Recent runs</h2><p>Persisted workflow state. Opening a run never advances it.</p></div></header>
-          {loading ? <p className="workflow-loading" role="status">Loading workflow history…</p> : runs.length === 0 ? <p className="workflow-loading">No workflow runs yet.</p> : (
+          <header className="workflow-panel-header"><div><h2 id="recent-runs-title">Recent runs</h2><p>Every generation you've started, kept even after you close the app.</p></div></header>
+          {loading ? <p className="workflow-loading" role="status">Loading workflow history…</p> : runs.length === 0 ? <div className="empty-state" role="status"><p>No workflow runs yet.</p><p>Start one from Production, or pick an operation above.</p></div> : (
             <ul>{runs.map((run) => <li key={run.id}><button type="button" onClick={(event) => openRun(run.id, event.currentTarget)} disabled={pending}><span>{run.operationId}</span><span className={`workflow-status workflow-status--${run.status}`}><span aria-hidden="true">●</span><span>{humanizeWorkflowStatus(run.status)}</span></span><span>{run.skillId}@{run.skillVersion}</span></button></li>)}</ul>
           )}
         </section>

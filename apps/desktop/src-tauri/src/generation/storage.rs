@@ -22,6 +22,40 @@ pub fn materialize_image(
     ordinal: i64,
     bytes: &[u8],
 ) -> Result<MaterializedArtifact, AppError> {
+    let format = guess_format(bytes).map_err(|error| {
+        AppError::GenerationArtifactCaptureFailed(format!("unsupported image payload: {error}"))
+    })?;
+    let (mime_type, extension) = format_metadata(format);
+    let decoded = image::load_from_memory(bytes).map_err(|error| {
+        AppError::GenerationArtifactCaptureFailed(format!("image decode failed: {error}"))
+    })?;
+    let (width, height) = decoded.dimensions();
+    materialize_media(
+        project_root,
+        workflow_run_id,
+        provider_attempt_id,
+        ordinal,
+        bytes,
+        mime_type,
+        extension,
+        Some(width as i64),
+        Some(height as i64),
+    )
+}
+
+/// Persists provider output bytes of any supported media kind (image or
+/// video) under the run's artifact directory with an atomic write.
+pub fn materialize_media(
+    project_root: &Path,
+    workflow_run_id: &str,
+    provider_attempt_id: &str,
+    ordinal: i64,
+    bytes: &[u8],
+    mime_type: &str,
+    extension: &str,
+    width: Option<i64>,
+    height: Option<i64>,
+) -> Result<MaterializedArtifact, AppError> {
     if ordinal < 1 {
         return Err(AppError::GenerationArtifactCaptureFailed(
             "artifact ordinal must be positive".into(),
@@ -29,15 +63,6 @@ pub fn materialize_image(
     }
     validate_component(workflow_run_id)?;
     validate_component(provider_attempt_id)?;
-
-    let format = guess_format(bytes).map_err(|error| {
-        AppError::GenerationArtifactCaptureFailed(format!("unsupported image payload: {error}"))
-    })?;
-    let (mime_type, extension) = format_metadata(format)?;
-    let decoded = image::load_from_memory(bytes).map_err(|error| {
-        AppError::GenerationArtifactCaptureFailed(format!("image decode failed: {error}"))
-    })?;
-    let (width, height) = decoded.dimensions();
 
     let relative = PathBuf::from("generated")
         .join(workflow_run_id)
@@ -65,8 +90,8 @@ pub fn materialize_image(
     Ok(MaterializedArtifact {
         storage_path: to_forward_slash(&relative),
         mime_type: mime_type.into(),
-        width: Some(width as i64),
-        height: Some(height as i64),
+        width,
+        height,
         byte_size: bytes.len() as i64,
         sha256: sha256(bytes),
     })
@@ -106,15 +131,21 @@ fn write_and_flush(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     Ok(())
 }
 
-fn format_metadata(format: ImageFormat) -> Result<(&'static str, &'static str), AppError> {
+fn format_metadata(format: ImageFormat) -> (&'static str, &'static str) {
     match format {
-        ImageFormat::Png => Ok(("image/png", "png")),
-        ImageFormat::Jpeg => Ok(("image/jpeg", "jpg")),
-        ImageFormat::WebP => Ok(("image/webp", "webp")),
-        other => Err(AppError::GenerationArtifactCaptureFailed(format!(
-            "unsupported image format: {other:?}"
-        ))),
+        ImageFormat::Png => ("image/png", "png"),
+        ImageFormat::Jpeg => ("image/jpeg", "jpg"),
+        ImageFormat::WebP => ("image/webp", "webp"),
+        // materialize_media's callers derive the kind from the media type,
+        // so an unknown image container falls through to a generic payload.
+        _ => ("application/octet-stream", "bin"),
     }
+}
+
+/// Minimal ISO-BMFF check: a real MP4 starts with a box header whose size
+/// field is followed by the "ftyp" brand box. We never decode video here.
+pub fn looks_like_mp4(bytes: &[u8]) -> bool {
+    bytes.len() > 12 && &bytes[4..8] == b"ftyp"
 }
 
 fn validate_component(value: &str) -> Result<(), AppError> {
@@ -155,4 +186,19 @@ fn to_forward_slash(path: &Path) -> String {
 
 fn io_error(error: std::io::Error) -> AppError {
     AppError::GenerationArtifactCaptureFailed(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mp4_signature_check_accepts_ftyp_boxes_and_rejects_other_payloads() {
+        let mut mp4 = vec![0, 0, 0, 24];
+        mp4.extend_from_slice(b"ftypisom");
+        mp4.extend_from_slice(&[0u8; 16]);
+        assert!(looks_like_mp4(&mp4));
+        assert!(!looks_like_mp4(b"not an mp4 file at all"));
+        assert!(!looks_like_mp4(&[]));
+    }
 }

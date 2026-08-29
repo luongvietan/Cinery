@@ -95,7 +95,7 @@ export function DiagnosticsPanel({ projectRootPath }: Props) {
         </div>
       ) : null}
 
-      <details className="diagnostics-jobs" style={{ marginTop: "16px" }}>
+      <details className="diagnostics-jobs" style={{ marginTop: "var(--space-16)" }}>
         <summary>Background jobs &amp; recovery</summary>
         <JobsPanel projectRootPath={projectRootPath} />
       </details>
