@@ -61,6 +61,7 @@ impl GenerationProvider for MockImageProvider {
             supports_progress: true,
             supported_aspect_ratios: vec![],
             supported_models: vec!["mock-image-v1".into()],
+            max_reference_images: Some(8),
         }
     }
     fn submit(&self, request: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {

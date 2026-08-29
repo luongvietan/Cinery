@@ -7,6 +7,8 @@ import { AssetList } from "../assets/AssetList";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { ProductionWorkspace } from "../production/ProductionWorkspace";
 import { CanonWorkspace } from "../canon/CanonWorkspace";
+import { WorldWorkspace } from "../worlds/WorldWorkspace";
+import { SceneWorkspace } from "../scenes/SceneWorkspace";
 import { ProviderSettings } from "../providers/ProviderSettings";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel";
 import { ProjectOverview } from "../overview/ProjectOverview";
@@ -17,7 +19,7 @@ interface ProjectWorkspaceProps {
   onCloseProject: () => void;
 }
 
-type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "providers" | "cinema" | "diagnostics";
+type PanelView = "overview" | "assets" | "workflows" | "production" | "canon" | "worlds" | "scenes" | "providers" | "cinema" | "diagnostics";
 
 export function ProjectWorkspace({
   project,
@@ -49,6 +51,8 @@ export function ProjectWorkspace({
     { view: "canon", label: "Canon" },
     { view: "workflows", label: "Workflows" },
     { view: "production", label: "Production" },
+    { view: "worlds", label: "Worlds" },
+    { view: "scenes", label: "Scenes" },
     { view: "providers", label: "Providers" },
     { view: "diagnostics", label: "Diagnostics" },
   ];
@@ -108,6 +112,8 @@ export function ProjectWorkspace({
           <ProductionWorkspace projectRootPath={project.rootPath} />
         ) : null}
         {panelView === "canon" ? <CanonWorkspace projectRootPath={project.rootPath} initialTab={overviewAction?.id === "resolve_protected_tbd" ? "TBDs" : "Story"} /> : null}
+        {panelView === "worlds" ? <WorldWorkspace projectRootPath={project.rootPath} /> : null}
+        {panelView === "scenes" ? <SceneWorkspace projectRootPath={project.rootPath} /> : null}
         {panelView === "providers" ? <ProviderSettings projectRootPath={project.rootPath} /> : null}
         {panelView === "diagnostics" ? <DiagnosticsPanel projectRootPath={project.rootPath} /> : null}
         {panelView === "cinema" ? <CinemaWorkspace projectRootPath={project.rootPath} action={overviewAction} /> : null}

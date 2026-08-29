@@ -35,6 +35,7 @@ fn request_with_references(version_ids: &[&str]) -> cinematic_desktop_lib::workf
                 reference_type: ExecutionReferenceType::AssetVersion,
                 reference: id.to_string(),
                 description: "exact pinned reference".into(),
+                role: None,
             })
             .collect(),
         constraints: vec![],

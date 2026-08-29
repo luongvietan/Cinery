@@ -44,6 +44,7 @@ mod tests {
                 supports_progress: false,
                 supported_aspect_ratios: vec![],
                 supported_models: vec![],
+                max_reference_images: None,
             }
         }
         fn submit(&self, _: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {

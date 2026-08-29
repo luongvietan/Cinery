@@ -210,6 +210,82 @@ pub enum AppError {
 
     #[error("Cinema duration is invalid: {0}")]
     InvalidCinemaDuration(String),
+
+    #[error("Canon location was not found")]
+    WorldLocationNotFound,
+
+    #[error("Canon entity is not a location")]
+    WorldLocationInvalidType,
+
+    #[error("A world already exists for this location")]
+    WorldAlreadyExists,
+
+    #[error("World was not found")]
+    WorldNotFound,
+
+    #[error("World plate asset is invalid: {0}")]
+    WorldPlateAssetInvalid(String),
+
+    #[error("TBD decision is required: {0}")]
+    TbdDecisionRequired(String),
+
+    #[error("Protected TBD must be preserved: {0}")]
+    ProtectedTbdMustBePreserved(String),
+
+    #[error("TBD not applicable reason is required: {0}")]
+    TbdNotApplicableReasonRequired(String),
+
+    #[error("Scene summary is invalid: {0}")]
+    InvalidSceneSummary(String),
+
+    #[error("World plate has no canonical version: {0}")]
+    SceneWorldPlateNotCanonical(String),
+
+    #[error("Character look asset version is not canonical")]
+    SceneCharacterLookNotCanonical,
+
+    #[error("Character look is not owned by the given character")]
+    SceneCharacterLookNotOwned,
+
+    #[error("Character already assigned to this scene")]
+    SceneCharacterAlreadyExists,
+
+    #[error("Character assignment was not found")]
+    SceneCharacterNotFound,
+
+    #[error("Character sheet asset version is not canonical")]
+    SceneCharacterSheetNotCanonical,
+
+    #[error("Character sheet is not owned by the given character")]
+    SceneCharacterSheetNotOwned,
+
+    #[error("Prop plate asset version is not canonical")]
+    ScenePropNotCanonical,
+
+    #[error("Prop plate asset type must be prop_plate")]
+    ScenePropInvalidType,
+
+    #[error("Prop already assigned to this scene")]
+    ScenePropAlreadyExists,
+
+    #[error("Prop assignment was not found")]
+    ScenePropNotFound,
+
+    #[error("Scene reference is already current")]
+    SceneReferenceAlreadyCurrent,
+
+    #[error("Scene reference has no canonical version: {0}")]
+    SceneReferenceCanonicalMissing(String),
+
+    #[error("Scene reference is broken: {0}")]
+    SceneReferenceBroken(String),
+
+    #[error("Scene is not ready for keyframe generation: {0}")]
+    SceneNotReady(String),
+
+    #[error("Provider capability is not satisfied: {0}")]
+    ProviderCapabilityUnsatisfied(String),
+
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

@@ -72,6 +72,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 15,
         sql: include_str!("../../migrations/0015_custom_provider_purpose.sql"),
     },
+    Migration {
+        version: 16,
+        sql: include_str!("../../migrations/0016_world_scene_pipeline.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -541,5 +545,201 @@ mod tests {
                 .unwrap();
             assert_eq!(exists, 1, "index {index} should exist");
         }
+    }
+
+    fn p6_project_still_migrates_successfully_after_p7() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        // Verify P6 tables still exist and are usable.
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('p6-proj', 'P6', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) VALUES ('a-p6', 'p6-proj', 'world_plate', 'World', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, MIGRATIONS.len() as i64);
+    }
+
+    #[test]
+    fn p7_tables_exist() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        for table in [
+            "worlds",
+            "scenes",
+            "world_scene_characters",
+            "world_scene_props",
+            "scene_tbd_bindings",
+            "scene_reference_events",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "table {table} should exist");
+        }
+    }
+
+    #[test]
+    fn p7_foreign_keys_are_enforced() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&mut conn).unwrap();
+        let enabled: i64 = conn
+            .query_row("PRAGMA foreign_keys", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(enabled, 1, "foreign_keys pragma should be ON");
+        // Attempt to insert worlds with invalid project_id should fail via FK.
+        let fk_result = conn.execute(
+            "INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('w-1', 'missing-project', 'loc-1', 'asset-1', 'now', 'now')",
+            [],
+        );
+        assert!(fk_result.is_err(), "FK violation should be rejected, got {fk_result:?}");
+    }
+
+    #[test]
+    fn p7_rejects_duplicate_world_per_location() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('proj-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('loc-1', 'proj-1', 'location', 'Station', 'station', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) VALUES ('asset-1', 'proj-1', 'world_plate', 'STATION-WORLD', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('world-1', 'proj-1', 'loc-1', 'asset-1', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let dup = conn.execute(
+            "INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('world-2', 'proj-1', 'loc-1', 'asset-1', 'now', 'now')",
+            [],
+        );
+        assert!(dup.is_err(), "duplicate World per Location should be rejected");
+    }
+
+    #[test]
+    fn p7_rejects_duplicate_scene_ordinal() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('proj-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) VALUES ('scene-1', 'proj-1', 1, 'Title', 'Summary', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let dup = conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) VALUES ('scene-2', 'proj-1', 1, 'Other', 'Summary2', 'now', 'now')",
+            [],
+        );
+        assert!(dup.is_err(), "duplicate Scene ordinal should be rejected");
+    }
+
+    #[test]
+    fn p7_rejects_duplicate_character_assignment() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('proj-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('char-1', 'proj-1', 'character', 'Mara', 'mara', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) VALUES ('asset-look', 'proj-1', 'face_lock', 'MARA-LOOK', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) VALUES ('ver-1', 'asset-look', 1, 'candidate', 'a.png', 't.png', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'a.png', 'image/png', 1, 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) VALUES ('ver-2', 'asset-look', 2, 'candidate', 'b.png', 't2.png', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'b.png', 'image/png', 1, 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) VALUES ('scene-1', 'proj-1', 1, 'Title', 'Summary', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-1', 'scene-1', 'char-1', 'ver-1', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let dup = conn.execute(
+            "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-2', 'scene-1', 'char-1', 'ver-2', 'now', 'now')",
+            [],
+        );
+        assert!(dup.is_err(), "duplicate Character assignment should be rejected");
+    }
+
+    #[test]
+    fn p7_rejects_invalid_reference_ids() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) VALUES ('proj-1', 'Project', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) VALUES ('scene-1', 'proj-1', 1, 'Title', 'Summary', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        // Invalid scene_id FK
+        let fk1 = conn.execute(
+            "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-bad', 'missing-scene', 'char-1', 'ver-1', 'now', 'now')",
+            [],
+        );
+        assert!(fk1.is_err(), "invalid scene_id should be rejected, got {fk1:?}");
+        // Invalid asset_version FK
+        let fk2 = conn.execute(
+            "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-bad2', 'scene-1', 'char-1', 'missing-version', 'now', 'now')",
+            [],
+        );
+        assert!(fk2.is_err(), "invalid look_asset_version_id should be rejected, got {fk2:?}");
+        // Invalid world FK
+        let fk3 = conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, world_id, created_at, updated_at) VALUES ('scene-2', 'proj-1', 2, 'Title2', 'Summary2', 'missing-world', 'now', 'now')",
+            [],
+        );
+        assert!(fk3.is_err(), "invalid world_id should be rejected, got {fk3:?}");
     }
 }

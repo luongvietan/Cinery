@@ -204,6 +204,8 @@ pub struct ProviderCapabilities {
     pub supports_progress: bool,
     pub supported_aspect_ratios: Vec<String>,
     pub supported_models: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_reference_images: Option<u32>,
 }
 
 impl ProviderCapabilities {
@@ -222,6 +224,15 @@ impl ProviderCapabilities {
         }
         if request.references.len() > 1 && !self.supports_multiple_reference_images {
             return Err("multiple reference images are not supported".into());
+        }
+        if let Some(max) = self.max_reference_images {
+            if (request.references.len() as u32) > max {
+                return Err(format!(
+                    "reference count {} exceeds provider limit {}",
+                    request.references.len(),
+                    max
+                ));
+            }
         }
         if !self.supported_models.is_empty()
             && !self
@@ -491,6 +502,7 @@ mod tests {
                 reference_type: ExecutionReferenceType::CanonSnapshot,
                 reference: "canon-1".into(),
                 description: "locked visual spec".into(),
+                role: None,
             }],
             constraints: vec![],
             expected_output: serde_json::from_value(serde_json::json!({
@@ -554,6 +566,7 @@ mod tests {
             supports_progress: false,
             supported_aspect_ratios: vec![],
             supported_models: vec!["gpt-image-1".into()],
+            max_reference_images: None,
         };
 
         let error = capabilities.supports(&request).unwrap_err();

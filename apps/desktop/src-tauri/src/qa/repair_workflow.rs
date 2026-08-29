@@ -79,11 +79,13 @@ pub fn compile_request(
         reference_type: ExecutionReferenceType::AssetVersion,
         reference: context.source.id.clone(),
         description: "Exact source candidate to edit; never overwrite this version.".into(),
+        role: None,
     }];
     references.extend(context.references.iter().map(|version| ExecutionReference {
         reference_type: ExecutionReferenceType::AssetVersion,
         reference: version.id.clone(),
         description: format!("Exact immutable repair reference Asset Version {}", version.id),
+        role: None,
     }));
     let constraints = context
         .compiled

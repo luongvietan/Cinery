@@ -127,6 +127,15 @@ pub enum ReferenceBackground {
     NeutralGray,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceRole {
+    World,
+    CharacterLook,
+    CharacterSheet,
+    Prop,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionReference {
@@ -134,6 +143,8 @@ pub struct ExecutionReference {
     pub reference_type: ExecutionReferenceType,
     pub reference: String,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<ReferenceRole>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
