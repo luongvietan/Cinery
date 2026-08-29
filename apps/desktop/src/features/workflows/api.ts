@@ -3,6 +3,7 @@ import type {
   ProviderConfigurationStatus,
   CustomProviderDefinition,
   ProviderConnectionTestResult,
+  ProviderPreset,
   SkillOperation,
   WorkflowCharacterOption,
   WorkflowRunDetail,
@@ -73,6 +74,10 @@ export function listWorkflowRuns(projectRootPath: string): Promise<WorkflowRunRe
 
 export function listProviders(projectRootPath?: string): Promise<string[]> {
   return invokeCommand("list_providers", projectRootPath ? { projectRootPath } : undefined);
+}
+
+export function listProviderPresets(): Promise<ProviderPreset[]> {
+  return invokeCommand("list_provider_presets", undefined);
 }
 
 export function listCustomProviders(projectRootPath: string): Promise<CustomProviderDefinition[]> {

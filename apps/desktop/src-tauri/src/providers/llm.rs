@@ -1,5 +1,5 @@
 use super::credential_store::{credential_account, CredentialStore, KeyringCredentialStore};
-use super::http::{HttpTransport, UreqTransport};
+use super::http::{HttpBody, HttpExecutor, HttpRequest, UreqExecutor};
 use super::service::ProviderService;
 use crate::db;
 use crate::error::AppError;
@@ -97,14 +97,31 @@ pub fn suggest_visual_spec(
             },
         ],
     });
-    let response = UreqTransport::new(SUGGEST_TIMEOUT)
-        .post_json(&endpoint, &token, &body)
+    let request = HttpRequest {
+        method: "POST".into(),
+        url: endpoint,
+        headers: vec![("Authorization".into(), format!("Bearer {token}"))],
+        body: HttpBody::Json(body),
+        max_response_bytes: 10 * 1024 * 1024,
+    };
+    let response = UreqExecutor::new(SUGGEST_TIMEOUT).execute(request)
         .map_err(|diagnostic| {
             AppError::ProviderExecution(super::error::redact_secret(&format!(
                 "the text service request failed: {diagnostic}"
             )))
         })?;
-    let content = response
+    if !response.is_success() {
+        return Err(AppError::ProviderExecution(format!(
+            "the text service returned HTTP {}",
+            response.status
+        )));
+    }
+    let document = response.json().map_err(|error| {
+        AppError::ProviderExecution(format!(
+            "the text service returned an unreadable response: {error}"
+        ))
+    })?;
+    let content = document
         .pointer("/choices/0/message/content")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {

@@ -41,6 +41,18 @@ pub struct ProviderError {
     pub kind: ProviderErrorKind,
     pub message: String,
     pub diagnostic: Option<String>,
+    /// HTTP status when the failure came from a provider response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    /// The provider's own error text, extracted from its response body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_message: Option<String>,
+    /// Provider request/job id when the response exposes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// The provider operation that failed (e.g. `image.generate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
 }
 
 impl ProviderError {
@@ -49,12 +61,63 @@ impl ProviderError {
             kind,
             message: message.into(),
             diagnostic: None,
+            status_code: None,
+            provider_message: None,
+            request_id: None,
+            operation: None,
         }
     }
 
     pub fn with_diagnostic(mut self, diagnostic: impl Into<String>) -> Self {
         self.diagnostic = Some(redact_secret(&diagnostic.into()));
         self
+    }
+
+    pub fn with_status_code(mut self, status: u16) -> Self {
+        self.status_code = Some(status);
+        self
+    }
+
+    pub fn with_provider_message(mut self, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let redacted = redact_secret(&message);
+        if !redacted.trim().is_empty() {
+            self.provider_message = Some(redacted);
+        }
+        self
+    }
+
+    pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
+        self.request_id = Some(redact_secret(&request_id.into()));
+        self
+    }
+
+    pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
+        self.operation = Some(operation.into());
+        self
+    }
+
+    /// Single human-readable line the UI can show verbatim. Never echoes
+    /// secrets; provider-supplied text is redacted on the way in.
+    pub fn display_text(&self) -> String {
+        let mut text = String::new();
+        if let Some(operation) = &self.operation {
+            text.push_str(&format!("{operation}: "));
+        }
+        text.push_str(&self.message);
+        if let Some(status) = self.status_code {
+            text.push_str(&format!(" (HTTP {status})"));
+        }
+        if let Some(provider_message) = &self.provider_message {
+            text.push_str(&format!(" — provider said: {provider_message}"));
+        }
+        if let Some(request_id) = &self.request_id {
+            text.push_str(&format!(" [request {request_id}]"));
+        }
+        if let Some(diagnostic) = &self.diagnostic {
+            text.push_str(&format!(" ({diagnostic})"));
+        }
+        text
     }
 }
 
@@ -186,5 +249,33 @@ mod tests {
         let error = ProviderError::new(ProviderErrorKind::NetworkError, "request failed")
             .with_diagnostic("Authorization: Bearer secret123");
         assert!(!error.diagnostic.unwrap().contains("secret123"));
+    }
+
+    #[test]
+    fn display_text_includes_status_provider_message_and_never_secrets() {
+        let error = ProviderError::new(ProviderErrorKind::InvalidRequest, "validation failed")
+            .with_status_code(400)
+            .with_provider_message("prompt is required")
+            .with_request_id("req-123")
+            .with_operation("image.generate");
+        let text = error.display_text();
+        assert!(text.contains("image.generate"));
+        assert!(text.contains("HTTP 400"));
+        assert!(text.contains("prompt is required"));
+        assert!(text.contains("req-123"));
+        let secret_error = ProviderError::new(ProviderErrorKind::AuthenticationError, "rejected")
+            .with_provider_message("bad key sk-j9mlQwErTyXzray");
+        assert!(!secret_error.display_text().contains("sk-j9mlQwErTyXzray"));
+    }
+
+    #[test]
+    fn provider_error_serializes_without_optional_noise() {
+        let json = serde_json::to_value(
+            ProviderError::new(ProviderErrorKind::NetworkError, "down").with_operation("video.generate"),
+        )
+        .unwrap();
+        assert!(json.get("statusCode").is_none());
+        assert!(json.get("providerMessage").is_none());
+        assert_eq!(json["operation"], "video.generate");
     }
 }

@@ -2,7 +2,7 @@ use super::{
     RawVisualQaResponse, VisualQaAdapter, VisualQaAdapterError, VisualQaAdapterErrorKind,
     VisualQaCapabilities,
 };
-use crate::providers::http::{HttpTransport, UreqTransport};
+use crate::providers::http::{HttpBody, HttpExecutor, HttpRequest, UreqExecutor};
 use crate::qa::models::{VisualQaReference, VisualQaRequest};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
@@ -16,7 +16,7 @@ pub struct OpenAiCompatibleVisualQaAdapter {
     bearer_token: String,
     model_id: String,
     execution_location: String,
-    transport: Box<dyn HttpTransport>,
+    transport: Box<dyn HttpExecutor>,
 }
 
 impl OpenAiCompatibleVisualQaAdapter {
@@ -29,11 +29,11 @@ impl OpenAiCompatibleVisualQaAdapter {
             endpoint,
             bearer_token,
             model_id,
-            UreqTransport::new(Duration::from_secs(120)),
+            UreqExecutor::new(Duration::from_secs(120)),
         )
     }
 
-    pub fn with_transport<T: HttpTransport + 'static>(
+    pub fn with_transport<T: HttpExecutor + 'static>(
         endpoint: impl Into<String>,
         bearer_token: impl Into<String>,
         model_id: impl Into<String>,
@@ -160,17 +160,38 @@ impl VisualQaAdapter for OpenAiCompatibleVisualQaAdapter {
             ));
         }
         let body = self.request_body(request)?;
+        let request = HttpRequest {
+            method: "POST".into(),
+            url: self.chat_endpoint(),
+            headers: vec![("Authorization".into(), format!("Bearer {}", self.bearer_token))],
+            body: HttpBody::Json(body),
+            max_response_bytes: 50 * 1024 * 1024,
+        };
         let response = self
             .transport
-            .post_json(&self.chat_endpoint(), &self.bearer_token, &body)
-            .map_err(|diagnostic| {
+            .execute(request)
+            .map_err(|failure| {
                 VisualQaAdapterError::new(
                     VisualQaAdapterErrorKind::Network,
                     "Visual QA request failed",
                 )
-                .with_diagnostic(redact(&diagnostic, &self.bearer_token))
+                .with_diagnostic(redact(&failure.message, &self.bearer_token))
             })?;
-        let response_text = response
+        if !response.is_success() {
+            return Err(VisualQaAdapterError::new(
+                VisualQaAdapterErrorKind::Network,
+                "Visual QA request was rejected",
+            )
+            .with_diagnostic(redact(&response.text(), &self.bearer_token)));
+        }
+        let document = response.json().map_err(|error| {
+            VisualQaAdapterError::new(
+                VisualQaAdapterErrorKind::MalformedResponse,
+                "Visual QA response was not valid JSON",
+            )
+            .with_diagnostic(redact(&error, &self.bearer_token))
+        })?;
+        let response_text = document
             .pointer("/choices/0/message/content")
             .and_then(Value::as_str)
             .ok_or_else(|| {
@@ -183,8 +204,8 @@ impl VisualQaAdapter for OpenAiCompatibleVisualQaAdapter {
         Ok(RawVisualQaResponse {
             response_text,
             metadata: json!({
-                "model": response.get("model"),
-                "usage": response.get("usage"),
+                "model": document.get("model"),
+                "usage": document.get("usage"),
             }),
         })
     }

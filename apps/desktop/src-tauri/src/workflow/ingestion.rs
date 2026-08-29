@@ -31,7 +31,7 @@ mod tests {
 use crate::assets::model::AssetVersionRecord;
 use crate::assets::service::AssetService;
 use crate::error::AppError;
-use crate::providers::http::{HttpTransport, UreqTransport};
+use crate::providers::http::download_bytes;
 use crate::providers::model::ProviderResult;
 use crate::workflow::artifacts::workflow_artifact_dir;
 use image::{ImageBuffer, Rgba, RgbaImage};
@@ -151,10 +151,25 @@ fn load_output_bytes(uri: &str, mime_type: &str) -> Result<Vec<u8>, AppError> {
             .map_err(|error| AppError::WorkflowArtifactWriteFailed(error.to_string()))?;
         return Ok(cursor.into_inner());
     }
+    // Base64 outputs normalize to data: URIs; decode them exactly like the
+    // capture path so providers returning inline payloads work everywhere.
+    if let Some((_, payload)) = uri
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split_once(','))
+    {
+        return base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payload)
+            .map_err(|_| {
+                AppError::WorkflowArtifactWriteFailed(
+                    "provider returned an undecodable data URI payload".into(),
+                )
+            });
+    }
     if uri.starts_with("https://") || uri.starts_with("http://") {
-        return UreqTransport::new(Duration::from_secs(60))
-            .get_bytes(uri, "", MAX_PROVIDER_OUTPUT_BYTES)
-            .map_err(|error| AppError::WorkflowArtifactWriteFailed(error));
+        return download_bytes(uri, MAX_PROVIDER_OUTPUT_BYTES).map_err(|error| {
+            AppError::WorkflowArtifactWriteFailed(format!(
+                "provider output download failed: {error}"
+            ))
+        });
     }
     Err(AppError::WorkflowArtifactWriteFailed(format!(
         "provider output URI is not an allowed remote artifact: {uri} ({mime_type})"

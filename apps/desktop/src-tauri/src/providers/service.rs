@@ -1,13 +1,16 @@
 use super::adapter::GenerationProvider;
+use super::cancellation;
 use super::credential_store::{
     credential_account, credential_reference, header_credential_account,
     legacy_header_credential_account, CredentialStore, KeyringCredentialStore,
 };
+use super::config::OPERATION_VALIDATE;
+use super::declarative::DeclarativeProvider;
 use super::error::{ProviderError, ProviderErrorKind};
+use super::http::{HttpExecutor, HttpRequest, HttpResponse, UreqExecutor};
 use super::model::*;
 use super::model::CustomProviderPurpose;
-use super::openai::OpenAiImageProvider;
-use super::openai_video::OpenAiVideoProvider;
+use super::presets::preset_by_id;
 use super::registry::ProviderRegistry;
 use crate::db;
 use crate::error::AppError;
@@ -39,41 +42,6 @@ pub struct ProviderConnectionTestResult {
     pub connected: bool,
     pub status_code: Option<u16>,
     pub message: String,
-}
-
-pub trait ConnectionProbeTransport: Send + Sync {
-    fn get_status(&self, endpoint: &str, headers: &[(String, String)]) -> Result<u16, String>;
-}
-
-pub struct UreqConnectionProbe {
-    agent: ureq::Agent,
-}
-
-impl UreqConnectionProbe {
-    pub fn new(timeout: Duration) -> Self {
-        // Do not forward user-supplied authentication headers to a redirect
-        // target. The validation endpoint must be the exact configured host.
-        Self {
-            agent: ureq::AgentBuilder::new()
-                .timeout(timeout)
-                .redirects(0)
-                .build(),
-        }
-    }
-}
-
-impl ConnectionProbeTransport for UreqConnectionProbe {
-    fn get_status(&self, endpoint: &str, headers: &[(String, String)]) -> Result<u16, String> {
-        let mut request = self.agent.get(endpoint);
-        for (name, value) in headers {
-            request = request.set(name, value);
-        }
-        match request.call() {
-            Ok(response) => Ok(response.status()),
-            Err(ureq::Error::Status(code, _)) => Ok(code),
-            Err(ureq::Error::Transport(error)) => Err(super::redact_secret(&error.to_string())),
-        }
-    }
 }
 
 /// A resolved, ephemeral secret handed to a provider adapter at execution
@@ -157,10 +125,14 @@ impl ProviderService {
         Ok(definition)
     }
 
-    pub fn test_connection<S: CredentialStore + ?Sized, T: ConnectionProbeTransport + ?Sized>(
+    /// Connection testing is operation-aware: the provider's configured
+    /// `validate` operation runs (with its own URL, method, and auth); when
+    /// no validate operation exists, configuration-only validation applies.
+    /// No OpenAI-shaped request is ever assumed.
+    pub fn test_connection<S: CredentialStore + ?Sized, T: HttpExecutor + 'static>(
         project_root: &Path,
         credentials: &S,
-        transport: &T,
+        transport: T,
         provider_id: &str,
     ) -> Result<ProviderConnectionTestResult, AppError> {
         let conn = Self::open_project_conn(project_root)?;
@@ -174,61 +146,96 @@ impl ProviderService {
         definition
             .validate()
             .map_err(AppError::ProviderConfiguration)?;
-        let mut headers = Vec::new();
         let account = credential_account(&project_id, provider_id);
+        let mut api_key: Option<String> = None;
         if let Some(config) = super::repository::get_provider_config(&conn, provider_id)? {
             if config.credential_reference.as_deref()
                 == Some(credential_reference(&account).as_str())
             {
-                if let Some(secret) = resolve_configured_secret_impl(credentials, &account)? {
-                    headers.push(("Authorization".into(), format!("Bearer {secret}")));
+                api_key = resolve_configured_secret_impl(credentials, &account)?;
+            }
+        }
+        // Legacy compatibility: an Authorization header secret can act as
+        // the bearer credential when no API key account exists.
+        if api_key.is_none() && definition.runtime.auth.requires_credential() {
+            for header in &definition.headers {
+                if header.name.eq_ignore_ascii_case("authorization") {
+                    api_key =
+                        resolve_header_secret(credentials, &project_id, provider_id, &header.name)?;
+                    break;
                 }
             }
         }
+        let mut header_values = BTreeMap::new();
         for header in &definition.headers {
             if let Some(value) =
                 resolve_header_secret(credentials, &project_id, provider_id, &header.name)?
             {
-                headers.push((header.name.clone(), value));
+                header_values.insert(header.name.clone(), value);
             }
         }
-        if headers.is_empty() {
+        let credential_configured = !definition.runtime.auth.requires_credential()
+            || api_key.as_deref().is_some_and(|key| !key.trim().is_empty())
+            || !header_values.is_empty();
+        if !credential_configured {
             return Err(AppError::ProviderConfiguration(format!(
                 "provider {provider_id} has no API key or authentication header configured"
             )));
         }
-        let mut endpoint_url = url::Url::parse(&definition.base_url)
-            .map_err(|_| AppError::ProviderConfiguration("provider base URL is invalid".into()))?;
-        let mut path = endpoint_url.path().trim_end_matches('/').to_string();
-        path.push_str("/models");
-        endpoint_url.set_path(&path);
-        let endpoint = endpoint_url.to_string();
-        let (connected, status_code, message) = match transport.get_status(&endpoint, &headers) {
-            Ok(code) if (200..300).contains(&code) => (
+        let adapter = DeclarativeProvider::new(
+            provider_id,
+            definition.base_url.clone(),
+            definition.models.clone(),
+            definition.runtime.clone(),
+            api_key,
+            header_values,
+            Arc::new(transport),
+        );
+        let outcome = adapter
+            .run_validation(definition.models.first().map(|model| model.id.as_str()))
+            .map_err(provider_error)?;
+        let endpoint = Self::validation_endpoint_display(&definition);
+        if !outcome.performed_network_check {
+            return Ok(ProviderConnectionTestResult {
+                provider_id: provider_id.into(),
+                endpoint,
+                connected: true,
+                status_code: None,
+                message: "Configuration is valid and a credential is saved. This service has                           no test endpoint configured, so no network request was sent."
+                    .into(),
+            });
+        }
+        let provider_note = outcome
+            .provider_message
+            .as_deref()
+            .map(|message| format!(" Provider message: {message}"))
+            .unwrap_or_default();
+        let (connected, status_code, message) = match outcome.status_code {
+            Some(code) if (200..300).contains(&code) => (
                 true,
                 Some(code),
                 "Endpoint reachable and credentials were not rejected; no inference was run."
                     .into(),
             ),
-            Ok(401) => (
+            Some(401) => (
                 false,
                 Some(401),
-                "The API key was rejected (HTTP 401).".into(),
+                format!("The API key was rejected (HTTP 401).{provider_note}"),
             ),
-            Ok(403) => (
+            Some(403) => (
                 false,
                 Some(403),
-                "The credential is not authorized for this provider (HTTP 403).".into(),
+                format!("The credential is not authorized for this provider (HTTP 403).{provider_note}"),
             ),
-            Ok(code) => (
+            Some(code) => (
                 false,
                 Some(code),
-                format!("The provider returned HTTP {code} from the validation endpoint."),
+                format!("The provider returned HTTP {code} from its validation endpoint.{provider_note}"),
             ),
-            Err(error) => (
+            None => (
                 false,
                 None,
-                format!("Connection failed: {}", super::redact_secret(&error)),
+                "The validation request could not be completed.".into(),
             ),
         };
         Ok(ProviderConnectionTestResult {
@@ -238,6 +245,33 @@ impl ProviderService {
             status_code,
             message,
         })
+    }
+
+    /// Human-readable validation endpoint for display (never secret-bearing).
+    fn validation_endpoint_display(definition: &CustomProviderDefinition) -> String {
+        let model = definition
+            .models
+            .first()
+            .map(|model| model.id.clone())
+            .unwrap_or_default();
+        match definition.runtime.operations.get(OPERATION_VALIDATE) {
+            Some(endpoint) => {
+                let base = definition.base_url.trim_end_matches('/');
+                let mut url = format!("{base}{}", endpoint.path_template);
+                for (placeholder, value) in [
+                    ("{model}", model),
+                    (
+                        "{accountId}",
+                        definition.runtime.account_id.clone().unwrap_or_default(),
+                    ),
+                    ("{providerId}", definition.provider_id.clone()),
+                ] {
+                    url = url.replace(placeholder, &value);
+                }
+                url
+            }
+            None => definition.base_url.clone(),
+        }
     }
 
     pub fn upsert_custom_provider<S: CredentialStore + ?Sized>(
@@ -850,7 +884,7 @@ impl ProviderService {
             "mock" | "dry_run" => {}
             "openai" => {
                 let token = Self::resolve_openai_token(project_root, credentials)?;
-                registry.register(OpenAiImageProvider::new("https://api.openai.com/v1", token));
+                registry.register_arc(Self::openai_builtin_adapter(token));
             }
             _ => {
                 // A user-defined AI service: build a real HTTP adapter from
@@ -886,6 +920,7 @@ impl ProviderService {
                 ))
             })?;
         let submission = provider.submit(&provider_request).map_err(provider_error)?;
+        cancellation::register(provider_id, &submission.job.provider_job_id);
         Ok(ProviderSubmissionHandle {
             provider_id: provider_id.into(),
             adapter_version: provider.adapter_version(),
@@ -926,8 +961,29 @@ impl ProviderService {
         })
     }
 
-    /// Builds a real HTTP execution adapter for a user-defined AI service.
-    /// `require_credential` is false when only capabilities are needed.
+    /// The builtin `openai` provider, compiled from the openai-compatible
+    /// preset like any other declarative provider.
+    pub fn openai_builtin_adapter(token: String) -> Arc<dyn GenerationProvider> {
+        let preset = preset_by_id("openai-compatible")
+            .expect("the openai-compatible preset ships with the binary");
+        Arc::new(DeclarativeProvider::new(
+            "openai",
+            "https://api.openai.com/v1",
+            vec![CustomProviderModel {
+                id: OPENAI_DEFAULT_MODEL.into(),
+                name: "GPT Image 2".into(),
+                capabilities: Vec::new(),
+            }],
+            preset.runtime.clone(),
+            Some(token),
+            BTreeMap::new(),
+            Arc::new(UreqExecutor::new(Duration::from_secs(60))),
+        ))
+    }
+
+    /// Builds a real HTTP execution adapter for a user-defined AI service
+    /// from its stored declarative definition. `require_credential` is false
+    /// when only capabilities are needed.
     fn custom_execution_adapter(
         project_root: &Path,
         credentials: Option<&dyn CredentialStore>,
@@ -940,8 +996,8 @@ impl ProviderService {
                 "provider {provider_id} is not a configured AI service"
             ))
         })?;
-        let models: Vec<String> = definition.models.iter().map(|model| model.id.clone()).collect();
-        let mut token = String::new();
+        let mut api_key = String::new();
+        let mut header_values: BTreeMap<String, String> = BTreeMap::new();
         if require_credential {
             let store_owned;
             let store: &dyn CredentialStore = match credentials {
@@ -957,45 +1013,44 @@ impl ProviderService {
             let account = credential_account(&project_id, provider_id);
             if let Some(secret) = resolve_configured_secret_impl(store, &account)? {
                 if !secret.trim().is_empty() {
-                    token = secret;
+                    api_key = secret;
                 }
             }
-            if token.is_empty() {
+            if api_key.is_empty() {
                 for header in &definition.headers {
                     if header.name.eq_ignore_ascii_case("authorization") {
                         if let Some(value) =
                             resolve_header_secret(store, &project_id, provider_id, &header.name)?
                         {
-                            token = value;
+                            api_key = value;
                             break;
                         }
                     }
                 }
             }
-            if token.is_empty() {
+            if api_key.is_empty() && definition.runtime.auth.requires_credential() {
                 return Err(AppError::ProviderConfiguration(format!(
                     "provider {provider_id} has no API key configured. Add the key in AI Services, then run this step again."
                 )));
             }
-        }
-        let adapter: Arc<dyn GenerationProvider> = match definition.purpose {
-            CustomProviderPurpose::Image => Arc::new(
-                OpenAiImageProvider::new(&definition.base_url, token)
-                    .with_provider_id(definition.provider_id.clone())
-                    .with_models(models),
-            ),
-            CustomProviderPurpose::Video => Arc::new(
-                OpenAiVideoProvider::new(&definition.base_url, token)
-                    .with_provider_id(definition.provider_id.clone())
-                    .with_models(models),
-            ),
-            other => {
-                return Err(AppError::ProviderConfiguration(format!(
-                    "provider {provider_id} cannot generate images or video (purpose: {other:?})"
-                )))
+            for header in &definition.headers {
+                if let Some(value) =
+                    resolve_header_secret(store, &project_id, provider_id, &header.name)?
+                {
+                    header_values.insert(header.name.clone(), value);
+                }
             }
-        };
-        Ok(adapter)
+        }
+        let transport = Arc::new(UreqExecutor::new(Duration::from_secs(120)));
+        Ok(Arc::new(DeclarativeProvider::new(
+            provider_id,
+            definition.base_url.clone(),
+            definition.models.clone(),
+            definition.runtime.clone(),
+            (!api_key.is_empty()).then_some(api_key),
+            header_values,
+            transport,
+        )))
     }
 
     fn load_custom_definition(
@@ -1036,35 +1091,101 @@ impl ProviderService {
             .or_else(|| custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))))
     }
 
+    /// Waits for a submission to finish: polls with the provider's suggested
+    /// interval, honors a wall-clock timeout, tolerates transient network
+    /// failures, surfaces progress, and aborts promptly on cancellation.
     pub fn finish_submission(
         handle: &ProviderSubmissionHandle,
     ) -> Result<(ProviderJobStatus, ProviderResult), AppError> {
+        let job = &handle.submission.job;
+        let cancelled = || cancellation::is_cancelled(&job.provider_id, &job.provider_job_id);
+        let options = FinishOptions {
+            cancelled: Some(&cancelled),
+            on_progress: None,
+        };
+        Self::finish_submission_with_options(handle, &options)
+    }
+
+    pub fn finish_submission_with_options(
+        handle: &ProviderSubmissionHandle,
+        options: &FinishOptions<'_>,
+    ) -> Result<(ProviderJobStatus, ProviderResult), AppError> {
         let provider = &handle.provider;
         let submission = &handle.submission;
+        let spec = provider.polling_spec();
+        let deadline = std::time::Instant::now() + spec.timeout;
         let mut status = provider.poll(&submission.job).map_err(provider_error)?;
-        for _ in 0..16 {
-            if matches!(
-                status.lifecycle,
-                ProviderLifecycle::Succeeded
-                    | ProviderLifecycle::Failed
-                    | ProviderLifecycle::Cancelled
-                    | ProviderLifecycle::Unknown
-            ) {
-                break;
+        let mut saw_progress = matches!(
+            status.lifecycle,
+            ProviderLifecycle::Queued
+                | ProviderLifecycle::Submitted
+                | ProviderLifecycle::Running
+        );
+        loop {
+            if options.cancelled.is_some_and(|check| check()) {
+                return Err(AppError::ProviderExecution(
+                    "generation was cancelled".into(),
+                ));
             }
-            status = provider.poll(&submission.job).map_err(provider_error)?;
-        }
-        if !matches!(status.lifecycle, ProviderLifecycle::Succeeded) {
-            return Err(AppError::ProviderExecution(format!(
-                "provider {} ended in {:?}",
-                handle.provider_id, status.lifecycle
-            )));
+            match status.lifecycle {
+                ProviderLifecycle::Succeeded => break,
+                ProviderLifecycle::Failed => {
+                    let diagnostic = status
+                        .diagnostic
+                        .as_deref()
+                        .map(|text| format!(": {}", crate::providers::redact_secret(text)))
+                        .unwrap_or_default();
+                    return Err(AppError::ProviderExecution(format!(
+                        "the AI service reported the job failed{diagnostic}"
+                    )));
+                }
+                ProviderLifecycle::Cancelled | ProviderLifecycle::CancellationRequested => {
+                    return Err(AppError::ProviderExecution(
+                        "generation was cancelled".into(),
+                    ));
+                }
+                // One unreadable status before any progress is a hard failure
+                // (a sync adapter that lost its result); after progress has
+                // been observed, unknown statuses keep polling until timeout.
+                ProviderLifecycle::Unknown if !saw_progress => {
+                    return Err(AppError::ProviderExecution(format!(
+                        "provider {} ended in an unknown state",
+                        handle.provider_id
+                    )));
+                }
+                _ => {}
+            }
+            if let Some(on_progress) = options.on_progress {
+                on_progress(&status);
+            }
+            saw_progress = true;
+            if std::time::Instant::now() + spec.interval >= deadline {
+                return Err(AppError::ProviderExecution(format!(
+                    "the AI service did not finish within {} seconds",
+                    spec.timeout.as_secs()
+                )));
+            }
+            std::thread::sleep(spec.interval);
+            status = match provider.poll(&submission.job) {
+                Ok(status) => status,
+                Err(error) if error.kind.retryable() => continue,
+                Err(error) => return Err(provider_error(error)),
+            };
         }
         let result = provider
             .fetch_result(&submission.job)
             .map_err(provider_error)?;
+        cancellation::unregister(&handle.provider_id, &submission.job.provider_job_id);
         Ok((status, result))
     }
+}
+
+/// Options for observing and interrupting the submission wait loop.
+pub struct FinishOptions<'a> {
+    /// Checked between polls; returning true aborts the wait.
+    pub cancelled: Option<&'a dyn Fn() -> bool>,
+    /// Invoked with every non-terminal status observation.
+    pub on_progress: Option<&'a dyn Fn(&ProviderJobStatus)>,
 }
 
 fn resolve_configured_secret_impl<S: CredentialStore + ?Sized>(
@@ -1123,80 +1244,241 @@ mod connection_tests {
     use super::*;
     use crate::project::service::ProjectService;
     use crate::providers::credential_store::MemoryCredentialStore;
+    use crate::providers::http::TransportFailure;
+    use crate::providers::presets::preset_by_id;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
 
-    #[derive(Default)]
-    struct RecordingProbe {
-        request: Mutex<Option<(String, Vec<(String, String)>)>>,
+    /// Deterministic executor: records requests, returns a scripted status.
+    #[derive(Default, Clone)]
+    struct RecordingExecutor {
+        requests: std::sync::Arc<Mutex<Vec<(String, String, Vec<(String, String)>)>>>,
         status: u16,
+        body: String,
     }
 
-    impl ConnectionProbeTransport for RecordingProbe {
-        fn get_status(&self, endpoint: &str, headers: &[(String, String)]) -> Result<u16, String> {
-            *self.request.lock().unwrap() = Some((endpoint.into(), headers.to_vec()));
-            Ok(self.status)
+    impl RecordingExecutor {
+        fn with_status(status: u16) -> Self {
+            Self {
+                status,
+                ..Default::default()
+            }
+        }
+
+        fn with_status_and_body(status: u16, body: &str) -> Self {
+            Self {
+                status,
+                body: body.into(),
+                ..Default::default()
+            }
         }
     }
 
-    #[test]
-    fn connection_test_uses_models_endpoint_and_never_returns_secrets() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("project");
-        ProjectService::create(&root, "Probe").unwrap();
-        let credentials = MemoryCredentialStore::new();
-        let definition = CustomProviderDefinition {
-            provider_id: "llm_provider".into(),
-            display_name: "LLM".into(),
+    impl HttpExecutor for RecordingExecutor {
+        fn execute(&self, request: HttpRequest) -> Result<HttpResponse, TransportFailure> {
+            self.requests.lock().unwrap().push((
+                request.method.clone(),
+                request.url.clone(),
+                request.headers.clone(),
+            ));
+            Ok(HttpResponse {
+                status: self.status,
+                body: self.body.clone().into_bytes(),
+                content_type: Some("application/json".into()),
+                headers: vec![],
+            })
+        }
+    }
+
+    fn openai_compatible_definition(provider_id: &str) -> CustomProviderDefinition {
+        let preset = preset_by_id("openai-compatible").unwrap();
+        CustomProviderDefinition {
+            provider_id: provider_id.into(),
+            display_name: "Image Service".into(),
             base_url: "https://api.example.test/v1/".into(),
-            purpose: CustomProviderPurpose::Llm,
+            purpose: CustomProviderPurpose::Image,
+            preset_id: Some(preset.id.to_string()),
+            runtime: preset.runtime.clone(),
             api_key: Some("sk-test-secret".into()),
             api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "model-v1".into(),
                 name: "Model V1".into(),
+                capabilities: Vec::new(),
             }],
-            headers: vec![CustomProviderHeader {
-                name: "X-Workspace".into(),
-                value: Some("workspace-secret".into()),
+            headers: vec![],
+        }
+    }
+
+    fn cloudflare_definition(provider_id: &str) -> CustomProviderDefinition {
+        let preset = preset_by_id("cloudflare-workers-ai").unwrap();
+        let mut runtime = preset.runtime.clone();
+        runtime.account_id = Some("acc-123".into());
+        CustomProviderDefinition {
+            provider_id: provider_id.into(),
+            display_name: "Cloudflare".into(),
+            base_url: preset.default_base_url.into(),
+            purpose: CustomProviderPurpose::Image,
+            preset_id: Some(preset.id.to_string()),
+            runtime,
+            api_key: Some("cf-token".into()),
+            api_key_hint: None,
+            models: vec![CustomProviderModel {
+                id: "@cf/black-forest-labs/flux-1-schnell".into(),
+                name: "FLUX.1 Schnell".into(),
+                capabilities: Vec::new(),
             }],
-        };
-        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
-        let probe = RecordingProbe {
-            status: 200,
-            ..Default::default()
-        };
+            headers: vec![],
+        }
+    }
+
+    #[test]
+    fn connection_test_uses_validate_operation_with_configured_auth() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Probe").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        ProviderService::upsert_custom_provider(
+            &root,
+            &credentials,
+            &openai_compatible_definition("image_provider"),
+        )
+        .unwrap();
+        let transport = RecordingExecutor::with_status(200);
 
         let result =
-            ProviderService::test_connection(&root, &credentials, &probe, "llm_provider").unwrap();
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "image_provider")
+                .unwrap();
 
         assert!(result.connected);
         assert_eq!(result.status_code, Some(200));
         assert_eq!(result.endpoint, "https://api.example.test/v1/models");
+        let (method, url, headers) = transport.requests.lock().unwrap().remove(0);
+        assert_eq!(method, "GET");
+        assert_eq!(url, "https://api.example.test/v1/models");
+        assert!(headers.contains(&("Authorization".into(), "Bearer sk-test-secret".into())));
         let serialized = serde_json::to_string(&result).unwrap();
         assert!(!serialized.contains("sk-test-secret"));
-        assert!(!serialized.contains("workspace-secret"));
-        let request = probe.request.lock().unwrap().clone().unwrap();
-        assert!(request
-            .1
-            .contains(&("Authorization".into(), "Bearer sk-test-secret".into())));
-        assert!(request
-            .1
-            .contains(&("X-Workspace".into(), "workspace-secret".into())));
+    }
 
-        let rejected = RecordingProbe {
-            status: 401,
-            ..Default::default()
-        };
+    #[test]
+    fn cloudflare_validation_uses_tiny_generation_not_models_endpoint() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Cloudflare").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        ProviderService::upsert_custom_provider(
+            &root,
+            &credentials,
+            &cloudflare_definition("cloudflare"),
+        )
+        .unwrap();
+        let transport = RecordingExecutor::with_status(200);
+
         let result =
-            ProviderService::test_connection(&root, &credentials, &rejected, "llm_provider")
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare").unwrap();
+
+        assert!(result.connected);
+        let (method, url, headers) = transport.requests.lock().unwrap().remove(0);
+        assert_eq!(method, "POST", "Cloudflare validates via a tiny generation");
+        assert_eq!(
+            url,
+            "https://api.cloudflare.com/client/v4/accounts/acc-123/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        );
+        assert!(headers.contains(&("Authorization".into(), "Bearer cf-token".into())));
+    }
+
+    #[test]
+    fn connection_test_surfaces_provider_error_messages() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Error body").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        ProviderService::upsert_custom_provider(
+            &root,
+            &credentials,
+            &cloudflare_definition("cloudflare_err"),
+        )
+        .unwrap();
+        let transport = RecordingExecutor::with_status_and_body(
+            400,
+            r#"{"errors":[{"message":"prompt is required","code":7002}]}"#,
+        );
+
+        let result =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare_err")
                 .unwrap();
+
         assert!(!result.connected);
-        assert_eq!(result.status_code, Some(401));
-        assert!(!serde_json::to_string(&result)
-            .unwrap()
-            .contains("sk-test-secret"));
+        assert_eq!(result.status_code, Some(400));
+        assert!(result.message.contains("prompt is required"));
+        assert!(result.message.contains("HTTP 400"));
+    }
+
+    #[test]
+    fn auth_errors_are_reported_specifically() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Auth errors").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        ProviderService::upsert_custom_provider(
+            &root,
+            &credentials,
+            &openai_compatible_definition("auth_provider"),
+        )
+        .unwrap();
+        for status in [401u16, 403] {
+            let transport = RecordingExecutor::with_status(status);
+            let result =
+                ProviderService::test_connection(&root, &credentials, transport.clone(), "auth_provider")
+                    .unwrap();
+            assert!(!result.connected);
+            assert_eq!(result.status_code, Some(status));
+        }
+    }
+
+    #[test]
+    fn connection_test_rejects_provider_without_any_auth_before_network_io() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "No auth").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        let mut definition = openai_compatible_definition("no_auth");
+        definition.api_key = None;
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        let transport = RecordingExecutor::default();
+
+        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "no_auth")
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("no API key or authentication header"));
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn providers_without_validation_get_configuration_only_checks() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Config only").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        let mut definition = openai_compatible_definition("config_only");
+        definition
+            .runtime
+            .operations
+            .remove(crate::providers::config::OPERATION_VALIDATE);
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        let transport = RecordingExecutor::default();
+
+        let result =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "config_only")
+                .unwrap();
+
+        assert!(result.connected);
+        assert_eq!(result.status_code, None);
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1205,21 +1487,10 @@ mod connection_tests {
         let root = temp.path().join("project");
         ProjectService::create(&root, "Hint").unwrap();
         let credentials = MemoryCredentialStore::new();
-        let definition = CustomProviderDefinition {
-            provider_id: "hinted".into(),
-            display_name: "Hinted".into(),
-            base_url: "https://api.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-j9mlQwErTyXzray".into()),
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![],
-        };
-        let saved =
-            ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        let mut definition = openai_compatible_definition("hinted");
+        definition.api_key = Some("sk-j9mlQwErTyXzray".into());
+        let saved = ProviderService::upsert_custom_provider(&root, &credentials, &definition)
+            .unwrap();
         assert_eq!(saved.api_key, None);
         assert_eq!(saved.api_key_hint.as_deref(), Some("sk-j9ml•••ray"));
 
@@ -1240,48 +1511,6 @@ mod connection_tests {
         let saved_again =
             ProviderService::upsert_custom_provider(&root, &credentials, &update).unwrap();
         assert_eq!(saved_again.api_key_hint.as_deref(), Some("sk-j9ml•••ray"));
-        assert_eq!(
-            credentials
-                .get_secret(&credential_account(
-                    &ProviderService::project_id(
-                        &ProviderService::open_project_conn(&root).unwrap()
-                    )
-                    .unwrap(),
-                    "hinted"
-                ))
-                .unwrap()
-                .as_deref(),
-            Some("sk-j9mlQwErTyXzray")
-        );
-    }
-
-    #[test]
-    fn production_probe_does_not_follow_redirects_with_custom_auth_headers() {
-        let redirect_target = TcpListener::bind("127.0.0.1:0").unwrap();
-        redirect_target.set_nonblocking(true).unwrap();
-        let target_address = redirect_target.local_addr().unwrap();
-        let redirect_source = TcpListener::bind("127.0.0.1:0").unwrap();
-        let source_address = redirect_source.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = redirect_source.accept().unwrap();
-            let mut request = [0u8; 1024];
-            let _ = stream.read(&mut request);
-            write!(stream, "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
-        });
-        let probe = UreqConnectionProbe::new(Duration::from_secs(2));
-
-        let status = probe
-            .get_status(
-                &format!("http://{source_address}/models"),
-                &[("X-Api-Key".into(), "must-not-follow".into())],
-            )
-            .unwrap();
-
-        server.join().unwrap();
-        assert_eq!(status, 302);
-        assert!(
-            matches!(redirect_target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
-        );
     }
 
     #[test]
@@ -1290,22 +1519,11 @@ mod connection_tests {
         let root = temp.path().join("project");
         ProjectService::create(&root, "Header cleanup").unwrap();
         let credentials = MemoryCredentialStore::new();
-        let mut definition = CustomProviderDefinition {
-            provider_id: "header_provider".into(),
-            display_name: "Header".into(),
-            base_url: "https://api.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: None,
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![CustomProviderHeader {
-                name: "X-API-Key".into(),
-                value: Some("header-secret".into()),
-            }],
-        };
+        let mut definition = openai_compatible_definition("header_provider");
+        definition.headers = vec![CustomProviderHeader {
+            name: "X-API-Key".into(),
+            value: Some("header-secret".into()),
+        }];
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let conn = ProviderService::open_project_conn(&root).unwrap();
         let project_id = ProviderService::project_id(&conn).unwrap();
@@ -1322,68 +1540,30 @@ mod connection_tests {
     }
 
     #[test]
-    fn connection_test_rejects_provider_without_any_auth_before_network_io() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("project");
-        ProjectService::create(&root, "No auth").unwrap();
-        let credentials = MemoryCredentialStore::new();
-        let definition = CustomProviderDefinition {
-            provider_id: "no_auth".into(),
-            display_name: "No auth".into(),
-            base_url: "https://api.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: None,
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![],
-        };
-        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
-        let probe = RecordingProbe::default();
-
-        let error =
-            ProviderService::test_connection(&root, &credentials, &probe, "no_auth").unwrap_err();
-
-        assert!(error
-            .to_string()
-            .contains("no API key or authentication header"));
-        assert!(probe.request.lock().unwrap().is_none());
-    }
-
-    #[test]
     fn connection_test_revalidates_persisted_metadata_before_resolving_secrets() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         ProjectService::create(&root, "Tampered metadata").unwrap();
         let credentials = MemoryCredentialStore::new();
-        let definition = CustomProviderDefinition {
-            provider_id: "tampered".into(),
-            display_name: "Tampered".into(),
-            base_url: "https://safe.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-secret".into()),
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![],
-        };
-        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        ProviderService::upsert_custom_provider(
+            &root,
+            &credentials,
+            &openai_compatible_definition("tampered"),
+        )
+        .unwrap();
         let conn = ProviderService::open_project_conn(&root).unwrap();
         conn.execute(
             "UPDATE custom_provider_definitions SET base_url = 'https://user:secret@evil.example.test/v1' WHERE provider_id = 'tampered'",
             [],
-        ).unwrap();
-        let probe = RecordingProbe::default();
+        )
+        .unwrap();
+        let transport = RecordingExecutor::default();
 
-        let error =
-            ProviderService::test_connection(&root, &credentials, &probe, "tampered").unwrap_err();
+        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "tampered")
+            .unwrap_err();
 
         assert!(error.to_string().contains("must not contain credentials"));
-        assert!(probe.request.lock().unwrap().is_none());
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1392,22 +1572,11 @@ mod connection_tests {
         let root = temp.path().join("project");
         ProjectService::create(&root, "Authority change").unwrap();
         let credentials = MemoryCredentialStore::new();
-        let mut definition = CustomProviderDefinition {
-            provider_id: "moving".into(),
-            display_name: "Moving".into(),
-            base_url: "https://first.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-old".into()),
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![CustomProviderHeader {
-                name: "X-API-Key".into(),
-                value: Some("header-old".into()),
-            }],
-        };
+        let mut definition = openai_compatible_definition("moving");
+        definition.headers = vec![CustomProviderHeader {
+            name: "X-API-Key".into(),
+            value: Some("header-old".into()),
+        }];
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         definition.base_url = "https://second.example.test/v1".into();
         definition.api_key = None;
@@ -1429,16 +1598,8 @@ mod connection_tests {
             ))
             .unwrap()
             .is_none());
-        assert!(
-            super::super::repository::get_provider_config(&conn, "moving")
-                .unwrap()
-                .unwrap()
-                .credential_reference
-                .is_none()
-        );
-        let probe = RecordingProbe::default();
-        assert!(ProviderService::test_connection(&root, &credentials, &probe, "moving").is_err());
-        assert!(probe.request.lock().unwrap().is_none());
+        let transport = RecordingExecutor::default();
+        assert!(ProviderService::test_connection(&root, &credentials, transport.clone(), "moving").is_err());
     }
 
     #[test]
@@ -1447,22 +1608,11 @@ mod connection_tests {
         let root = temp.path().join("project");
         ProjectService::create(&root, "Delete cleanup").unwrap();
         let credentials = MemoryCredentialStore::new();
-        let definition = CustomProviderDefinition {
-            provider_id: "delete_me".into(),
-            display_name: "Delete".into(),
-            base_url: "https://api.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Llm,
-            api_key: Some("sk-delete".into()),
-            api_key_hint: None,
-            models: vec![CustomProviderModel {
-                id: "m".into(),
-                name: "M".into(),
-            }],
-            headers: vec![CustomProviderHeader {
-                name: "X-Key".into(),
-                value: Some("header-delete".into()),
-            }],
-        };
+        let mut definition = openai_compatible_definition("delete_me");
+        definition.headers = vec![CustomProviderHeader {
+            name: "X-Key".into(),
+            value: Some("header-delete".into()),
+        }];
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let conn = ProviderService::open_project_conn(&root).unwrap();
         let project_id = ProviderService::project_id(&conn).unwrap();
@@ -1494,8 +1644,93 @@ mod connection_tests {
             .unwrap()
             .is_none());
     }
+
+    #[test]
+    fn legacy_purpose_rows_synthesize_openai_compatible_operations() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Legacy").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        // Insert a pre-refactor row exactly as the old code wrote it: no
+        // definition_json, purpose 'image', models without capabilities.
+        let conn = ProviderService::open_project_conn(&root).unwrap();
+        conn.execute(
+            "INSERT INTO custom_provider_definitions
+             (provider_id, display_name, base_url, purpose, models_json, headers_json, created_at, updated_at)
+             VALUES ('legacy_img', 'Legacy', 'https://old.example.test/v1', 'image',
+                     '[{\"id\":\"old-model\",\"name\":\"Old Model\"}]', '[]', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let definition = super::super::repository::get_custom_provider(
+            &ProviderService::open_project_conn(&root).unwrap(),
+            "legacy_img",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(definition
+            .runtime
+            .operations
+            .contains_key(crate::providers::config::OPERATION_IMAGE_GENERATE));
+        assert!(definition
+            .runtime
+            .operations
+            .contains_key(crate::providers::config::OPERATION_IMAGE_EDIT));
+
+        // The synthesized provider validates exactly like the old adapter:
+        // a GET /models probe with the resolved Bearer credential.
+        ProviderService::save_credential(
+            &root,
+            &credentials,
+            "legacy_img",
+            "sk-legacy",
+            Some("old-model"),
+        )
+        .unwrap();
+        let transport = RecordingExecutor::with_status(200);
+        let result = ProviderService::test_connection(&root, &credentials, transport.clone(), "legacy_img")
+            .unwrap();
+        assert!(result.connected, "legacy rows validate through /models");
+        assert_eq!(result.endpoint, "https://old.example.test/v1/models");
+    }
+
+    #[test]
+    fn validation_probe_never_follows_redirects() {
+        let redirect_target = TcpListener::bind("127.0.0.1:0").unwrap();
+        redirect_target.set_nonblocking(true).unwrap();
+        let target_address = redirect_target.local_addr().unwrap();
+        let redirect_source = TcpListener::bind("127.0.0.1:0").unwrap();
+        let source_address = redirect_source.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = redirect_source.accept().unwrap();
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+        let transport = UreqExecutor::without_redirects(Duration::from_secs(2));
+
+        let response = transport
+            .execute(
+                HttpRequest::get(format!("http://{source_address}/models"))
+                    .with_header("X-Api-Key", "must-not-follow"),
+            )
+            .unwrap();
+
+        server.join().unwrap();
+        assert_eq!(response.status, 302);
+        assert!(
+            matches!(redirect_target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+    }
 }
 
 fn provider_error(error: ProviderError) -> AppError {
-    AppError::ProviderExecution(serde_json::to_string(&error).unwrap_or(error.message))
+    // Human-readable, secret-free text the UI can show verbatim.
+    AppError::ProviderExecution(error.display_text())
 }

@@ -4,6 +4,24 @@ use super::model::{
     ProviderJobStatus, ProviderResult, ProviderSubmission,
 };
 
+/// Polling behavior a provider suggests for its submission loop. Async
+/// providers override this with their configured interval/timeout; the
+/// default applies to synchronous adapters (whose polls resolve instantly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollingSpec {
+    pub interval: std::time::Duration,
+    pub timeout: std::time::Duration,
+}
+
+impl Default for PollingSpec {
+    fn default() -> Self {
+        Self {
+            interval: std::time::Duration::from_secs(2),
+            timeout: std::time::Duration::from_secs(600),
+        }
+    }
+}
+
 pub trait GenerationProvider: Send + Sync {
     fn id(&self) -> &str;
     fn adapter_version(&self) -> u32;
@@ -15,6 +33,10 @@ pub trait GenerationProvider: Send + Sync {
     fn poll(&self, job: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError>;
     fn cancel(&self, job: &ProviderJobRef) -> Result<ProviderCancellationResult, ProviderError>;
     fn fetch_result(&self, job: &ProviderJobRef) -> Result<ProviderResult, ProviderError>;
+    /// Suggested polling cadence for this provider's jobs.
+    fn polling_spec(&self) -> PollingSpec {
+        PollingSpec::default()
+    }
 }
 
 #[cfg(test)]

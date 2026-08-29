@@ -13,11 +13,14 @@ mod tests {
             display_name: "Video".into(),
             base_url: "https://video.example.test".into(),
             purpose: CustomProviderPurpose::Video,
+            preset_id: None,
+            runtime: crate::providers::presets::legacy_purpose_runtime(CustomProviderPurpose::Video),
             api_key: Some("secret".into()),
             api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "v1".into(),
                 name: "Video 1".into(),
+                capabilities: Vec::new(),
             }],
             headers: vec![CustomProviderHeader {
                 name: "X-Org".into(),
@@ -156,10 +159,53 @@ mod tests {
 use super::model::{
     CustomProviderDefinition, CustomProviderHeader, CustomProviderModel, CustomProviderPurpose,
 };
+use super::presets::legacy_purpose_runtime;
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+
+/// The non-secret declarative configuration persisted alongside a custom
+/// provider row (`definition_json` column). Legacy rows have no value here
+/// and are synthesized from their purpose on read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomProviderDefinitionJson {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    #[serde(default)]
+    pub runtime: super::config::ProviderRuntimeConfig,
+}
+
+fn definition_json_value(
+    definition: &CustomProviderDefinition,
+) -> Result<Option<String>, AppError> {
+    // LLM/legacy providers have no declarative operations; persist nothing so
+    // they keep round-tripping as purpose-based rows.
+    if definition.runtime.operations.is_empty() {
+        return Ok(None);
+    }
+    let wrapper = CustomProviderDefinitionJson {
+        preset_id: definition.preset_id.clone(),
+        runtime: definition.runtime.clone(),
+    };
+    serde_json::to_string(&wrapper)
+        .map(Some)
+        .map_err(|error| AppError::Database(error.to_string()))
+}
+
+fn parse_definition_json(
+    raw: Option<String>,
+    purpose: CustomProviderPurpose,
+) -> (Option<String>, super::config::ProviderRuntimeConfig) {
+    match raw {
+        Some(raw) => match serde_json::from_str::<CustomProviderDefinitionJson>(&raw) {
+            Ok(wrapper) => (wrapper.preset_id, wrapper.runtime),
+            Err(_) => (None, legacy_purpose_runtime(purpose)),
+        },
+        None => (None, legacy_purpose_runtime(purpose)),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,15 +251,17 @@ pub fn upsert_custom_provider(
         .map_err(|error| AppError::Database(error.to_string()))?;
     let headers_json = serde_json::to_string(&metadata.headers)
         .map_err(|error| AppError::Database(error.to_string()))?;
+    let definition_json = definition_json_value(definition)?;
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO custom_provider_definitions
-         (provider_id, display_name, base_url, purpose, models_json, headers_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         (provider_id, display_name, base_url, purpose, models_json, headers_json, definition_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
          ON CONFLICT(provider_id) DO UPDATE SET
            display_name = excluded.display_name, base_url = excluded.base_url,
            purpose = excluded.purpose,
            models_json = excluded.models_json, headers_json = excluded.headers_json,
+           definition_json = excluded.definition_json,
            updated_at = excluded.updated_at",
         params![
             metadata.provider_id,
@@ -222,6 +270,7 @@ pub fn upsert_custom_provider(
             serde_json::to_string(&metadata.purpose).unwrap().trim_matches('"'),
             models_json,
             headers_json,
+            definition_json,
             now,
         ],
     )
@@ -234,13 +283,14 @@ pub fn get_custom_provider(
     provider_id: &str,
 ) -> Result<Option<CustomProviderDefinition>, AppError> {
     conn.query_row(
-        "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json
+        "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json, definition_json
          FROM custom_provider_definitions WHERE provider_id = ?1",
         [provider_id],
         |row| {
             let purpose_text: String = row.get(3)?;
             let models_json: String = row.get(4)?;
             let headers_json: String = row.get(5)?;
+            let definition_json: Option<String> = row.get(6)?;
             let models = serde_json::from_str::<Vec<CustomProviderModel>>(&models_json).map_err(
                 |error| {
                     rusqlite::Error::FromSqlConversionFailure(
@@ -267,11 +317,14 @@ pub fn get_custom_provider(
                             Box::new(error),
                         )
                     })?;
+            let (preset_id, runtime) = parse_definition_json(definition_json, purpose.clone());
             Ok(CustomProviderDefinition {
                 provider_id: row.get(0)?,
                 display_name: row.get(1)?,
                 base_url: row.get(2)?,
                 purpose,
+                preset_id,
+                runtime,
                 api_key: None,
                 api_key_hint: None,
                 models,
@@ -286,13 +339,14 @@ pub fn get_custom_provider(
 pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefinition>, AppError> {
     let mut statement = conn
         .prepare(
-            "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json
+            "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json, definition_json
          FROM custom_provider_definitions ORDER BY provider_id",
         )
         .map_err(db_error)?;
     let rows = statement
         .query_map([], |row| {
             let purpose_text: String = row.get(3)?;
+            let definition_json: Option<String> = row.get(6)?;
             let purpose =
                 serde_json::from_str::<CustomProviderPurpose>(&format!("\"{purpose_text}\""))
                     .map_err(|error| {
@@ -318,11 +372,14 @@ pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefi
                         Box::new(error),
                     )
                 })?;
+            let (preset_id, runtime) = parse_definition_json(definition_json, purpose.clone());
             Ok(CustomProviderDefinition {
                 provider_id: row.get(0)?,
                 display_name: row.get(1)?,
                 base_url: row.get(2)?,
                 purpose,
+                preset_id,
+                runtime,
                 api_key: None,
                 api_key_hint: None,
                 models,

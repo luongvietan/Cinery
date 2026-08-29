@@ -253,6 +253,8 @@ export interface ProviderConfigurationStatus {
 export interface CustomProviderModel {
   id: string;
   name: string;
+  /** Operations this model supports; empty means "every provider operation". */
+  capabilities?: string[];
 }
 
 export interface CustomProviderHeader {
@@ -261,11 +263,116 @@ export interface CustomProviderHeader {
   value?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Declarative provider configuration (provider platform)
+// ---------------------------------------------------------------------------
+
+/** How the provider's API key is attached to requests. */
+export type ProviderAuthMode = "none" | "bearer" | "header" | "query";
+
+export interface ProviderAuthConfig {
+  mode: ProviderAuthMode;
+  /** Header or query parameter name for header/query modes. */
+  credentialName?: string | null;
+}
+
+export type ProviderRequestType = "json" | "multipart" | "form_url_encoded";
+
+export interface ProviderResponseMapping {
+  outputsPath?: string | null;
+  urlPath?: string | null;
+  base64Path?: string | null;
+  /** The whole response body is the asset. */
+  binaryResponse: boolean;
+  mimeType: string;
+  filename: string;
+  providerRequestIdPath?: string | null;
+}
+
+export interface ProviderMultipartField {
+  name: string;
+  kind: "text" | "file";
+  /** Template for text fields, e.g. "{{prompt}}". */
+  value?: string | null;
+  /** File source: "image" | "images" | "referenceImages". */
+  source?: string | null;
+}
+
+export interface ProviderStatusEndpoint {
+  method: string;
+  /** Path template relative to the base URL; {jobId} is interpolated. */
+  pathTemplate: string;
+  statusPath: string;
+  completedValues: string[];
+  failedValues: string[];
+  progressPath?: string | null;
+  errorMessagePath?: string | null;
+}
+
+export interface ProviderAsyncJobConfig {
+  jobIdPath: string;
+  status: ProviderStatusEndpoint;
+  output: {
+    fetchPathTemplate?: string | null;
+    fetchMethod: string;
+    response: ProviderResponseMapping;
+  };
+  polling: { intervalMs: number; timeoutMs: number };
+}
+
+/** One configurable operation endpoint (e.g. image.generate). */
+export interface ProviderOperationEndpoint {
+  method: string;
+  pathTemplate: string;
+  requestType: ProviderRequestType;
+  /** JSON template with {{canonical}} placeholders. */
+  requestMapping?: unknown;
+  multipartFields?: ProviderMultipartField[];
+  /** Extra static headers for this operation. */
+  headers?: Record<string, string>;
+  response: ProviderResponseMapping;
+  /** Present when the operation is asynchronous (submit → poll → fetch). */
+  job?: ProviderAsyncJobConfig | null;
+}
+
+/** The declarative runtime configuration stored with a provider. */
+export interface ProviderRuntimeConfig {
+  auth: ProviderAuthConfig;
+  accountId?: string | null;
+  /** Static (non-secret) headers; secret headers use CustomProviderHeader. */
+  headers?: Record<string, string>;
+  /** Operations keyed by name: image.generate, image.edit, video.generate, … */
+  operations?: Record<string, ProviderOperationEndpoint>;
+  errorMapping?: {
+    messagePath?: string | null;
+    codePath?: string | null;
+    requestIdPath?: string | null;
+  } | null;
+}
+
+/** A SIMPLE-mode preset describing a known provider kind. */
+export interface ProviderPreset {
+  id: string;
+  label: string;
+  description: string;
+  internal: boolean;
+  defaultBaseUrl: string;
+  requiresAccountId: boolean;
+  auth: ProviderAuthConfig;
+  /** [model id, label] pairs offered by default. */
+  defaultModels: [string, string][];
+  runtime: ProviderRuntimeConfig;
+}
+
 export interface CustomProviderDefinition {
   providerId: string;
   displayName: string;
   baseUrl: string;
   purpose: "legacy" | "llm" | "image" | "video";
+  /** Preset that generated this definition, when applicable. */
+  presetId?: string | null;
+  /** Declarative endpoint configuration; secrets are never stored here. */
+  runtime?: ProviderRuntimeConfig;
   /** Write-only input; omitted from responses. */
   apiKey?: string;
   /** Non-secret display hint (e.g. "sk-j9ml•••ray") derived from the vault secret. */

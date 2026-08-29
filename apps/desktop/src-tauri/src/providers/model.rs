@@ -1,3 +1,4 @@
+use super::config::ProviderRuntimeConfig;
 use crate::skills::model::ExpectedOutputDefinition;
 use crate::workflow::execution::{
     ExecutionConstraint, ExecutionMediaType, ExecutionReference, ExecutionRequest, ExecutionTask,
@@ -10,6 +11,10 @@ use std::collections::HashSet;
 pub struct CustomProviderModel {
     pub id: String,
     pub name: String,
+    /// Operations this model supports (e.g. `image.generate`). An empty list
+    /// means the model supports every operation the provider defines.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,13 +34,20 @@ pub struct CustomProviderHeader {
     pub value: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomProviderDefinition {
     pub provider_id: String,
     pub display_name: String,
     pub base_url: String,
     pub purpose: CustomProviderPurpose,
+    /// Preset that generated this definition, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    /// Declarative endpoint configuration (auth, operations, mappings).
+    /// Secrets are never stored here — only credential names.
+    #[serde(default)]
+    pub runtime: ProviderRuntimeConfig,
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
     /// Non-secret display hint (e.g. "sk-j9ml•••ray") derived from the vault
@@ -91,6 +103,11 @@ impl CustomProviderDefinition {
             {
                 return Err("model IDs and names must be non-blank and model IDs unique".into());
             }
+            for capability in &model.capabilities {
+                if !super::config::is_known_operation(capability) {
+                    return Err(format!("model capability {capability} is not a known operation"));
+                }
+            }
         }
         let mut header_names = HashSet::new();
         for header in &self.headers {
@@ -112,6 +129,12 @@ impl CustomProviderDefinition {
             {
                 return Err("header values must not contain line breaks".into());
             }
+        }
+        // LLM-purpose providers stay purpose-based (chat completions live in
+        // the LLM surface); every other provider needs declarative operations.
+        if self.purpose != CustomProviderPurpose::Llm && self.purpose != CustomProviderPurpose::Legacy
+        {
+            self.runtime.validate()?;
         }
         Ok(())
     }
@@ -146,7 +169,9 @@ pub fn mask_secret(secret: &str) -> String {
     format!("{head}•••{tail}")
 }
 
-fn is_http_header_name(name: &str) -> bool {
+/// HTTP header names are restricted to RFC 7230 token characters so they can
+/// never inject header or request syntax.
+pub fn is_http_header_name(name: &str) -> bool {
     !name.is_empty()
         && name.bytes().all(|byte| {
             byte.is_ascii_alphanumeric()
@@ -404,12 +429,15 @@ mod tests {
             provider_id: "image_provider".into(),
             display_name: "Image Provider".into(),
             base_url: "https://images.example.test/v1".into(),
-            purpose: CustomProviderPurpose::Image,
+            purpose: CustomProviderPurpose::Llm,
+            preset_id: None,
+            runtime: Default::default(),
             api_key: Some("secret-api-key".into()),
             api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "image-v1".into(),
                 name: "Image V1".into(),
+                capabilities: Vec::new(),
             }],
             headers: vec![CustomProviderHeader {
                 name: "X-Workspace".into(),
@@ -439,16 +467,20 @@ mod tests {
             display_name: "x".into(),
             base_url: "http://x".into(),
             purpose: CustomProviderPurpose::Image,
+            preset_id: None,
+            runtime: Default::default(),
             api_key: None,
             api_key_hint: None,
             models: vec![
                 CustomProviderModel {
                     id: "same".into(),
                     name: "one".into(),
+                    capabilities: Vec::new(),
                 },
                 CustomProviderModel {
                     id: "same".into(),
                     name: "two".into(),
+                    capabilities: Vec::new(),
                 },
             ],
             headers: vec![],
@@ -463,11 +495,14 @@ mod tests {
             display_name: "Safe".into(),
             base_url: "https://user:secret@example.test/v1".into(),
             purpose: CustomProviderPurpose::Llm,
+            preset_id: None,
+            runtime: Default::default(),
             api_key: None,
             api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "m".into(),
                 name: "M".into(),
+                capabilities: Vec::new(),
             }],
             headers: vec![],
         };

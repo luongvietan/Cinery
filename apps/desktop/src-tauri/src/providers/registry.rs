@@ -1,8 +1,8 @@
 use super::adapter::GenerationProvider;
 use super::dry_run::DryRunProvider;
 use super::error::{ProviderError, ProviderErrorKind};
+use super::fake_async::FakeAsyncVideoProvider;
 use super::mock::MockImageProvider;
-use super::openai::OpenAiImageProvider;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -17,9 +17,12 @@ impl ProviderRegistry {
         };
         registry.register(DryRunProvider);
         registry.register(MockImageProvider::default());
+        registry.register(FakeAsyncVideoProvider::default());
         // Register OpenAI for discovery/capability queries. The execution
         // path replaces this placeholder with a credential-backed adapter.
-        registry.register(OpenAiImageProvider::new("https://api.openai.com/v1", ""));
+        registry.register_arc(super::service::ProviderService::openai_builtin_adapter(
+            String::new(),
+        ));
         registry
     }
 
@@ -49,13 +52,21 @@ impl ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::fake_async::FAKE_ASYNC_VIDEO_PROVIDER_ID;
 
     #[test]
     fn builtin_registry_resolves_only_explicit_provider_ids() {
         let registry = ProviderRegistry::builtin();
-        assert_eq!(registry.ids(), vec!["dry_run", "mock", "openai"]);
+        assert_eq!(
+            registry.ids(),
+            vec!["dry_run", "fake_async_video", "mock", "openai"]
+        );
         assert_eq!(registry.get("mock").unwrap().id(), "mock");
         assert_eq!(registry.get("openai").unwrap().id(), "openai");
+        assert_eq!(
+            registry.get(FAKE_ASYNC_VIDEO_PROVIDER_ID).unwrap().id(),
+            "fake_async_video"
+        );
         let error = match registry.get("missing") {
             Ok(_) => panic!("missing provider should not resolve"),
             Err(error) => error,

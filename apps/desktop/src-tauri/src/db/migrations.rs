@@ -84,6 +84,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 18,
         sql: include_str!("../../migrations/0018_artifact_promotion_idempotency.sql"),
     },
+    Migration {
+        version: 19,
+        sql: include_str!("../../migrations/0019_custom_provider_operations.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in

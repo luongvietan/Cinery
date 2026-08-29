@@ -10,7 +10,7 @@ use crate::assets::service::AssetService;
 use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
-use crate::providers::http::{HttpTransport, UreqTransport};
+use crate::providers::http::download_bytes;
 use crate::providers::model::{ProviderOutput, ProviderResult};
 use chrono::Utc;
 use image::{ImageBuffer, ImageFormat, Rgba, RgbaImage};
@@ -18,7 +18,6 @@ use rusqlite::{OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::Path;
-use std::time::Duration;
 
 const MAX_PROVIDER_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 
@@ -418,9 +417,7 @@ fn provider_output_bytes(output: &ProviderOutput) -> Result<Vec<u8>, AppError> {
             });
     }
     if output.uri.starts_with("https://") || output.uri.starts_with("http://") {
-        return UreqTransport::new(Duration::from_secs(60))
-            .get_bytes(&output.uri, "", MAX_PROVIDER_OUTPUT_BYTES)
-            .map_err(|_| {
+        return download_bytes(&output.uri, MAX_PROVIDER_OUTPUT_BYTES).map_err(|_| {
                 AppError::GenerationArtifactCaptureFailed("provider output download failed".into())
             });
     }

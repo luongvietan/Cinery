@@ -2,9 +2,8 @@ use super::credential_store::KeyringCredentialStore;
 use super::model::{CustomProviderDefinition, ProviderCapabilities};
 use super::registry::ProviderRegistry;
 use super::repository::ProviderConfigRecord;
-use super::service::{
-    ProviderConfigurationStatus, ProviderConnectionTestResult, ProviderService, UreqConnectionProbe,
-};
+use super::http::UreqExecutor;
+use super::service::{ProviderConfigurationStatus, ProviderConnectionTestResult, ProviderService};
 use crate::db;
 use crate::error::{AppCommandError, AppError};
 use crate::project::repository::read_project;
@@ -21,6 +20,15 @@ use std::time::Duration;
 /// OS-backed vault.
 fn command_credential_store() -> Arc<KeyringCredentialStore> {
     ProviderService::default_credential_store()
+}
+
+/// The SIMPLE-mode preset catalog (internal presets excluded).
+#[tauri::command]
+pub fn list_provider_presets() -> Result<Vec<super::presets::ProviderPreset>, AppCommandError> {
+    Ok(super::presets::all_presets()
+        .into_iter()
+        .filter(|preset| !preset.internal)
+        .collect())
 }
 
 #[tauri::command]
@@ -91,11 +99,13 @@ pub async fn test_custom_provider_connection(
 ) -> Result<ProviderConnectionTestResult, AppCommandError> {
     validate_root_path(&project_root_path)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let probe = UreqConnectionProbe::new(Duration::from_secs(10));
+        // Validation must not follow redirects: credentials never reach a
+        // redirect target.
+        let transport = UreqExecutor::without_redirects(Duration::from_secs(10));
         ProviderService::test_connection(
             &PathBuf::from(project_root_path),
             command_credential_store().as_ref(),
-            &probe,
+            transport,
             &provider_id,
         )
         .map_err(Into::into)
@@ -259,6 +269,8 @@ pub fn cancel_workflow_execution(
                 submitted_at: attempt.started_at.clone(),
             };
             let _ = ProviderService::cancel_job(&attempt.provider_id, &job)?;
+            // Wake an in-flight polling loop so the wait ends immediately.
+            super::cancellation::signal(&attempt.provider_id, &job.provider_job_id);
         }
         super::repository::update_attempt_status(&conn, &attempt.id, "cancelled", None)?;
     }

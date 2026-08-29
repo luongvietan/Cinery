@@ -56,6 +56,7 @@ pub fn run() {
             workflow::commands::list_workflow_runs,
             workflow::commands::list_workflow_characters,
             providers::commands::list_providers,
+            providers::commands::list_provider_presets,
             providers::commands::list_custom_providers,
             providers::commands::upsert_custom_provider,
             providers::commands::delete_custom_provider,

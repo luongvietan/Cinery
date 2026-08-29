@@ -1,4 +1,6 @@
-use cinematic_desktop_lib::providers::http::HttpTransport;
+use cinematic_desktop_lib::providers::http::{
+    HttpBody, HttpExecutor, HttpRequest, HttpResponse, TransportFailure,
+};
 use cinematic_desktop_lib::qa::adapters::{
     MockVisualQaAdapter, OpenAiCompatibleVisualQaAdapter, VisualQaAdapter,
 };
@@ -65,30 +67,28 @@ struct FixtureTransport {
     requests: Arc<Mutex<Vec<(String, serde_json::Value)>>>,
 }
 
-impl HttpTransport for FixtureTransport {
-    fn post_json(
-        &self,
-        endpoint: &str,
-        _: &str,
-        body: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
+impl HttpExecutor for FixtureTransport {
+    fn execute(&self, request: HttpRequest) -> Result<HttpResponse, TransportFailure> {
+        let body = match &request.body {
+            HttpBody::Json(value) => value.clone(),
+            _ => json!({}),
+        };
         self.requests
             .lock()
             .unwrap()
-            .push((endpoint.into(), body.clone()));
-        Ok(json!({
-            "choices": [{"message": {"content": "{\"schemaVersion\":1,\"checks\":[]}"}}],
-            "model": "gpt-4o-mini",
-            "usage": {"total_tokens": 42}
-        }))
-    }
-
-    fn get_json(&self, _: &str, _: &str) -> Result<serde_json::Value, String> {
-        unreachable!()
-    }
-
-    fn get_bytes(&self, _: &str, _: &str, _: usize) -> Result<Vec<u8>, String> {
-        unreachable!()
+            .push((request.url.clone(), body));
+        Ok(HttpResponse {
+            status: 200,
+            body: json!({
+                "choices": [{"message": {"content": "{\"schemaVersion\":1,\"checks\":[]}"}}],
+                "model": "gpt-4o-mini",
+                "usage": {"total_tokens": 42}
+            })
+            .to_string()
+            .into_bytes(),
+            content_type: Some("application/json".into()),
+            headers: vec![],
+        })
     }
 }
 
