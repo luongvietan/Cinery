@@ -1,6 +1,6 @@
 # Cinema Workspace CRUD Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Complete the World/Scene/Shot/Prop/Keyframe experience so a user can assemble, validate, compile, and inspect a scene without leaving the Cinema workspace.
 
@@ -61,21 +61,21 @@ export interface CinemaSceneDetail {
 }
 ```
 
-- [ ] **Step 1: Write failing TypeScript and Rust serialization tests**
+- [x] **Step 1: Write failing TypeScript and Rust serialization tests**
 
 Cover every blocker code, optional reference fields, empty scenes, ordered shots, and camelCase IPC serialization.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/domain test -- cinema.test.ts`
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema_model -- --nocapture`
 
-- [ ] **Step 3: Implement matching Rust/TypeScript contracts**
+- [x] **Step 3: Implement matching Rust/TypeScript contracts**
 
 Keep names and optionality identical across the boundary. Do not expose database-only row shapes.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Suggested commit: `feat: define cinema workspace contracts`
 
@@ -99,19 +99,19 @@ pub fn reorder_shots(&self, project_id: &str, scene_id: &str, ordered_ids: &[Str
 pub fn set_shot_keyframe(&self, project_id: &str, shot_id: &str, version_id: Option<&str>) -> Result<(), AppError>;
 ```
 
-- [ ] **Step 1: Write failing repository tests for every mutation**
+- [x] **Step 1: Write failing repository tests for every mutation**
 
 Include cross-project rejection, duplicate cast/prop prevention, relationship-only deletion, clearing optional references, and deterministic reads after reopen.
 
-- [ ] **Step 2: Write failing reorder transaction tests**
+- [x] **Step 2: Write failing reorder transaction tests**
 
 Assert exact ID set required, no duplicates/foreign shots, contiguous positions `0..n-1`, rollback on invalid input, and stable order after database reopen.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_repository -- --nocapture`
 
-- [ ] **Step 4: Implement minimal SQL within one transaction per mutation**
+- [x] **Step 4: Implement minimal SQL within one transaction per mutation**
 
 ```rust
 let tx = connection.transaction()?;
@@ -126,7 +126,7 @@ tx.commit()?;
 
 Use a temporary offset or a two-phase update if a unique `(scene_id, position)` constraint would collide.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 Suggested commit: `feat: complete cinema repository mutations`
 
@@ -154,29 +154,29 @@ set_shot_keyframe
 get_scene_readiness
 ```
 
-- [ ] **Step 1: Write failing service tests**
+- [x] **Step 1: Write failing service tests**
 
 Verify canonical version/project ownership for world/look/sheet/prop/keyframe, expected asset types, scene/shot ownership, blank names, invalid durations, and relationship deletion semantics.
 
-- [ ] **Step 2: Write failing readiness tests**
+- [x] **Step 2: Write failing readiness tests**
 
 Create one fixture per blocker plus a fully ready scene. Assert blocker codes, IDs, messages, deterministic ordering, and the exact transition after setting/clearing each reference.
 
-- [ ] **Step 3: Write failing command-boundary tests**
+- [x] **Step 3: Write failing command-boundary tests**
 
 Call public command functions and DTOs. Assert successful round trips plus stable `AppCommandError` fields for validation/not-found/conflict failures.
 
-- [ ] **Step 4: Run RED**
+- [x] **Step 4: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_service -- --nocapture`
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_commands -- --nocapture`
 
-- [ ] **Step 5: Implement service methods and register commands**
+- [x] **Step 5: Implement service methods and register commands**
 
 Have `scene_detail` return readiness with the scene graph so the UI does not reconstruct business rules.
 
-- [ ] **Step 6: Run GREEN and existing compiler tests**
+- [x] **Step 6: Run GREEN and existing compiler tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema -- --nocapture`
 
@@ -210,19 +210,19 @@ export const cinemaApi = {
 };
 ```
 
-- [ ] **Step 1: Write failing invoke-shape tests for all functions**
+- [x] **Step 1: Write failing invoke-shape tests for all functions**
 
 Assert command names, camelCase payloads, return types, and propagated normalized errors.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- features/cinema/api.test.ts`
 
-- [ ] **Step 3: Implement thin typed wrappers**
+- [x] **Step 3: Implement thin typed wrappers**
 
 Do not hide retries or fallback behavior in the API layer.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Suggested commit: `feat: expose typed cinema workspace API`
 
@@ -251,27 +251,27 @@ interface CinemaSelection {
 }
 ```
 
-- [ ] **Step 1: Write failing scene lifecycle tests**
+- [x] **Step 1: Write failing scene lifecycle tests**
 
 Cover empty state, create, select, rename, refresh after mutation, error recovery, and keyboard traversal of the scene list.
 
-- [ ] **Step 2: Write failing relationship and shot tests**
+- [x] **Step 2: Write failing relationship and shot tests**
 
 Cover set/clear World, add/update/remove cast look/sheet, add/remove Prop, create/edit/delete Shot, set/clear Keyframe, reorder, and confirm the source asset remains available after relationship deletion.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- CinemaWorkspace.test.tsx`
 
-- [ ] **Step 4: Implement the three regions**
+- [x] **Step 4: Implement the three regions**
 
 At desktop widths use `minmax(12rem, 0.7fr) minmax(30rem, 2fr) minmax(17rem, 0.9fr)`. At narrower widths, collapse the inspector below the editor and keep the scene list as a horizontally scrollable semantic list. Keep selection during mutation/refetch.
 
-- [ ] **Step 5: Implement explicit reference selection**
+- [x] **Step 5: Implement explicit reference selection**
 
 The inspector lists compatible canonical versions with asset name, version, hash prefix, and status. Selection writes the exact version ID; it never follows future canonical changes automatically.
 
-- [ ] **Step 6: Run GREEN and manual interaction checks**
+- [x] **Step 6: Run GREEN and manual interaction checks**
 
 Verify visible focus, labels, dialog focus return, 200% zoom, narrow layout, empty/loading/error states, and reduced motion.
 
@@ -286,15 +286,15 @@ Suggested commit: `feat: build complete cinema workspace`
 - Modify: `apps/desktop/src-tauri/tests/cinema_acceptance.rs`
 - Modify: `apps/desktop/src-tauri/tests/cinema_export.rs`
 
-- [ ] **Step 1: Write failing blocker-navigation tests**
+- [x] **Step 1: Write failing blocker-navigation tests**
 
 Assert Compile is disabled only when structured readiness is false; each blocker focuses the correct world/cast/prop/shot control; clearing a reference restores the blocker.
 
-- [ ] **Step 2: Write failing compilation evidence tests**
+- [x] **Step 2: Write failing compilation evidence tests**
 
 Assert successful compile displays compilation ID, output path, SHA-256, timestamp, input-version summary, and an Open Export action. Reopen and verify the same record.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- CinemaWorkspace.test.tsx`
 
@@ -302,11 +302,11 @@ Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test cinema_export -- --nocapture`
 
-- [ ] **Step 4: Implement readiness and compilation panel**
+- [x] **Step 4: Implement readiness and compilation panel**
 
 Use the backend blocker list verbatim for logic while formatting concise user copy. Do not offer compile until all exact references are pinned.
 
-- [ ] **Step 5: Run the slice gate**
+- [x] **Step 5: Run the slice gate**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml cinema -- --nocapture`
 
@@ -316,6 +316,6 @@ Run: `pnpm --filter @cinematic/desktop build`
 
 Run: `git diff --check`
 
-- [ ] **Step 6: Commit verified owned hunks**
+- [x] **Step 6: Commit verified owned hunks**
 
 Suggested commit: `feat: validate and compile scenes from cinema workspace`

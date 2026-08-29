@@ -1,6 +1,6 @@
 # Character Result Gallery and Promotion Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Turn Production into a persistent Face → Outfit → Character Sheet workflow whose completed candidates can be reviewed, saved, and deliberately promoted to the correct character-owned asset.
 
@@ -49,19 +49,19 @@ export function deriveGenerationResultContext(
 ): GenerationResultContext | null;
 ```
 
-- [ ] **Step 1: Write failing domain tests**
+- [x] **Step 1: Write failing domain tests**
 
 Cover Face Lock, Outfit, Character Sheet, non-generative operations, missing owner metadata, multiple result sets, and stable serialization after reload.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/domain test -- generation.test.ts`
 
-- [ ] **Step 3: Implement the smallest pure derivation**
+- [x] **Step 3: Implement the smallest pure derivation**
 
 Use `operation.expectedOutput.assetType`; obtain `ownerEntityId` from persisted run input/context rather than component state. Return `null` when there is no promotable generated output.
 
-- [ ] **Step 4: Run GREEN and type-check consumers**
+- [x] **Step 4: Run GREEN and type-check consumers**
 
 Run: `pnpm --filter @cinematic/domain test`
 
@@ -90,15 +90,15 @@ pub struct PromoteGeneratedArtifactRequest {
 }
 ```
 
-- [ ] **Step 1: Add failing negative tests**
+- [x] **Step 1: Add failing negative tests**
 
 Assert rejection for a target in another project, wrong asset type, wrong owner, artifact outside the run/result set, duplicate promotion, and an invalid canonical request. Assert Outfit and Sheet succeed for matching character-owned targets.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml generation_promotion character_pipeline_acceptance -- --nocapture`
 
-- [ ] **Step 3: Centralize eligibility validation**
+- [x] **Step 3: Centralize eligibility validation**
 
 ```rust
 fn validate_promotion_target(
@@ -114,7 +114,7 @@ fn validate_promotion_target(
 
 Reuse it for every operation; do not special-case Face Lock in the command.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Suggested commit: `fix: validate character result promotion targets`
 
@@ -138,23 +138,23 @@ interface GenerationResultsProps {
 }
 ```
 
-- [ ] **Step 1: Write failing gallery tests**
+- [x] **Step 1: Write failing gallery tests**
 
 Render persisted Face, Outfit, and Sheet result sets. Verify candidate image, metadata, QA state, save action, optional canonical checkbox, loading/empty/error states, and keyboard-accessible dialog behavior.
 
-- [ ] **Step 2: Write failing target-filter tests**
+- [x] **Step 2: Write failing target-filter tests**
 
 Mock mixed project/type/owner assets. Assert only eligible assets appear. If none exist, show “Create asset” rather than a dead-end select.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- GenerationResults.test.tsx`
 
-- [ ] **Step 4: Implement a type-neutral gallery**
+- [x] **Step 4: Implement a type-neutral gallery**
 
 Remove hard-coded Face Lock labels and target type. Use `context.expectedAssetType` and `ownerEntityId` for copy and filters. Keep result cards as a gallery/list hybrid, not nested decorative cards.
 
-- [ ] **Step 5: Run GREEN and accessibility checks**
+- [x] **Step 5: Run GREEN and accessibility checks**
 
 Run: `pnpm --filter @cinematic/desktop test -- GenerationResults.test.tsx`
 
@@ -181,19 +181,19 @@ const target = await createAsset({
 setSelectedTargetId(target.id); // still require explicit Promote click
 ```
 
-- [ ] **Step 1: Add failing tests for inline creation**
+- [x] **Step 1: Add failing tests for inline creation**
 
 Assert the created asset receives exact type/owner, becomes selected, does not trigger promotion automatically, reports validation failures inline, and cannot be submitted twice while pending.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- GenerationResults.test.tsx api.test.ts`
 
-- [ ] **Step 3: Implement creation inside the dialog**
+- [x] **Step 3: Implement creation inside the dialog**
 
 Use an inline disclosure with label and name field. Keep focus inside the dialog and return it to the triggering card on close.
 
-- [ ] **Step 4: Run GREEN and commit**
+- [x] **Step 4: Run GREEN and commit**
 
 Suggested commit: `feat: create promotion targets from result gallery`
 
@@ -219,19 +219,19 @@ interface CharacterStageState {
 }
 ```
 
-- [ ] **Step 1: Write failing guided-flow tests**
+- [x] **Step 1: Write failing guided-flow tests**
 
 Assert Face source is optional; Outfit reads the promoted Face; Sheet reads promoted Face + Outfit; blockers include actionable links; stage selection and completed results persist while switching stages; provider/model selection is retained.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- ProductionWorkspace.test.tsx`
 
-- [ ] **Step 3: Implement semantic stage navigation and persistent result loading**
+- [x] **Step 3: Implement semantic stage navigation and persistent result loading**
 
 Use buttons/tabs with `aria-current`, a single main work area, and a compact prerequisite summary. Derive stage completion from backend run/asset state rather than a client-only wizard index.
 
-- [ ] **Step 4: Run GREEN and responsive checks**
+- [x] **Step 4: Run GREEN and responsive checks**
 
 Verify 1280px three-column shell fit, 768px stacked content, 200% zoom, focus order, and `prefers-reduced-motion`.
 
@@ -245,19 +245,19 @@ Suggested commit: `feat: guide character production stages`
 - Modify: `apps/desktop/src/features/workflows/WorkflowRunView.test.tsx`
 - Modify: `apps/desktop/src/features/workflows/WorkflowWorkspace.test.tsx`
 
-- [ ] **Step 1: Write failing reload/history tests**
+- [x] **Step 1: Write failing reload/history tests**
 
 Load a completed Outfit or Sheet run directly by ID. Assert the shared gallery appears after navigation/reload and promotion updates the run detail without erasing technical metadata.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- WorkflowRunView.test.tsx WorkflowWorkspace.test.tsx`
 
-- [ ] **Step 3: Render the same `GenerationResults` from derived context**
+- [x] **Step 3: Render the same `GenerationResults` from derived context**
 
 Keep diagnostics, provider attempt, retry, and recovery controls in Workflows; do not duplicate promotion logic.
 
-- [ ] **Step 4: Run the slice gate**
+- [x] **Step 4: Run the slice gate**
 
 Run: `pnpm test`
 
@@ -269,6 +269,6 @@ Run: `pnpm --filter @cinematic/desktop build`
 
 Run: `git diff --check`
 
-- [ ] **Step 5: Commit verified owned hunks**
+- [x] **Step 5: Commit verified owned hunks**
 
 Suggested commit: `feat: persist character results across production and workflows`
