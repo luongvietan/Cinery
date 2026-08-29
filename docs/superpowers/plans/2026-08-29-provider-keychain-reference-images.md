@@ -1,6 +1,6 @@
 # Provider Keychain and Reference Images Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make provider/model selection consistent, store provider credentials in the operating-system credential vault, and add a production OpenAI GPT Image 2 adapter path that genuinely consumes reference images.
 
@@ -58,17 +58,17 @@ pub struct KeyringCredentialStore { service: &'static str }
 pub struct MemoryCredentialStore { secrets: Mutex<HashMap<String, String>> }
 ```
 
-- [ ] **Step 1: Write failing in-memory contract tests**
+- [x] **Step 1: Write failing in-memory contract tests**
 
 Cover set/get/delete, missing credentials returning `Ok(None)`, account isolation, replacement, and an injected failing store used later for compensation tests.
 
-- [ ] **Step 2: Run the focused test and observe RED**
+- [x] **Step 2: Run the focused test and observe RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store -- --nocapture`
 
 Expected: compile failure because `credential_store` and the trait do not exist.
 
-- [ ] **Step 3: Add target-specific keyring dependencies and minimal implementations**
+- [x] **Step 3: Add target-specific keyring dependencies and minimal implementations**
 
 ```toml
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -83,13 +83,13 @@ keyring = { version = "3.6.3", default-features = false, features = ["sync-secre
 
 Map `keyring::Error::NoEntry` to `Ok(None)` and every other error to a redacted `ProviderErrorKind::CredentialStore`; never include the secret in error text.
 
-- [ ] **Step 4: Run GREEN and compile every target-independent caller**
+- [x] **Step 4: Run GREEN and compile every target-independent caller**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store -- --nocapture`
 
 Expected: all credential-store tests pass on the development OS.
 
-- [ ] **Step 5: Commit only owned hunks**
+- [x] **Step 5: Commit only owned hunks**
 
 Suggested commit: `feat: store provider credentials in OS keychain`
 
@@ -122,21 +122,21 @@ pub struct ProviderStatusDto {
 
 The database stores only `keyring://cinery/<project-id>:<provider-id>`; IPC returns `configured`, never the reference or secret.
 
-- [ ] **Step 1: Write failing service and command-boundary tests**
+- [x] **Step 1: Write failing service and command-boundary tests**
 
 Test save success, vault failure (no DB row), DB failure after vault write (compensating vault delete), removal order (DB reference first, vault second), orphan cleanup error, and serialized command responses containing neither API key nor opaque reference.
 
-- [ ] **Step 2: Add a failing legacy migration test**
+- [x] **Step 2: Add a failing legacy migration test**
 
 Seed an existing `env://OPENAI_API_KEY` row. Assert first access migrates it when the environment variable exists; otherwise assert `configured: false` with a re-entry-required status and no panic.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml provider_acceptance -- --nocapture`
 
 Expected: assertions fail because configuration still resolves environment variables directly.
 
-- [ ] **Step 4: Implement transactional compensation and migration**
+- [x] **Step 4: Implement transactional compensation and migration**
 
 ```rust
 let account = format!("{}:{}", project_id, provider_id);
@@ -153,13 +153,13 @@ if let Err(db_error) = self.repository.upsert_secret_ref(
 
 Construct `ProviderService` once in Tauri state with `KeyringCredentialStore`; tests inject `MemoryCredentialStore` or a deterministic failing store.
 
-- [ ] **Step 5: Update settings UI and prove secrets stay write-only**
+- [x] **Step 5: Update settings UI and prove secrets stay write-only**
 
 The form displays “Configured”/“Not configured”, accepts a replacement key, clears the input after save, and never receives a stored value from IPC.
 
 Run: `pnpm --filter @cinematic/desktop test -- ProviderSettings.test.tsx`
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test provider_acceptance -- --nocapture`
 
@@ -194,19 +194,19 @@ pub struct ProviderExecutionRequest {
 }
 ```
 
-- [ ] **Step 1: Write failing boundary tests**
+- [x] **Step 1: Write failing boundary tests**
 
 Assert ordered reference IDs resolve to ordered attachments, wrong-project paths are rejected, unsupported MIME and hash mismatch fail before submission, and serialized diagnostics omit `bytes`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml reference_attachment -- --nocapture`
 
-- [ ] **Step 3: Implement one execution-boundary resolver**
+- [x] **Step 3: Implement one execution-boundary resolver**
 
 Resolve project-owned asset versions through existing repositories/storage validation, load bytes immediately before adapter submission, and drop attachments after the request returns. Do not add repository handles to `GenerationProvider`.
 
-- [ ] **Step 4: Run GREEN and existing generation tests**
+- [x] **Step 4: Run GREEN and existing generation tests**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml generation -- --nocapture`
 
@@ -240,19 +240,19 @@ pub struct MultipartPart {
 }
 ```
 
-- [ ] **Step 1: Write failing request-shape tests using a recording transport**
+- [x] **Step 1: Write failing request-shape tests using a recording transport**
 
 Without references, assert POST `/v1/images/generations`, JSON body, selected model, prompt, size, and no multipart. With references, assert POST `/v1/images/edits`, one `image[]` part per verified attachment, `input_fidelity=high`, and no base64 text in logs.
 
-- [ ] **Step 2: Add failing response-normalization tests**
+- [x] **Step 2: Add failing response-normalization tests**
 
 Cover GPT image base64 output, legacy URL output, malformed base64, empty data array, HTTP auth/rate-limit errors, and MIME validation before artifact ingestion.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml openai -- --nocapture`
 
-- [ ] **Step 4: Implement the minimal dual transport path**
+- [x] **Step 4: Implement the minimal dual transport path**
 
 ```rust
 if request.reference_attachments.is_empty() {
@@ -268,7 +268,7 @@ if request.reference_attachments.is_empty() {
 
 Expose capabilities `image_generation=true`, `reference_images=true`, and default model `gpt-image-2`. Preserve the explicit user-selected model.
 
-- [ ] **Step 5: Run GREEN plus privacy regression**
+- [x] **Step 5: Run GREEN plus privacy regression**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml openai -- --nocapture`
 
@@ -306,23 +306,23 @@ interface ProviderModelFieldsProps {
 }
 ```
 
-- [ ] **Step 1: Write failing component tests**
+- [x] **Step 1: Write failing component tests**
 
 Assert OpenAI remains visible when unconfigured, configuration status is explicit, incompatible providers/models are disabled with a reason, defaults are stable, keyboard labels are present, and user selection survives switching Face/Outfit/Sheet operations.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `pnpm --filter @cinematic/desktop test -- ProviderModelFields.test.tsx ProductionWorkspace.test.tsx`
 
-- [ ] **Step 3: Implement the shared controlled component**
+- [x] **Step 3: Implement the shared controlled component**
 
 Use current semantic tokens and existing field styles. Do not add a separate card around each select. Expose status text via `aria-describedby`; preserve visible focus and reduced-motion behavior.
 
-- [ ] **Step 4: Replace duplicated provider/model controls in all launch forms**
+- [x] **Step 4: Replace duplicated provider/model controls in all launch forms**
 
 Feed the same controlled value into run creation. Never infer a different model inside individual operation forms.
 
-- [ ] **Step 5: Run GREEN and frontend type/build checks**
+- [x] **Step 5: Run GREEN and frontend type/build checks**
 
 Run: `pnpm --filter @cinematic/desktop test -- ProviderModelFields.test.tsx ProductionWorkspace.test.tsx WorkflowWorkspace.test.tsx`
 
@@ -338,19 +338,19 @@ Suggested commit: `feat: unify provider and model selection`
 - Modify: `apps/desktop/src-tauri/tests/provider_acceptance.rs`
 - Modify: `README.md`
 
-- [ ] **Step 1: Add a failing recursive secret scan**
+- [x] **Step 1: Add a failing recursive secret scan**
 
 Configure a sentinel credential, execute a mocked reference-image run, export diagnostics and inspect SQLite/project files. Assert the sentinel, authorization header, base64 input, and keyring account reference are absent from user-facing payloads and bundles.
 
-- [ ] **Step 2: Run RED, implement any missing redaction, then run GREEN**
+- [x] **Step 2: Run RED, implement any missing redaction, then run GREEN**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml privacy provider_acceptance -- --nocapture`
 
-- [ ] **Step 3: Update README configuration instructions**
+- [x] **Step 3: Update README configuration instructions**
 
 Document the OS credential vault as the normal path, the one-time legacy environment migration, Linux Secret Service prerequisite, and the fact that credentials are never returned to the UI.
 
-- [ ] **Step 4: Run the slice gate**
+- [x] **Step 4: Run the slice gate**
 
 Run: `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -j 1`
 
@@ -362,6 +362,6 @@ Run: `git diff --check`
 
 Expected: every test passes, build succeeds, and no whitespace errors remain.
 
-- [ ] **Step 5: Commit only verified owned hunks**
+- [x] **Step 5: Commit only verified owned hunks**
 
 Suggested commit: `docs: document secure provider configuration`
