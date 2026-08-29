@@ -47,14 +47,26 @@ impl CinemaService {
         let intent = validate_intent("Establish the scene")?;
         let project = ProjectService::open(project_root)?;
         let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let tx = conn.transaction().map_err(|e| AppError::Database(e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
         ensure_canonical_version(&tx, &project.id, world_asset_version_id, &["world_plate"])?;
         let entity = canon_repository::get_entity(&tx, character_entity_id)?;
         if entity.project_id != project.id || entity.entity_type != "character" {
             return Err(AppError::CanonEntityNotFound);
         }
-        ensure_canonical_version(&tx, &project.id, look_asset_version_id, &["outfit", "character_sheet"])?;
-        ensure_canonical_version(&tx, &project.id, sheet_asset_version_id, &["character_sheet"])?;
+        ensure_canonical_version(
+            &tx,
+            &project.id,
+            look_asset_version_id,
+            &["outfit", "character_sheet"],
+        )?;
+        ensure_canonical_version(
+            &tx,
+            &project.id,
+            sheet_asset_version_id,
+            &["character_sheet"],
+        )?;
 
         let now = Utc::now().to_rfc3339();
         let scene = SceneRecord {
@@ -67,26 +79,32 @@ impl CinemaService {
             updated_at: now.clone(),
         };
         repository::create_scene(&tx, &scene)?;
-        repository::add_scene_character(&tx, &SceneCharacterRecord {
-            scene_id: scene.id.clone(),
-            character_entity_id: character_entity_id.to_string(),
-            look_asset_version_id: look_asset_version_id.to_string(),
-            sheet_asset_version_id: Some(sheet_asset_version_id.to_string()),
-            display_order: 0,
-        })?;
-        repository::create_shot(&tx, &ShotRecord {
-            id: Ulid::new().to_string(),
-            scene_id: scene.id.clone(),
-            ordering: 0,
-            duration_seconds: 4.0,
-            keyframe_asset_version_id: None,
-            intent,
-            action: None,
-            camera: None,
-            generated_video_asset_version_id: None,
-            created_at: now.clone(),
-            updated_at: now,
-        })?;
+        repository::add_scene_character(
+            &tx,
+            &SceneCharacterRecord {
+                scene_id: scene.id.clone(),
+                character_entity_id: character_entity_id.to_string(),
+                look_asset_version_id: look_asset_version_id.to_string(),
+                sheet_asset_version_id: Some(sheet_asset_version_id.to_string()),
+                display_order: 0,
+            },
+        )?;
+        repository::create_shot(
+            &tx,
+            &ShotRecord {
+                id: Ulid::new().to_string(),
+                scene_id: scene.id.clone(),
+                ordering: 0,
+                duration_seconds: 4.0,
+                keyframe_asset_version_id: None,
+                intent,
+                action: None,
+                camera: None,
+                generated_video_asset_version_id: None,
+                created_at: now.clone(),
+                updated_at: now,
+            },
+        )?;
         tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
         Ok(scene)
     }
@@ -279,7 +297,6 @@ impl CinemaService {
     }
 }
 
-
 impl CinemaService {
     /// Resolves the locked `speech` / `movement` / `stillness` canon values
     /// for one character. Strict: every one of the three sections must exist
@@ -374,8 +391,7 @@ impl CinemaService {
         };
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let version =
-            ensure_canonical_version(&conn, &project.id, version_id, &["world_plate"])?;
+        let version = ensure_canonical_version(&conn, &project.id, version_id, &["world_plate"])?;
         Ok(WorldContinuity {
             plate_id: Some(version.asset_id),
             plate_asset_version_id: Some(version.version_id),
@@ -383,7 +399,6 @@ impl CinemaService {
         })
     }
 }
-
 
 impl CinemaService {
     /// Validates a scene is compilable: it exists in this project, has at
@@ -465,12 +480,8 @@ impl CinemaService {
         let behavioral_locks = Self::resolve_scene_behavioral_locks(&conn, &scene.id)?;
         let world_continuity = match &scene.world_asset_version_id {
             Some(version_id) => {
-                let version = ensure_canonical_version(
-                    &conn,
-                    &project.id,
-                    version_id,
-                    &["world_plate"],
-                )?;
+                let version =
+                    ensure_canonical_version(&conn, &project.id, version_id, &["world_plate"])?;
                 WorldContinuity {
                     plate_id: Some(version.asset_id),
                     plate_asset_version_id: Some(version.version_id),
@@ -507,8 +518,7 @@ impl CinemaService {
             &forbidden_topics,
         )?;
 
-        let (export_path, export_sha256) =
-            export::export_compilation(project_root, &prompt)?;
+        let (export_path, export_sha256) = export::export_compilation(project_root, &prompt)?;
 
         let now = Utc::now().to_rfc3339();
         let record = CinemaCompilation {
@@ -553,7 +563,11 @@ impl CinemaService {
     }
 
     /// Renames a scene with title validation.
-    pub fn rename_scene(project_root: &Path, scene_id: &str, title: &str) -> Result<SceneRecord, AppError> {
+    pub fn rename_scene(
+        project_root: &Path,
+        scene_id: &str,
+        title: &str,
+    ) -> Result<SceneRecord, AppError> {
         let title = validate_title(title)?;
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
@@ -561,7 +575,11 @@ impl CinemaService {
     }
 
     /// Pins or clears the scene's canonical World Plate version.
-    pub fn set_scene_world(project_root: &Path, scene_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+    pub fn set_scene_world(
+        project_root: &Path,
+        scene_id: &str,
+        version_id: Option<&str>,
+    ) -> Result<(), AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         repository::get_scene(&conn, &project.id, scene_id)?;
@@ -584,24 +602,41 @@ impl CinemaService {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         repository::get_scene(&conn, &project.id, scene_id)?;
         let cast = repository::list_scene_characters(&conn, scene_id)?;
-        if !cast.iter().any(|member| member.character_entity_id == character_id) {
+        if !cast
+            .iter()
+            .any(|member| member.character_entity_id == character_id)
+        {
             return Err(AppError::CanonEntityNotFound);
         }
-        let look = look_asset_version_id
-            .or_else(|| cast.iter().find(|m| m.character_entity_id == character_id).map(|m| m.look_asset_version_id.as_str()));
-        let look = look.ok_or_else(|| AppError::WorkflowPrerequisiteFailed(
-            "cast member has no look version to keep".into(),
-        ))?;
+        let look = look_asset_version_id.or_else(|| {
+            cast.iter()
+                .find(|m| m.character_entity_id == character_id)
+                .map(|m| m.look_asset_version_id.as_str())
+        });
+        let look = look.ok_or_else(|| {
+            AppError::WorkflowPrerequisiteFailed("cast member has no look version to keep".into())
+        })?;
         ensure_canonical_version(&conn, &project.id, look, &["outfit", "character_sheet"])?;
         if let Some(sheet) = sheet_asset_version_id {
             ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"])?;
         }
-        repository::update_scene_character(&conn, &project.id, scene_id, character_id, Some(look), sheet_asset_version_id)
+        repository::update_scene_character(
+            &conn,
+            &project.id,
+            scene_id,
+            character_id,
+            Some(look),
+            sheet_asset_version_id,
+        )
     }
 
     /// Removes one cast relationship. Canon entities and assets are never
     /// deleted.
-    pub fn remove_scene_character(project_root: &Path, scene_id: &str, character_id: &str) -> Result<(), AppError> {
+    pub fn remove_scene_character(
+        project_root: &Path,
+        scene_id: &str,
+        character_id: &str,
+    ) -> Result<(), AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         repository::get_scene(&conn, &project.id, scene_id)?;
@@ -609,7 +644,11 @@ impl CinemaService {
     }
 
     /// Removes one prop relationship by exact version id.
-    pub fn remove_scene_prop(project_root: &Path, scene_id: &str, prop_asset_version_id: &str) -> Result<(), AppError> {
+    pub fn remove_scene_prop(
+        project_root: &Path,
+        scene_id: &str,
+        prop_asset_version_id: &str,
+    ) -> Result<(), AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         repository::get_scene(&conn, &project.id, scene_id)?;
@@ -639,14 +678,22 @@ impl CinemaService {
 
     /// Reorders the scene's shots transactionally into a contiguous,
     /// deterministic order.
-    pub fn reorder_shots(project_root: &Path, scene_id: &str, ordered_ids: &[String]) -> Result<Vec<ShotRecord>, AppError> {
+    pub fn reorder_shots(
+        project_root: &Path,
+        scene_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<Vec<ShotRecord>, AppError> {
         let project = ProjectService::open(project_root)?;
         let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
         repository::reorder_shots(&mut conn, &project.id, scene_id, ordered_ids)
     }
 
     /// Pins or clears one shot's canonical keyframe version.
-    pub fn set_shot_keyframe(project_root: &Path, shot_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+    pub fn set_shot_keyframe(
+        project_root: &Path,
+        shot_id: &str,
+        version_id: Option<&str>,
+    ) -> Result<(), AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         if let Some(version) = version_id {
@@ -657,7 +704,10 @@ impl CinemaService {
 
     /// Computes structured readiness for one scene without exceptions as
     /// the normal control flow.
-    pub fn scene_readiness(project_root: &Path, scene_id: &str) -> Result<CinemaReadiness, AppError> {
+    pub fn scene_readiness(
+        project_root: &Path,
+        scene_id: &str,
+    ) -> Result<CinemaReadiness, AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         let scene = repository::get_scene(&conn, &project.id, scene_id)?;
@@ -704,7 +754,9 @@ impl CinemaService {
                 });
             }
             if let Some(sheet) = &member.sheet_asset_version_id {
-                if ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"]).is_err() {
+                if ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"])
+                    .is_err()
+                {
                     blockers.push(CinemaReadinessBlocker {
                         code: "missing_cast_sheet".into(),
                         scene_id: scene.id.clone(),
@@ -730,13 +782,16 @@ impl CinemaService {
         }
         for shot in &shots {
             if let Some(keyframe) = &shot.keyframe_asset_version_id {
-                if ensure_canonical_version(&conn, &project.id, keyframe, &["shot_keyframe"]).is_err() {
+                if ensure_canonical_version(&conn, &project.id, keyframe, &["shot_keyframe"])
+                    .is_err()
+                {
                     blockers.push(CinemaReadinessBlocker {
                         code: "missing_shot_keyframe".into(),
                         scene_id: scene.id.clone(),
                         entity_id: None,
                         shot_id: Some(shot.id.clone()),
-                        message: "The pinned shot keyframe is not the current canonical version.".into(),
+                        message: "The pinned shot keyframe is not the current canonical version."
+                            .into(),
                         action_target: "shot".into(),
                     });
                 }
@@ -842,4 +897,3 @@ pub struct CinemaReadiness {
     pub ready: bool,
     pub blockers: Vec<CinemaReadinessBlocker>,
 }
-

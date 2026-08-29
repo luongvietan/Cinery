@@ -90,7 +90,9 @@ pub fn validate_tbd_decisions(
     let mut decision_map: HashMap<&str, &TbdDecision> = HashMap::new();
     for decision in decisions {
         // First entry wins; duplicates are tolerated but first is authoritative.
-        decision_map.entry(decision.tbd_id.as_str()).or_insert(decision);
+        decision_map
+            .entry(decision.tbd_id.as_str())
+            .or_insert(decision);
     }
 
     for tbd in applicable_tbds {
@@ -207,11 +209,7 @@ pub fn validate_world_tbd_firewall(
     location_entity_id: &str,
     decisions: &[TbdDecision],
 ) -> Result<(), AppError> {
-    let applicable = load_applicable_tbds(
-        conn,
-        project_id,
-        &[location_entity_id.to_string()],
-    )?;
+    let applicable = load_applicable_tbds(conn, project_id, &[location_entity_id.to_string()])?;
     validate_tbd_decisions(&applicable, decisions)
 }
 
@@ -485,11 +483,7 @@ mod tests {
             None,
         );
         // Validate with both TBDS but only decision for open one -> should pass (resolved ignored)
-        assert!(validate_tbd_decisions(
-            &[open_tbd, resolved_tbd.clone()],
-            &[preserve]
-        )
-        .is_ok());
+        assert!(validate_tbd_decisions(&[open_tbd, resolved_tbd.clone()], &[preserve]).is_ok());
 
         // Validate with resolved alone and no decisions -> should pass
         assert!(validate_tbd_decisions(&[resolved_tbd], &[]).is_ok());
@@ -547,14 +541,7 @@ mod tests {
     #[test]
     fn missing_decision_error_code_is_tbd_decision_required() {
         let tbd = test_tbd(
-            "tbd-11",
-            "proj-1",
-            None,
-            None,
-            "Missing",
-            None,
-            true,
-            "open",
+            "tbd-11", "proj-1", None, None, "Missing", None, true, "open",
         );
         let err = validate_tbd_decisions(&[tbd], &[]).unwrap_err();
         assert_eq!(err.code(), "TBD_DECISION_REQUIRED");
@@ -619,14 +606,13 @@ mod tests {
             true,
             "open",
         );
-        let snapshot = TbdDecision::snapshot_from_tbd(
-            &tbd,
-            TbdDecisionKind::PreserveUnknown,
-            None,
-        );
+        let snapshot = TbdDecision::snapshot_from_tbd(&tbd, TbdDecisionKind::PreserveUnknown, None);
         assert_eq!(snapshot.tbd_id, "tbd-14");
         assert_eq!(snapshot.topic_snapshot, "Exact topic");
-        assert_eq!(snapshot.note_snapshot.as_deref(), Some("Exact note for preservation"));
+        assert_eq!(
+            snapshot.note_snapshot.as_deref(),
+            Some("Exact note for preservation")
+        );
         assert_eq!(snapshot.decision, TbdDecisionKind::PreserveUnknown);
 
         // Snapshot must be immutable: mutating live TBD does not affect snapshot
@@ -663,7 +649,8 @@ mod tests {
         assert_eq!(preserve, "preserve_unknown");
         assert_eq!(not_applicable, "not_applicable");
         // Deserializing an invalid variant must fail
-        let invalid = serde_json::from_value::<TbdDecisionKind>(serde_json::json!("resolve_for_generation"));
+        let invalid =
+            serde_json::from_value::<TbdDecisionKind>(serde_json::json!("resolve_for_generation"));
         assert!(invalid.is_err());
     }
 

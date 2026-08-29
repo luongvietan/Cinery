@@ -61,12 +61,8 @@ impl WorldService {
         }
 
         // 4. reject duplicate World for same location
-        if worlds_repository::find_world_by_location(
-            &tx,
-            &project.id,
-            canon_location_entity_id,
-        )?
-        .is_some()
+        if worlds_repository::find_world_by_location(&tx, &project.id, canon_location_entity_id)?
+            .is_some()
         {
             return Err(AppError::WorldAlreadyExists);
         }
@@ -137,16 +133,14 @@ impl WorldService {
         let worlds = worlds_repository::list_worlds(&conn, &project.id)?;
         let mut details = Vec::with_capacity(worlds.len());
         for world in worlds {
-            let location =
-                canon_repository::get_entity(&conn, &world.canon_location_entity_id).map_err(
-                    |e| match e {
-                        AppError::CanonEntityNotFound => AppError::Database(format!(
-                            "world {} references missing canon entity {}",
-                            world.id, world.canon_location_entity_id
-                        )),
-                        other => other,
-                    },
-                )?;
+            let location = canon_repository::get_entity(&conn, &world.canon_location_entity_id)
+                .map_err(|e| match e {
+                    AppError::CanonEntityNotFound => AppError::Database(format!(
+                        "world {} references missing canon entity {}",
+                        world.id, world.canon_location_entity_id
+                    )),
+                    other => other,
+                })?;
             let asset = asset_repository::get_asset(&conn, &world.world_plate_asset_id)?;
             details.push(WorldDetail {
                 world,
@@ -158,22 +152,24 @@ impl WorldService {
     }
 
     /// Gets a single World enriched with Location display data and World Plate Asset.
-    pub fn get_world_detailed(project_root: &Path, world_id: &str) -> Result<WorldDetail, AppError> {
+    pub fn get_world_detailed(
+        project_root: &Path,
+        world_id: &str,
+    ) -> Result<WorldDetail, AppError> {
         let world = Self::get_world(project_root, world_id)?;
         let conn = {
             let mut c = db::open_existing_connection(&project_root.join("project.db"))?;
             crate::db::migrations::run_migrations(&mut c)?;
             c
         };
-        let location = canon_repository::get_entity(&conn, &world.canon_location_entity_id).map_err(
-            |e| match e {
+        let location = canon_repository::get_entity(&conn, &world.canon_location_entity_id)
+            .map_err(|e| match e {
                 AppError::CanonEntityNotFound => AppError::Database(format!(
                     "world {} references missing canon entity {}",
                     world.id, world.canon_location_entity_id
                 )),
                 other => other,
-            },
-        )?;
+            })?;
         let asset = asset_repository::get_asset(&conn, &world.world_plate_asset_id)?;
         Ok(WorldDetail {
             world,
@@ -397,7 +393,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(has_description_column, 0, "World should not copy Location narrative");
+        assert_eq!(
+            has_description_column, 0,
+            "World should not copy Location narrative"
+        );
         // Asset owner points to World
         let asset = asset_repository::get_asset(&conn, &world.world_plate_asset_id).unwrap();
         assert_eq!(asset.owner_entity_id.as_deref(), Some(world.id.as_str()));

@@ -1,7 +1,5 @@
 use super::errors::QaError;
-use super::models::{
-    QaCheckPlan, QaCheckResult, QaCheckStatus, QaOverallStatus, VisualQaResult,
-};
+use super::models::{QaCheckPlan, QaCheckResult, QaCheckStatus, QaOverallStatus, VisualQaResult};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +29,10 @@ impl QaResponseNormalizer {
         if response.schema_version != 1 {
             return Err(invalid("unsupported QA response schema version"));
         }
-        validate_text(response.model_summary.as_deref().unwrap_or_default(), "modelSummary")?;
+        validate_text(
+            response.model_summary.as_deref().unwrap_or_default(),
+            "modelSummary",
+        )?;
 
         let expected_ids = plan
             .checks
@@ -41,10 +42,7 @@ impl QaResponseNormalizer {
         let mut results = BTreeMap::new();
         for result in response.checks {
             if !expected_ids.contains(result.check_id.as_str()) {
-                return Err(invalid(format!(
-                    "unknown QA check id: {}",
-                    result.check_id
-                )));
+                return Err(invalid(format!("unknown QA check id: {}", result.check_id)));
             }
             if results.insert(result.check_id.clone(), result).is_some() {
                 return Err(invalid("duplicate QA check id"));
@@ -75,7 +73,10 @@ impl QaResponseNormalizer {
             }
             validate_text(&result.observed, "observed")?;
             validate_text(&result.reason, "reason")?;
-            validate_text(result.repair_hint.as_deref().unwrap_or_default(), "repairHint")?;
+            validate_text(
+                result.repair_hint.as_deref().unwrap_or_default(),
+                "repairHint",
+            )?;
             normalized.push(result);
         }
 
@@ -101,8 +102,7 @@ pub fn compute_overall(
         .collect::<BTreeMap<_, _>>();
 
     if plan.checks.iter().any(|definition| {
-        definition.blocking
-            && by_id.get(definition.id.as_str()) == Some(&QaCheckStatus::Fail)
+        definition.blocking && by_id.get(definition.id.as_str()) == Some(&QaCheckStatus::Fail)
     }) {
         return Ok(QaOverallStatus::Fail);
     }
@@ -123,10 +123,14 @@ pub fn compute_overall(
 
 fn validate_text(value: &str, field: &str) -> Result<(), AppError> {
     if value.chars().count() > MAX_RESULT_TEXT {
-        return Err(invalid(format!("QA field {field} exceeds {MAX_RESULT_TEXT} characters")));
+        return Err(invalid(format!(
+            "QA field {field} exceeds {MAX_RESULT_TEXT} characters"
+        )));
     }
     if value.contains('\0') {
-        return Err(invalid(format!("QA field {field} contains invalid control data")));
+        return Err(invalid(format!(
+            "QA field {field} contains invalid control data"
+        )));
     }
     Ok(())
 }

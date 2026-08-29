@@ -10,11 +10,18 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     let root = temp.path().join("golden-generation");
     ProjectService::create(&root, "Golden Generation").unwrap();
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let project_id: String = conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
     conn.execute("INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('mara', ?1, 'character', 'Mara', 'mara', 'now', 'now')", [&project_id]).unwrap();
     for (id, key, value, revision) in [
         ("role", "role_tag", json!({"text":"Protagonist"}), 1),
-        ("summary", "visual_summary", json!({"text":"Angular face."}), 2),
+        (
+            "summary",
+            "visual_summary",
+            json!({"text":"Angular face."}),
+            2,
+        ),
         ("locks", "visual_locks", json!({"locks":[]}), 3),
     ] {
         conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES (?1, 'mara', ?2, ?3, 'locked', ?4, 'now', 'now', 'now')", params![id, key, value.to_string(), revision]).unwrap();
@@ -25,7 +32,8 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     let face_path = root.join("assets/face-asset/v002");
     std::fs::create_dir_all(&face_path).unwrap();
     let face_file = face_path.join("face.png");
-    let face_image: image::RgbaImage = image::ImageBuffer::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
+    let face_image: image::RgbaImage =
+        image::ImageBuffer::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
     face_image.save(&face_file).unwrap();
     use sha2::{Digest, Sha256};
     let face_bytes = std::fs::read(&face_file).unwrap();
@@ -33,7 +41,11 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
     hasher.update(&face_bytes);
     let face_hash = format!("{:x}", hasher.finalize());
     conn.execute("INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) VALUES ('face-v002', 'face-asset', 2, 'canonical', 'assets/face-asset/v002/face.png', 'thumbnails/face-asset/face-v002.webp', ?1, 'face.png', 'image/png', ?2, 'now')", params![face_hash, face_bytes.len() as i64]).unwrap();
-    conn.execute("UPDATE assets SET canonical_version_id = 'face-v002' WHERE id = 'face-asset'", []).unwrap();
+    conn.execute(
+        "UPDATE assets SET canonical_version_id = 'face-v002' WHERE id = 'face-asset'",
+        [],
+    )
+    .unwrap();
     (temp, root)
 }
 
@@ -61,10 +73,28 @@ fn golden_face_lock_generation_persists_candidates_and_defers_asset_promotion() 
     assert_eq!(completed.run.status, "completed");
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let result_sets: i64 = conn.query_row("SELECT COUNT(*) FROM generation_result_sets", [], |row| row.get(0)).unwrap();
-    let artifacts: i64 = conn.query_row("SELECT COUNT(*) FROM generated_artifacts WHERE capture_status = 'available'", [], |row| row.get(0)).unwrap();
-    let asset_versions: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0)).unwrap();
-    let source: String = conn.query_row("SELECT asset_version_id FROM generated_artifact_sources LIMIT 1", [], |row| row.get(0)).unwrap();
+    let result_sets: i64 = conn
+        .query_row("SELECT COUNT(*) FROM generation_result_sets", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    let artifacts: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM generated_artifacts WHERE capture_status = 'available'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let asset_versions: i64 = conn
+        .query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0))
+        .unwrap();
+    let source: String = conn
+        .query_row(
+            "SELECT asset_version_id FROM generated_artifact_sources LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(result_sets, 1);
     assert_eq!(artifacts, 4);
     assert_eq!(asset_versions, 1);

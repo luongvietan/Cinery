@@ -230,4 +230,3 @@ fn build_prompt(
         provider_prompt: prompt,
     })
 }
-

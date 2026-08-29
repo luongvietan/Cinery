@@ -119,16 +119,28 @@ fn cast_relationships_can_be_updated_and_removed_without_deleting_canon() {
         params![project_id],
     ).unwrap();
     seed_versions(&conn, &["look-v1", "look-v2", "sheet-v1"]);
-    repository::add_scene_character(&conn, &SceneCharacterRecord {
-        scene_id: scene_id.clone(),
-        character_entity_id: "mara".into(),
-        look_asset_version_id: "look-v1".into(),
-        sheet_asset_version_id: None,
-        display_order: 0,
-    }).unwrap();
+    repository::add_scene_character(
+        &conn,
+        &SceneCharacterRecord {
+            scene_id: scene_id.clone(),
+            character_entity_id: "mara".into(),
+            look_asset_version_id: "look-v1".into(),
+            sheet_asset_version_id: None,
+            display_order: 0,
+        },
+    )
+    .unwrap();
 
     // Update look and add a sheet pin.
-    repository::update_scene_character(&conn, &project_id, &scene_id, "mara", Some("look-v2"), Some("sheet-v1")).unwrap();
+    repository::update_scene_character(
+        &conn,
+        &project_id,
+        &scene_id,
+        "mara",
+        Some("look-v2"),
+        Some("sheet-v1"),
+    )
+    .unwrap();
     let cast = repository::list_scene_characters(&conn, &scene_id).unwrap();
     assert_eq!(cast.len(), 1);
     assert_eq!(cast[0].look_asset_version_id, "look-v2");
@@ -136,9 +148,23 @@ fn cast_relationships_can_be_updated_and_removed_without_deleting_canon() {
 
     // Removing the cast record keeps the canon entity and the scene.
     repository::remove_scene_character(&conn, &project_id, &scene_id, "mara").unwrap();
-    assert!(repository::list_scene_characters(&conn, &scene_id).unwrap().is_empty());
-    let entity_count: i64 = conn.query_row("SELECT COUNT(*) FROM canon_entities WHERE id = 'mara'", [], |r| r.get(0)).unwrap();
-    let scene_count: i64 = conn.query_row("SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'", [], |r| r.get(0)).unwrap();
+    assert!(repository::list_scene_characters(&conn, &scene_id)
+        .unwrap()
+        .is_empty());
+    let entity_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM canon_entities WHERE id = 'mara'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let scene_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(entity_count, 1);
     assert_eq!(scene_count, 1);
 }
@@ -149,16 +175,24 @@ fn props_can_be_removed_by_version_without_touching_assets() {
     let conn = open_db(&root);
     let (project_id, scene_id) = seed_scene(&conn);
     seed_versions(&conn, &["prop-v1"]);
-    repository::add_scene_prop(&conn, &ScenePropRecord {
-        scene_id: scene_id.clone(),
-        prop_asset_version_id: "prop-v1".into(),
-        display_order: 0,
-    }).unwrap();
+    repository::add_scene_prop(
+        &conn,
+        &ScenePropRecord {
+            scene_id: scene_id.clone(),
+            prop_asset_version_id: "prop-v1".into(),
+            display_order: 0,
+        },
+    )
+    .unwrap();
 
     repository::remove_scene_prop(&conn, &project_id, &scene_id, "prop-v1").unwrap();
-    assert!(repository::list_scene_props(&conn, &scene_id).unwrap().is_empty());
+    assert!(repository::list_scene_props(&conn, &scene_id)
+        .unwrap()
+        .is_empty());
     // The seeded source asset itself survives the relationship deletion.
-    let asset_count: i64 = conn.query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0)).unwrap();
+    let asset_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+        .unwrap();
     assert!(asset_count >= 1);
 }
 
@@ -204,7 +238,13 @@ fn delete_shot_removes_only_the_shot_row() {
     assert_eq!(shots.len(), 1);
     assert_eq!(shots[0].id, "shot-2");
     // Scene survives.
-    let scene_count: i64 = conn.query_row("SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'", [], |r| r.get(0)).unwrap();
+    let scene_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     assert_eq!(scene_count, 1);
 }
 
@@ -218,23 +258,44 @@ fn reorder_shots_requires_the_exact_id_set_and_writes_contiguous_positions() {
     }
 
     // Move shot-3 to the front.
-    let ordered = vec!["shot-3".to_string(), "shot-1".to_string(), "shot-2".to_string()];
+    let ordered = vec![
+        "shot-3".to_string(),
+        "shot-1".to_string(),
+        "shot-2".to_string(),
+    ];
     let shots = repository::reorder_shots(&mut conn, &project_id, &scene_id, &ordered).unwrap();
-    assert_eq!(shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["shot-3", "shot-1", "shot-2"]);
-    assert_eq!(shots.iter().map(|s| s.ordering).collect::<Vec<_>>(), vec![0, 1, 2]);
+    assert_eq!(
+        shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["shot-3", "shot-1", "shot-2"]
+    );
+    assert_eq!(
+        shots.iter().map(|s| s.ordering).collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
 
     // Duplicates are rejected without changing state.
-    let duplicate = vec!["shot-1".to_string(), "shot-1".to_string(), "shot-2".to_string()];
+    let duplicate = vec![
+        "shot-1".to_string(),
+        "shot-1".to_string(),
+        "shot-2".to_string(),
+    ];
     assert!(repository::reorder_shots(&mut conn, &project_id, &scene_id, &duplicate).is_err());
     // Foreign shot ids are rejected.
-    let foreign = vec!["shot-1".to_string(), "shot-2".to_string(), "shot-9".to_string()];
+    let foreign = vec![
+        "shot-1".to_string(),
+        "shot-2".to_string(),
+        "shot-9".to_string(),
+    ];
     assert!(repository::reorder_shots(&mut conn, &project_id, &scene_id, &foreign).is_err());
     // Incomplete sets are rejected.
     let partial = vec!["shot-1".to_string(), "shot-2".to_string()];
     assert!(repository::reorder_shots(&mut conn, &project_id, &scene_id, &partial).is_err());
     // State is unchanged after rejected calls.
     let shots = repository::list_shots(&conn, &scene_id).unwrap();
-    assert_eq!(shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["shot-3", "shot-1", "shot-2"]);
+    assert_eq!(
+        shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["shot-3", "shot-1", "shot-2"]
+    );
 }
 
 #[test]
@@ -249,6 +310,9 @@ fn shot_ordering_is_stable_after_reopen() {
     };
     let conn = open_db(&root);
     let shots = repository::list_shots(&conn, &scene_id).unwrap();
-    assert_eq!(shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), vec!["shot-1", "shot-2"]);
+    assert_eq!(
+        shots.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["shot-1", "shot-2"]
+    );
     let _ = project_id;
 }

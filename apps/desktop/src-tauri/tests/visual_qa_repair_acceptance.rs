@@ -22,6 +22,9 @@ fn repair_schema_is_present_and_keeps_provenance_columns_durable() {
         "provider_job_id",
         "child_qa_run_id",
     ] {
-        assert!(table_sql.contains(column), "missing provenance column {column}");
+        assert!(
+            table_sql.contains(column),
+            "missing provenance column {column}"
+        );
     }
 }

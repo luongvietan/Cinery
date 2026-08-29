@@ -117,7 +117,7 @@ fn check_asset_version_owners(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-             "SELECT av.id, a.owner_entity_id FROM asset_versions av \
+            "SELECT av.id, a.owner_entity_id FROM asset_versions av \
               JOIN assets a ON a.id = av.asset_id \
               WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL \
               AND NOT EXISTS (SELECT 1 FROM canon_entities WHERE id = a.owner_entity_id)",
@@ -621,6 +621,9 @@ mod tests {
 
         // Verify we have at least 13 unique codes
         assert!(codes.len() >= 13);
-        assert_eq!(codes.len(), codes.iter().collect::<std::collections::HashSet<_>>().len());
+        assert_eq!(
+            codes.len(),
+            codes.iter().collect::<std::collections::HashSet<_>>().len()
+        );
     }
 }

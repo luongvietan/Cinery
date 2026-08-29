@@ -34,13 +34,21 @@ fn tauri_create_scene_and_compile_via_commands() {
     )
     .unwrap();
     assert_eq!(detail.characters.len(), 1);
-    commands::create_shot(root.clone(), scene.id.clone(), None, 4.0, "Close".to_string(), None, None).unwrap();
+    commands::create_shot(
+        root.clone(),
+        scene.id.clone(),
+        None,
+        4.0,
+        "Close".to_string(),
+        None,
+        None,
+    )
+    .unwrap();
     let shots = commands::list_shots(root.clone(), scene.id.clone()).unwrap();
     assert_eq!(shots.len(), 1);
 
     // compile via command
-    let compilation =
-        commands::compile_cinema(root.clone(), scene.id.clone(), 8.0, None).unwrap();
+    let compilation = commands::compile_cinema(root.clone(), scene.id.clone(), 8.0, None).unwrap();
     assert!(setup.root.join(&compilation.export_path).exists());
     assert!(!compilation.compilation_json.is_empty());
 
@@ -58,7 +66,8 @@ fn command_errors_map_to_app_command_error_codes() {
     let error = commands::get_scene(root.clone(), "missing-scene".to_string()).unwrap_err();
     assert_eq!(error.code, "SCENE_NOT_FOUND");
 
-    let error = commands::get_cinema_compilation(root.clone(), "missing-compilation".to_string()).unwrap_err();
+    let error = commands::get_cinema_compilation(root.clone(), "missing-compilation".to_string())
+        .unwrap_err();
     assert_eq!(error.code, "CINEMA_COMPILATION_NOT_FOUND");
 
     let error = commands::create_scene(root.clone(), "   ".to_string(), None, None).unwrap_err();
@@ -66,7 +75,7 @@ fn command_errors_map_to_app_command_error_codes() {
 
     // A blocked compilation surfaces the TBD firewall code.
     cinematic_desktop_lib::canon::tbd::create(
-        &setup.root, 
+        &setup.root,
         None,
         None,
         "What is behind the red door?",
@@ -74,7 +83,8 @@ fn command_errors_map_to_app_command_error_codes() {
         true,
     )
     .unwrap();
-    let error = commands::compile_cinema(root.clone(), setup.scene.id.clone(), 8.0, None).unwrap_err();
+    let error =
+        commands::compile_cinema(root.clone(), setup.scene.id.clone(), 8.0, None).unwrap_err();
     assert_eq!(error.code, "WORKFLOW_BLOCKED_BY_PROTECTED_TBD");
 }
 
@@ -87,4 +97,3 @@ fn commands_reject_invalid_project_paths() {
         "INVALID_PROJECT_PATH"
     ));
 }
-

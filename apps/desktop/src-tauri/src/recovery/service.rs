@@ -15,8 +15,8 @@ impl RecoveryService {
     ) -> Result<ProjectRecoveryState, AppCommandError> {
         // Validate path and read manifest
         let manifest = paths::read_manifest(project_root_path).map_err(AppCommandError::from)?;
-        let conn =
-            crate::db::open_existing_connection(&project_root_path.join("project.db")).map_err(AppCommandError::from)?;
+        let conn = crate::db::open_existing_connection(&project_root_path.join("project.db"))
+            .map_err(AppCommandError::from)?;
         let project = project_repository::read_project(&conn).map_err(AppCommandError::from)?;
 
         if project.id != manifest.project_id {
@@ -87,9 +87,9 @@ impl RecoveryService {
         let executions = statement
             .query_map([project_id], |row| {
                 Ok((
-                    row.get::<_, String>(0)?,  // id
-                    row.get::<_, String>(1)?,  // status
-                    row.get::<_, Option<String>>(2)?,  // normalized_error_json
+                    row.get::<_, String>(0)?,         // id
+                    row.get::<_, String>(1)?,         // status
+                    row.get::<_, Option<String>>(2)?, // normalized_error_json
                 ))
             })
             .map_err(|e| AppError::Database(e.to_string()))?
@@ -100,10 +100,15 @@ impl RecoveryService {
             // Only classify incomplete executions
             if !is_provider_complete(&status) {
                 // Check if asset version was created for this execution
-                let asset_created = check_asset_for_provider_execution(conn, &exec_id)
-                    .unwrap_or(false);
+                let asset_created =
+                    check_asset_for_provider_execution(conn, &exec_id).unwrap_or(false);
 
-                let classification = Self::classify_provider_execution(&exec_id, &status, asset_created, error_json.as_deref());
+                let classification = Self::classify_provider_execution(
+                    &exec_id,
+                    &status,
+                    asset_created,
+                    error_json.as_deref(),
+                );
                 classifications.push(classification);
             }
         }
@@ -116,8 +121,14 @@ impl RecoveryService {
         run: &crate::workflow::model::WorkflowRunRecord,
     ) -> RecoveryClassification {
         let disposition = match run.status.as_str() {
-            "completed" | "cancelled" | "rejected" | "failed" | "waiting_for_approval"
-            | "created" | "running" | "ready_for_execution" => RecoveryDisposition::NothingRequired,
+            "completed"
+            | "cancelled"
+            | "rejected"
+            | "failed"
+            | "waiting_for_approval"
+            | "created"
+            | "running"
+            | "ready_for_execution" => RecoveryDisposition::NothingRequired,
             _ => RecoveryDisposition::NothingRequired,
         };
 
@@ -170,7 +181,10 @@ impl RecoveryService {
                 (RecoveryDisposition::ManualResolutionRequired, None)
             } else {
                 // Safe: no asset created, user must explicitly retry
-                (RecoveryDisposition::AwaitUserRetry, Some("explicit_retry".to_string()))
+                (
+                    RecoveryDisposition::AwaitUserRetry,
+                    Some("explicit_retry".to_string()),
+                )
             }
         } else if status == "queued" || status == "submitted" || status == "running" {
             // Provider call in progress: check remote state

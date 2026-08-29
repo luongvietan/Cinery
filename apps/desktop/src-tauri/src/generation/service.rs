@@ -1,15 +1,17 @@
 use super::lineage::{build_lineage, LineageInput};
-use super::model::{ArtifactLineage, GeneratedArtifact, GeneratedArtifactSource, GenerationResultSet};
+use super::model::{
+    ArtifactLineage, GeneratedArtifact, GeneratedArtifactSource, GenerationResultSet,
+};
 use super::model::{GeneratedArtifactDetail, GenerationResultSetDetail};
-use super::repository;
 use super::recovery;
+use super::repository;
 use super::storage::{materialize_image, read_and_verify, MaterializedArtifact};
 use crate::assets::service::AssetService;
 use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
-use crate::providers::model::{ProviderOutput, ProviderResult};
 use crate::providers::http::{HttpTransport, UreqTransport};
+use crate::providers::model::{ProviderOutput, ProviderResult};
 use chrono::Utc;
 use image::{ImageBuffer, ImageFormat, Rgba, RgbaImage};
 use rusqlite::{OptionalExtension, TransactionBehavior};
@@ -68,7 +70,10 @@ impl GenerationService {
                         })
                     })
                     .collect::<Result<Vec<_>, AppError>>()?;
-                Ok(GenerationResultSetDetail { result_set, artifacts })
+                Ok(GenerationResultSetDetail {
+                    result_set,
+                    artifacts,
+                })
             })
             .collect()
     }
@@ -174,7 +179,8 @@ impl GenerationService {
                     created_at: artifact.created_at.clone(),
                 })
             })
-            .collect::<Result<Vec<ArtifactLineage>, _>>() {
+            .collect::<Result<Vec<ArtifactLineage>, _>>()
+        {
             Ok(lineages) => lineages,
             Err(error) => {
                 cleanup_stored(project_root, &stored);
@@ -184,14 +190,20 @@ impl GenerationService {
         let sources = artifacts
             .iter()
             .flat_map(|artifact| {
-                input.source_asset_version_ids.iter().enumerate().map(|(index, version_id)| {
-                    GeneratedArtifactSource {
+                input
+                    .source_asset_version_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(index, version_id)| GeneratedArtifactSource {
                         artifact_id: artifact.id.clone(),
                         asset_version_id: version_id.clone(),
-                        role: if index == 0 { "identity_reference".into() } else { "source_reference".into() },
+                        role: if index == 0 {
+                            "identity_reference".into()
+                        } else {
+                            "source_reference".into()
+                        },
                         ordinal: (index + 1) as i64,
-                    }
-                })
+                    })
             })
             .collect::<Vec<_>>();
 
@@ -207,7 +219,8 @@ impl GenerationService {
             for lineage in &lineages {
                 repository::insert_lineage(&tx, lineage)?;
             }
-            tx.commit().map_err(|error| AppError::Database(error.to_string()))
+            tx.commit()
+                .map_err(|error| AppError::Database(error.to_string()))
         })();
         if let Err(error) = persist {
             cleanup_stored(project_root, &stored);
@@ -234,7 +247,10 @@ impl GenerationService {
             );
         }
 
-        Ok(GenerationCaptureResult { result_set, artifacts })
+        Ok(GenerationCaptureResult {
+            result_set,
+            artifacts,
+        })
     }
 
     pub fn promote_generated_artifact(
@@ -249,14 +265,15 @@ impl GenerationService {
             if existing.asset_id != target_asset_id {
                 return Err(AppError::GenerationArtifactNotPromotable);
             }
-            return AssetService::get_asset_with_versions(project_root, target_asset_id)
-                .map(|asset| {
+            return AssetService::get_asset_with_versions(project_root, target_asset_id).map(
+                |asset| {
                     asset
                         .versions
                         .into_iter()
                         .find(|version| version.id == existing.asset_version_id)
                         .ok_or(AppError::GenerationArtifactNotPromotable)
-                })?;
+                },
+            )?;
         }
         let artifact = repository::get_artifact_for_project(&conn, &project.id, artifact_id)?
             .ok_or(AppError::GenerationArtifactNotPromotable)?;
@@ -275,7 +292,13 @@ impl GenerationService {
         // type and owning entity. The owner is resolved from the workflow
         // run input that produced the artifact (ownerEntityInputRef).
         let expected = expected_output_for_run(&conn, &lineage.workflow_run_id)?;
-        validate_promotion_target(&conn, &lineage.workflow_run_id, expected.as_ref(), target.asset.asset_type.as_str(), target.asset.owner_entity_id.as_deref())?;
+        validate_promotion_target(
+            &conn,
+            &lineage.workflow_run_id,
+            expected.as_ref(),
+            target.asset.asset_type.as_str(),
+            target.asset.owner_entity_id.as_deref(),
+        )?;
         let source_path = project_root.join(&artifact.storage_path);
         let imported = match AssetService::import_asset_version(
             project_root,
@@ -284,14 +307,13 @@ impl GenerationService {
             target.asset.canonical_version_id.clone(),
         ) {
             Ok(version) => version,
-            Err(AppError::DuplicateAssetVersion) => AssetService::get_asset_with_versions(
-                project_root,
-                target_asset_id,
-            )?
-            .versions
-            .into_iter()
-            .find(|version| version.sha256 == artifact.sha256)
-            .ok_or(AppError::GenerationArtifactNotPromotable)?,
+            Err(AppError::DuplicateAssetVersion) => {
+                AssetService::get_asset_with_versions(project_root, target_asset_id)?
+                    .versions
+                    .into_iter()
+                    .find(|version| version.sha256 == artifact.sha256)
+                    .ok_or(AppError::GenerationArtifactNotPromotable)?
+            }
             Err(error) => return Err(error),
         };
         let promoted = if set_canonical {
@@ -338,7 +360,12 @@ impl GenerationService {
                 .and_then(|existing| {
                     AssetService::get_asset_with_versions(project_root, target_asset_id)
                         .ok()
-                        .and_then(|asset| asset.versions.into_iter().find(|version| version.id == existing.asset_version_id))
+                        .and_then(|asset| {
+                            asset
+                                .versions
+                                .into_iter()
+                                .find(|version| version.id == existing.asset_version_id)
+                        })
                 })
                 .ok_or(error),
         }
@@ -352,7 +379,9 @@ fn provider_output_bytes(output: &ProviderOutput) -> Result<Vec<u8>, AppError> {
     if output.uri.starts_with("https://") || output.uri.starts_with("http://") {
         return UreqTransport::new(Duration::from_secs(60))
             .get_bytes(&output.uri, "", MAX_PROVIDER_OUTPUT_BYTES)
-            .map_err(|_| AppError::GenerationArtifactCaptureFailed("provider image download failed".into()));
+            .map_err(|_| {
+                AppError::GenerationArtifactCaptureFailed("provider image download failed".into())
+            });
     }
     Err(AppError::GenerationArtifactCaptureFailed(
         "provider returned a non-durable image reference".into(),
@@ -366,17 +395,22 @@ fn deterministic_mock_png(seed: &str) -> Vec<u8> {
     let pixel = Rgba([digest[0], digest[1], digest[2], 255]);
     let image: RgbaImage = ImageBuffer::from_pixel(64, 64, pixel);
     let mut cursor = Cursor::new(Vec::new());
-    image.write_to(&mut cursor, ImageFormat::Png).expect("PNG encoder must be available");
+    image
+        .write_to(&mut cursor, ImageFormat::Png)
+        .expect("PNG encoder must be available");
     cursor.into_inner()
 }
 
-fn cleanup_stored(project_root: &Path, stored: &[(i64, MaterializedArtifact)]) {    for (_, metadata) in stored {
+fn cleanup_stored(project_root: &Path, stored: &[(i64, MaterializedArtifact)]) {
+    for (_, metadata) in stored {
         let _ = std::fs::remove_file(project_root.join(&metadata.storage_path));
     }
-    if let Some(attempt_dir) = stored
-        .first()
-        .and_then(|(_, metadata)| project_root.join(&metadata.storage_path).parent().map(Path::to_path_buf))
-    {
+    if let Some(attempt_dir) = stored.first().and_then(|(_, metadata)| {
+        project_root
+            .join(&metadata.storage_path)
+            .parent()
+            .map(Path::to_path_buf)
+    }) {
         let _ = std::fs::remove_dir(&attempt_dir);
         if let Some(run_dir) = attempt_dir.parent() {
             let _ = std::fs::remove_dir(run_dir);
@@ -414,7 +448,12 @@ fn expected_output_for_run(
         Ok((_, operation)) => Some(operation.clone()),
         Err(_) => registry
             .find_skill_any_version(&skill_id)
-            .and_then(|skill| skill.operations.iter().find(|operation| operation.id == operation_id))
+            .and_then(|skill| {
+                skill
+                    .operations
+                    .iter()
+                    .find(|operation| operation.id == operation_id)
+            })
             .cloned(),
     };
     Ok(operation.and_then(|operation| operation.expected_output))
@@ -451,7 +490,12 @@ fn validate_promotion_target(
     let run_owner = input_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
-        .and_then(|value| value.get(owner_ref).and_then(serde_json::Value::as_str).map(str::to_string));
+        .and_then(|value| {
+            value
+                .get(owner_ref)
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        });
     if target_owner != run_owner.as_deref() {
         return Err(AppError::GenerationArtifactNotPromotable);
     }

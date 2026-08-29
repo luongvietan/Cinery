@@ -6,8 +6,12 @@ use chrono::Utc;
 pub struct DryRunProvider;
 
 impl GenerationProvider for DryRunProvider {
-    fn id(&self) -> &'static str { "dry_run" }
-    fn adapter_version(&self) -> u32 { 1 }
+    fn id(&self) -> &'static str {
+        "dry_run"
+    }
+    fn adapter_version(&self) -> u32 {
+        1
+    }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             media_types: vec![ProviderMediaType::Image],
@@ -24,7 +28,10 @@ impl GenerationProvider for DryRunProvider {
             max_reference_images: Some(8),
         }
     }
-    fn submit(&self, request: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {
+    fn submit(
+        &self,
+        request: &ProviderExecutionRequest,
+    ) -> Result<ProviderSubmission, ProviderError> {
         self.capabilities().supports(request).map_err(|reason| {
             ProviderError::new(ProviderErrorKind::UnsupportedCapability, reason)
         })?;
@@ -41,14 +48,25 @@ impl GenerationProvider for DryRunProvider {
         })
     }
     fn poll(&self, _: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError> {
-        Ok(ProviderJobStatus { lifecycle: ProviderLifecycle::Succeeded, progress_percent: Some(100), diagnostic: None })
+        Ok(ProviderJobStatus {
+            lifecycle: ProviderLifecycle::Succeeded,
+            progress_percent: Some(100),
+            diagnostic: None,
+        })
     }
     fn cancel(&self, job: &ProviderJobRef) -> Result<ProviderCancellationResult, ProviderError> {
-        Ok(ProviderCancellationResult { provider_job_id: job.provider_job_id.clone(), lifecycle: ProviderLifecycle::Cancelled })
+        Ok(ProviderCancellationResult {
+            provider_job_id: job.provider_job_id.clone(),
+            lifecycle: ProviderLifecycle::Cancelled,
+        })
     }
     fn fetch_result(&self, job: &ProviderJobRef) -> Result<ProviderResult, ProviderError> {
         Ok(ProviderResult {
-            outputs: vec![ProviderOutput { uri: format!("dry-run://{}", job.provider_job_id), mime_type: "image/png".into(), filename: Some("dry-run.png".into()) }],
+            outputs: vec![ProviderOutput {
+                uri: format!("dry-run://{}", job.provider_job_id),
+                mime_type: "image/png".into(),
+                filename: Some("dry-run.png".into()),
+            }],
             provider_reported_model: Some("dry-run-v1".into()),
             metadata: serde_json::json!({"deterministic": true}),
         })

@@ -160,18 +160,26 @@ impl RequestCompiler for WorldPlateCompiler {
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| {
-                AppError::WorkflowRunInconsistent("location.description is missing from context".into())
+                AppError::WorkflowRunInconsistent(
+                    "location.description is missing from context".into(),
+                )
             })?;
         let geography = location
             .get("geography")
             .and_then(|v| v.as_str())
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| {
-                AppError::WorkflowRunInconsistent("location.geography is missing from context".into())
+                AppError::WorkflowRunInconsistent(
+                    "location.geography is missing from context".into(),
+                )
             })?;
         let visual_tags = location.get("visualTags").cloned().unwrap_or(Value::Null);
         let location_rules = location.get("rules").cloned().unwrap_or(Value::Null);
-        let aesthetic = context.resolved_context.get("aesthetic").cloned().unwrap_or(Value::Null);
+        let aesthetic = context
+            .resolved_context
+            .get("aesthetic")
+            .cloned()
+            .unwrap_or(Value::Null);
         let world_rules = context
             .resolved_context
             .get("worldRules")
@@ -222,7 +230,8 @@ impl RequestCompiler for WorldPlateCompiler {
         if let Some(rules) = production_rules.as_array() {
             if !rules.is_empty() {
                 prompt.push_str("\n\nPRODUCTION RULES\n");
-                prompt.push_str(&serde_json::to_string_pretty(&production_rules).map_err(db_error)?);
+                prompt
+                    .push_str(&serde_json::to_string_pretty(&production_rules).map_err(db_error)?);
             }
         }
         if let Some(decisions) = tbd_decisions.as_array() {
@@ -311,24 +320,17 @@ impl RequestCompiler for SceneKeyframeCompiler {
             .cloned()
             .unwrap_or(Value::Array(Vec::new()));
 
-        let title = scene
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let summary = scene
-            .get("summary")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let title = scene.get("title").and_then(Value::as_str).unwrap_or("");
+        let summary = scene.get("summary").and_then(Value::as_str).unwrap_or("");
         let world_asset_version_id = world
             .get("assetVersionId")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                AppError::WorkflowRunInconsistent("world.assetVersionId is missing from context".into())
+                AppError::WorkflowRunInconsistent(
+                    "world.assetVersionId is missing from context".into(),
+                )
             })?;
-        let world_asset_id = world
-            .get("assetId")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let world_asset_id = world.get("assetId").and_then(Value::as_str).unwrap_or("");
 
         // Build prompt per spec 33-34: scene delta only, protected TBD constraints, no video temporal concepts
         let mut prompt = String::new();
@@ -356,7 +358,8 @@ impl RequestCompiler for SceneKeyframeCompiler {
         if let Some(rules) = production_rules.as_array() {
             if !rules.is_empty() {
                 prompt.push_str("\n\nPRODUCTION RULES\n");
-                prompt.push_str(&serde_json::to_string_pretty(&production_rules).map_err(db_error)?);
+                prompt
+                    .push_str(&serde_json::to_string_pretty(&production_rules).map_err(db_error)?);
                 prompt.push_str("\nLocked Production Rules are authoritative. Do not override.");
             }
         }
@@ -366,10 +369,22 @@ impl RequestCompiler for SceneKeyframeCompiler {
             if !decisions.is_empty() {
                 prompt.push_str("\n\nPROTECTED TBD CONSTRAINTS\n");
                 for decision in decisions {
-                    let tbd_id = decision.get("tbdId").and_then(Value::as_str).unwrap_or("unknown");
-                    let topic = decision.get("topicSnapshot").and_then(Value::as_str).unwrap_or("");
-                    let note = decision.get("noteSnapshot").and_then(Value::as_str).unwrap_or("");
-                    let dec = decision.get("decision").and_then(Value::as_str).unwrap_or("preserve_unknown");
+                    let tbd_id = decision
+                        .get("tbdId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let topic = decision
+                        .get("topicSnapshot")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let note = decision
+                        .get("noteSnapshot")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let dec = decision
+                        .get("decision")
+                        .and_then(Value::as_str)
+                        .unwrap_or("preserve_unknown");
                     if dec == "preserve_unknown" {
                         prompt.push_str(&format!("\nTBD [{}]: {}\n", tbd_id, topic));
                         if !note.is_empty() {
@@ -378,17 +393,28 @@ impl RequestCompiler for SceneKeyframeCompiler {
                         // Concrete constraint: must remain closed/opaque for red door etc.
                         // Generic: preserve unknown, do not reveal
                         // Specific for red door
-                        if topic.to_lowercase().contains("red door") || note.to_lowercase().contains("red door") {
+                        if topic.to_lowercase().contains("red door")
+                            || note.to_lowercase().contains("red door")
+                        {
                             prompt.push_str("Constraint: The red maintenance door must remain closed/opaque. Do not reveal, depict or imply the space behind it. Preserve unknown.\n");
                         } else {
                             prompt.push_str(&format!("Constraint: Preserve unknown for '{}'. Do not reveal, depict or imply. {}\n", topic, note));
                         }
                         if !note.is_empty() {
-                            prompt.push_str(&format!("Preserve unknown: {} must remain unresolved.\n", topic));
+                            prompt.push_str(&format!(
+                                "Preserve unknown: {} must remain unresolved.\n",
+                                topic
+                            ));
                         }
                     } else if dec == "not_applicable" {
-                        let justification = decision.get("justification").and_then(Value::as_str).unwrap_or("");
-                        prompt.push_str(&format!("\nTBD [{}]: {} — not applicable. Justification: {}\n", tbd_id, topic, justification));
+                        let justification = decision
+                            .get("justification")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        prompt.push_str(&format!(
+                            "\nTBD [{}]: {} — not applicable. Justification: {}\n",
+                            tbd_id, topic, justification
+                        ));
                     }
                 }
             }
@@ -396,21 +422,40 @@ impl RequestCompiler for SceneKeyframeCompiler {
 
         // Append reference details for determinism
         prompt.push_str("\n\nREFERENCE ROLES\n");
-        prompt.push_str(&format!("WORLD assetVersionId={}\n", world_asset_version_id));
+        prompt.push_str(&format!(
+            "WORLD assetVersionId={}\n",
+            world_asset_version_id
+        ));
         if let Some(arr) = characters.as_array() {
             for ch in arr {
-                let look_id = ch.get("look").and_then(|v| v.get("assetVersionId")).and_then(Value::as_str).unwrap_or("");
-                let char_id = ch.get("characterEntityId").and_then(Value::as_str).unwrap_or("");
-                prompt.push_str(&format!("CHARACTER_LOOK character={} assetVersionId={}\n", char_id, look_id));
+                let look_id = ch
+                    .get("look")
+                    .and_then(|v| v.get("assetVersionId"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let char_id = ch
+                    .get("characterEntityId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                prompt.push_str(&format!(
+                    "CHARACTER_LOOK character={} assetVersionId={}\n",
+                    char_id, look_id
+                ));
                 if let Some(sheet) = ch.get("sheet") {
-                    let sheet_id = sheet.get("assetVersionId").and_then(Value::as_str).unwrap_or("");
+                    let sheet_id = sheet
+                        .get("assetVersionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
                     prompt.push_str(&format!("CHARACTER_SHEET assetVersionId={}\n", sheet_id));
                 }
             }
         }
         if let Some(arr) = props.as_array() {
             for p in arr {
-                let prop_id = p.get("assetVersionId").and_then(Value::as_str).unwrap_or("");
+                let prop_id = p
+                    .get("assetVersionId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 prompt.push_str(&format!("PROP assetVersionId={}\n", prop_id));
             }
         }
@@ -425,7 +470,10 @@ impl RequestCompiler for SceneKeyframeCompiler {
         references.push(ExecutionReference {
             reference_type: ExecutionReferenceType::AssetVersion,
             reference: world_asset_version_id.to_string(),
-            description: format!("World plate reference for scene environment, asset {}", world_asset_id),
+            description: format!(
+                "World plate reference for scene environment, asset {}",
+                world_asset_id
+            ),
             role: Some(crate::workflow::execution::ReferenceRole::World),
         });
 
@@ -435,9 +483,12 @@ impl RequestCompiler for SceneKeyframeCompiler {
                 let look = ch.get("look").ok_or_else(|| {
                     AppError::WorkflowRunInconsistent("character look is missing".into())
                 })?;
-                let look_version_id = look.get("assetVersionId").and_then(Value::as_str).ok_or_else(|| {
-                    AppError::WorkflowRunInconsistent("look assetVersionId missing".into())
-                })?;
+                let look_version_id = look
+                    .get("assetVersionId")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        AppError::WorkflowRunInconsistent("look assetVersionId missing".into())
+                    })?;
                 let look_asset_id = look.get("assetId").and_then(Value::as_str).unwrap_or("");
                 references.push(ExecutionReference {
                     reference_type: ExecutionReferenceType::AssetVersion,
@@ -446,14 +497,22 @@ impl RequestCompiler for SceneKeyframeCompiler {
                     role: Some(crate::workflow::execution::ReferenceRole::CharacterLook),
                 });
                 if let Some(sheet) = ch.get("sheet") {
-                    if let Some(sheet_version_id) = sheet.get("assetVersionId").and_then(Value::as_str) {
+                    if let Some(sheet_version_id) =
+                        sheet.get("assetVersionId").and_then(Value::as_str)
+                    {
                         if !sheet_version_id.trim().is_empty() {
-                            let sheet_asset_id = sheet.get("assetId").and_then(Value::as_str).unwrap_or("");
+                            let sheet_asset_id =
+                                sheet.get("assetId").and_then(Value::as_str).unwrap_or("");
                             references.push(ExecutionReference {
                                 reference_type: ExecutionReferenceType::AssetVersion,
                                 reference: sheet_version_id.to_string(),
-                                description: format!("Character sheet reference, asset {}", sheet_asset_id),
-                                role: Some(crate::workflow::execution::ReferenceRole::CharacterSheet),
+                                description: format!(
+                                    "Character sheet reference, asset {}",
+                                    sheet_asset_id
+                                ),
+                                role: Some(
+                                    crate::workflow::execution::ReferenceRole::CharacterSheet,
+                                ),
                             });
                         }
                     }
@@ -464,9 +523,12 @@ impl RequestCompiler for SceneKeyframeCompiler {
         // Props
         if let Some(arr) = props.as_array() {
             for p in arr {
-                let prop_version_id = p.get("assetVersionId").and_then(Value::as_str).ok_or_else(|| {
-                    AppError::WorkflowRunInconsistent("prop assetVersionId missing".into())
-                })?;
+                let prop_version_id =
+                    p.get("assetVersionId")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            AppError::WorkflowRunInconsistent("prop assetVersionId missing".into())
+                        })?;
                 let prop_asset_id = p.get("assetId").and_then(Value::as_str).unwrap_or("");
                 references.push(ExecutionReference {
                     reference_type: ExecutionReferenceType::AssetVersion,
@@ -560,7 +622,10 @@ impl RequestCompiler for CharacterOutfitCompiler {
         let mut prompt = String::new();
         prompt.push_str("TASK\nCreate a direct-on-character outfit reference.\n\n");
         prompt.push_str("CHARACTER IDENTITY\n");
-        prompt.push_str(&serde_json::to_string_pretty(&json_without_story_name(&character)).map_err(db_error)?);
+        prompt.push_str(
+            &serde_json::to_string_pretty(&json_without_story_name(&character))
+                .map_err(db_error)?,
+        );
         prompt.push_str("\n\nPERMANENT VISUAL LOCKS\n");
         prompt.push_str(&serde_json::to_string_pretty(&locks).map_err(db_error)?);
         prompt.push_str("\n\nWARDROBE PROPOSAL\n");
@@ -618,9 +683,7 @@ impl RequestCompiler for CharacterOutfitCompiler {
             references,
             constraints,
             expected_output: operation.expected_output.clone().ok_or_else(|| {
-                AppError::WorkflowRunInconsistent(
-                    "outfit operation has no expected output".into(),
-                )
+                AppError::WorkflowRunInconsistent("outfit operation has no expected output".into())
             })?,
             provenance: ExecutionProvenance {
                 workflow_run_id: workflow_run_id.into(),
@@ -659,7 +722,10 @@ impl RequestCompiler for CharacterSheetCompiler {
         let mut prompt = String::new();
         prompt.push_str("TASK\nCreate a three-panel character sheet.\n\n");
         prompt.push_str("CHARACTER IDENTITY\n");
-        prompt.push_str(&serde_json::to_string_pretty(&json_without_story_name(&character)).map_err(db_error)?);
+        prompt.push_str(
+            &serde_json::to_string_pretty(&json_without_story_name(&character))
+                .map_err(db_error)?,
+        );
         prompt.push_str("\n\nCANONICAL LOOK REFERENCE\nUse the canonical outfit asset version: ");
         prompt.push_str(canonical_look);
         prompt.push_str("\n\nSHEET PANELS (from §24)\n1. full-body front, headless;\n2. full-body rear;\n3. tight chest-up face.\n\nOUTPUT INTENT\ncharacter_sheet image candidate.\n");

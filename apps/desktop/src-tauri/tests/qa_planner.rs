@@ -1,7 +1,7 @@
 use cinematic_desktop_lib::db::migrations::run_migrations;
+use cinematic_desktop_lib::qa::check_planner::QaCheckPlanner;
 use cinematic_desktop_lib::qa::context::{resolve_qa_context, QaPlanningRequest};
 use cinematic_desktop_lib::qa::models::{QaCheckType, VisualExpectation};
-use cinematic_desktop_lib::qa::check_planner::QaCheckPlanner;
 use rusqlite::Connection;
 
 fn fixture(visual_lock_status: &str) -> Connection {
@@ -100,9 +100,16 @@ fn draft_visual_locks_do_not_leak_and_newest_candidate_is_not_authority() {
     let context = resolve_qa_context(&conn, &request()).unwrap();
     let plan = QaCheckPlanner::compile(&context).unwrap();
 
-    assert!(!plan.checks.iter().any(|check| check.id.starts_with("lock:")));
-    assert!(plan.reference_asset_version_ids.contains(&"face-v1".to_string()));
-    assert!(!plan.reference_asset_version_ids.contains(&"face-v2".to_string()));
+    assert!(!plan
+        .checks
+        .iter()
+        .any(|check| check.id.starts_with("lock:")));
+    assert!(plan
+        .reference_asset_version_ids
+        .contains(&"face-v1".to_string()));
+    assert!(!plan
+        .reference_asset_version_ids
+        .contains(&"face-v2".to_string()));
 }
 
 #[test]

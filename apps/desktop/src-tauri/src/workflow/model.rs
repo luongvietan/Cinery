@@ -4,8 +4,14 @@ mod tests {
 
     #[test]
     fn workflow_statuses_serialize_as_stable_strings() {
-        assert_eq!(serde_json::to_value(WorkflowRunStatus::WaitingForApproval).unwrap(), "waiting_for_approval");
-        assert_eq!(serde_json::to_value(WorkflowStepStatus::Waiting).unwrap(), "waiting");
+        assert_eq!(
+            serde_json::to_value(WorkflowRunStatus::WaitingForApproval).unwrap(),
+            "waiting_for_approval"
+        );
+        assert_eq!(
+            serde_json::to_value(WorkflowStepStatus::Waiting).unwrap(),
+            "waiting"
+        );
     }
 
     #[test]

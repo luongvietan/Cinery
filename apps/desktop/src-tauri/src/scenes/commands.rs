@@ -1,6 +1,6 @@
+use crate::assets::model::AssetRecord;
 use crate::error::AppCommandError;
 use crate::project::service as project_service;
-use crate::assets::model::AssetRecord;
 use crate::scenes::model::{
     ResolvedSceneReference, ResolvedSceneReferences, Scene, SceneCharacterAssignment,
     ScenePropAssignment, SceneReadiness, SceneTbdBinding, TbdDecisionKind,
@@ -238,13 +238,12 @@ pub fn set_scene_tbd_binding(
 ) -> Result<SceneTbdBinding, AppCommandError> {
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
-    let kind: TbdDecisionKind = decision.parse().map_err(|e: String| {
-        AppCommandError {
-            code: "INVALID_TBD_DECISION".into(),
-            message: e,
-        }
+    let kind: TbdDecisionKind = decision.parse().map_err(|e: String| AppCommandError {
+        code: "INVALID_TBD_DECISION".into(),
+        message: e,
     })?;
-    SceneService::set_scene_tbd_binding(&root, &scene_id, &tbd_id, kind, justification).map_err(Into::into)
+    SceneService::set_scene_tbd_binding(&root, &scene_id, &tbd_id, kind, justification)
+        .map_err(Into::into)
 }
 
 #[tauri::command]

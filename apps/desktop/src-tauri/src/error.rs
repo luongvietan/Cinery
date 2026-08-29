@@ -285,7 +285,6 @@ pub enum AppError {
 
     #[error("Provider capability is not satisfied: {0}")]
     ProviderCapabilityUnsatisfied(String),
-
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.
@@ -361,4 +360,3 @@ mod tests {
         assert_eq!(AppError::Database("boom".to_string()).code(), "DATABASE");
     }
 }
-

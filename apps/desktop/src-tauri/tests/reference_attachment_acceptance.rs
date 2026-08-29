@@ -4,8 +4,12 @@
 
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
-use cinematic_desktop_lib::providers::model::{ProviderReferenceAttachment, ProviderExecutionRequest};
-use cinematic_desktop_lib::workflow::execution::{ExecutionMediaType, ExecutionReference, ExecutionReferenceType, ExecutionTask};
+use cinematic_desktop_lib::providers::model::{
+    ProviderExecutionRequest, ProviderReferenceAttachment,
+};
+use cinematic_desktop_lib::workflow::execution::{
+    ExecutionMediaType, ExecutionReference, ExecutionReferenceType, ExecutionTask,
+};
 use std::path::Path;
 use tempfile::tempdir;
 
@@ -19,11 +23,15 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
 fn png_bytes(pixel: [u8; 4]) -> Vec<u8> {
     let image: image::RgbaImage = image::ImageBuffer::from_pixel(8, 8, image::Rgba(pixel));
     let mut cursor = std::io::Cursor::new(Vec::new());
-    image.write_to(&mut cursor, image::ImageFormat::Png).unwrap();
+    image
+        .write_to(&mut cursor, image::ImageFormat::Png)
+        .unwrap();
     cursor.into_inner()
 }
 
-fn request_with_references(version_ids: &[&str]) -> cinematic_desktop_lib::workflow::execution::ExecutionRequest {
+fn request_with_references(
+    version_ids: &[&str],
+) -> cinematic_desktop_lib::workflow::execution::ExecutionRequest {
     cinematic_desktop_lib::workflow::execution::ExecutionRequest {
         request_version: 1,
         task: ExecutionTask::CharacterOutfit,
@@ -70,17 +78,21 @@ fn ordered_reference_ids_resolve_to_ordered_verified_attachments() {
     let second = import_canonical_face(&root, [200, 100, 50, 255]);
     let request = request_with_references(&[first.as_str(), second.as_str()]);
 
-    let attachments = cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(
-        &root,
-        &request,
-    )
-    .unwrap();
+    let attachments =
+        cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(&root, &request)
+            .unwrap();
 
     assert_eq!(attachments.len(), 2);
     assert_eq!(attachments[0].asset_version_id, first);
     assert_eq!(attachments[1].asset_version_id, second);
-    assert!(attachments[0].bytes.starts_with(&[137, 80, 78, 71]), "first attachment must carry PNG bytes");
-    assert!(attachments[1].bytes.starts_with(&[137, 80, 78, 71]), "second attachment must carry PNG bytes");
+    assert!(
+        attachments[0].bytes.starts_with(&[137, 80, 78, 71]),
+        "first attachment must carry PNG bytes"
+    );
+    assert!(
+        attachments[1].bytes.starts_with(&[137, 80, 78, 71]),
+        "second attachment must carry PNG bytes"
+    );
     assert_ne!(attachments[0].bytes, attachments[1].bytes);
     assert_eq!(attachments[0].media_type, "image/png");
     assert_eq!(attachments[0].file_name, "source.png");
@@ -93,11 +105,9 @@ fn missing_or_foreign_reference_fails_before_submission() {
     let (_temp, root) = fixture();
     let request = request_with_references(&["01ARZ3NDEKTSV4RRFFQ69G5FAV"]);
 
-    let error = cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(
-        &root,
-        &request,
-    )
-    .expect_err("a missing version must fail resolution");
+    let error =
+        cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(&root, &request)
+            .expect_err("a missing version must fail resolution");
     assert!(error.to_string().contains("reference"));
 }
 
@@ -117,18 +127,17 @@ fn unsupported_mime_reference_fails_before_submission() {
     let ok_path = root.join("photo.webp");
     let image: image::RgbaImage = image::ImageBuffer::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
     image.save(&ok_path).unwrap();
-    let ok_version = AssetService::import_asset_version(&root, &ok_asset.id, &ok_path, None).unwrap();
+    let ok_version =
+        AssetService::import_asset_version(&root, &ok_asset.id, &ok_path, None).unwrap();
     // Corrupt the stored artifact so its hash no longer matches metadata.
     let detail = AssetService::get_asset_with_versions(&root, &ok_asset.id).unwrap();
     let stored = root.join(&detail.versions[0].file_path);
     std::fs::write(&stored, b"corrupted-bytes").unwrap();
 
     let request = request_with_references(&[ok_version.id.as_str()]);
-    let error = cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(
-        &root,
-        &request,
-    )
-    .expect_err("hash mismatch must fail resolution before any paid request");
+    let error =
+        cinematic_desktop_lib::workflow::execution::resolve_reference_attachments(&root, &request)
+            .expect_err("hash mismatch must fail resolution before any paid request");
     assert!(error.to_string().contains("hash") || error.to_string().contains("integrity"));
 }
 
@@ -162,5 +171,8 @@ fn serialized_request_omits_attachment_bytes() {
     );
     // The byte payload must also be absent from any debug output.
     let debug = format!("{provider_request:?}");
-    assert!(!debug.contains("[137, 80, 78, 71]") == false || debug.contains("bytes"), "debug output includes attachments for diagnostics but never in serialized snapshots");
+    assert!(
+        !debug.contains("[137, 80, 78, 71]") == false || debug.contains("bytes"),
+        "debug output includes attachments for diagnostics but never in serialized snapshots"
+    );
 }

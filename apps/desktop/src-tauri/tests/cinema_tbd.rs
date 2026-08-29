@@ -86,7 +86,15 @@ fn blocks_compilation_when_protected_tbd_open_for_scene_character() {
 fn blocks_on_project_scoped_protected_tbd() {
     let (_temp, root, scene_id, _character) =
         scene_with_character(&["speech", "movement", "stillness"]);
-    tbd::create(&root, None, None, "What is behind the red door?", None, true).unwrap();
+    tbd::create(
+        &root,
+        None,
+        None,
+        "What is behind the red door?",
+        None,
+        true,
+    )
+    .unwrap();
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     let error = tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).unwrap_err();
@@ -113,7 +121,15 @@ fn tbd_on_unrelated_character_does_not_block() {
     let (_temp, root, scene_id, _character) =
         scene_with_character(&["speech", "movement", "stillness"]);
     let other = CanonService::create_entity(&root, CanonEntityType::Character, "Other").unwrap();
-    tbd::create(&root, Some(&other.id), None, "Other arc question", None, true).unwrap();
+    tbd::create(
+        &root,
+        Some(&other.id),
+        None,
+        "Other arc question",
+        None,
+        true,
+    )
+    .unwrap();
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     assert!(tbd_guard::check_tbd_firewall(&conn, &project_id(&root), &scene_id).is_ok());

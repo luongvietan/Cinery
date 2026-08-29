@@ -116,12 +116,24 @@ fn repository_round_trips_artifact_and_its_immutable_lineage() {
         .unwrap()
         .unwrap();
     assert_eq!(loaded.sha256, artifact.sha256);
-    assert_eq!(repository::get_lineage(&conn, "artifact-1").unwrap().unwrap(), lineage);
+    assert_eq!(
+        repository::get_lineage(&conn, "artifact-1")
+            .unwrap()
+            .unwrap(),
+        lineage
+    );
 }
 
 #[test]
 fn repository_rejects_a_second_result_set_for_one_provider_attempt() {
     let conn = fixture();
     repository::insert_result_set(&conn, &result_set()).unwrap();
-    assert!(repository::insert_result_set(&conn, &GenerationResultSet { id: "result-2".into(), ..result_set() }).is_err());
+    assert!(repository::insert_result_set(
+        &conn,
+        &GenerationResultSet {
+            id: "result-2".into(),
+            ..result_set()
+        }
+    )
+    .is_err());
 }

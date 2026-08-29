@@ -48,16 +48,36 @@ fn complete_mara_cinematic_journey() {
     CanonService::lock_section(&root, &visual_locks.id, None).unwrap();
 
     // ── Step 3: Canonical visual locks (Face / Look / Sheet) ──
-    let (face_asset_id, face_version_id) =
-        canonical_asset(&root, "face_lock", "Mara Face", Some(mara.id.clone()), [1, 2, 3, 255]);
-    let (_look_asset_id, look_version_id) =
-        canonical_asset(&root, "outfit", "Mara Look", Some(mara.id.clone()), [4, 5, 6, 255]);
-    let (_sheet_asset_id, sheet_version_id) =
-        canonical_asset(&root, "character_sheet", "Mara Sheet", Some(mara.id.clone()), [7, 8, 9, 255]);
+    let (face_asset_id, face_version_id) = canonical_asset(
+        &root,
+        "face_lock",
+        "Mara Face",
+        Some(mara.id.clone()),
+        [1, 2, 3, 255],
+    );
+    let (_look_asset_id, look_version_id) = canonical_asset(
+        &root,
+        "outfit",
+        "Mara Look",
+        Some(mara.id.clone()),
+        [4, 5, 6, 255],
+    );
+    let (_sheet_asset_id, sheet_version_id) = canonical_asset(
+        &root,
+        "character_sheet",
+        "Mara Sheet",
+        Some(mara.id.clone()),
+        [7, 8, 9, 255],
+    );
 
     // ── Step 4: World Plate ──
-    let (_world_asset_id, world_version_id) =
-        canonical_asset(&root, "world_plate", "Station World", None, [10, 11, 12, 255]);
+    let (_world_asset_id, world_version_id) = canonical_asset(
+        &root,
+        "world_plate",
+        "Station World",
+        None,
+        [10, 11, 12, 255],
+    );
 
     // ── Step 5: Assemble Scene with pinned exact versions ──
     let scene =
@@ -125,8 +145,13 @@ fn complete_mara_cinematic_journey() {
 
     // ── Step 11: Scene references are pinned: promoting World V02 must not
     //     silently rewrite the Scene's exact V01 reference. ──
-    let (_asset_v02, world_v02_id) =
-        canonical_asset(&root, "world_plate", "Station World V02", None, [20, 21, 22, 255]);
+    let (_asset_v02, world_v02_id) = canonical_asset(
+        &root,
+        "world_plate",
+        "Station World V02",
+        None,
+        [20, 21, 22, 255],
+    );
     let scene_after = CinemaService::get_scene(&root, &scene.id).unwrap();
     assert_eq!(
         scene_after.world_asset_version_id.as_deref(),
@@ -136,8 +161,7 @@ fn complete_mara_cinematic_journey() {
     assert_ne!(world_v02_id, world_version_id);
 
     // ── Step 12: Provenance traversal ──
-    let prov =
-        get_provenance_graph(&root, "asset_version", &face_version_id).unwrap();
+    let prov = get_provenance_graph(&root, "asset_version", &face_version_id).unwrap();
     assert!(
         prov.nodes.iter().any(|node| node.id == face_version_id),
         "provenance must contain the target node"
@@ -170,8 +194,7 @@ fn complete_mara_cinematic_journey() {
     let reopened = ProjectService::open(&root).unwrap();
     assert_eq!(reopened.name, "Mara MVP");
 
-    let reloaded_face =
-        AssetService::get_asset_with_versions(&root, &face_asset_id).unwrap();
+    let reloaded_face = AssetService::get_asset_with_versions(&root, &face_asset_id).unwrap();
     assert_eq!(
         reloaded_face.asset.canonical_version_id.as_deref(),
         Some(face_version_id.as_str())
@@ -192,8 +215,7 @@ fn canonical_asset(
     owner_entity_id: Option<String>,
     pixel: [u8; 4],
 ) -> (String, String) {
-    let asset =
-        AssetService::create_asset(root, asset_type, label, owner_entity_id).unwrap();
+    let asset = AssetService::create_asset(root, asset_type, label, owner_entity_id).unwrap();
     let img = image(root, &format!("{label}.png"), pixel);
     let version = AssetService::import_asset_version(root, &asset.id, &img, None).unwrap();
     AssetService::promote_asset_version(root, &version.id).unwrap();

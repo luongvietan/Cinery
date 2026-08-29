@@ -385,7 +385,10 @@ pub fn find_scene_prop_by_version(
 
 pub fn delete_scene_prop(tx: &Transaction<'_>, assignment_id: &str) -> Result<(), AppError> {
     let changed = tx
-        .execute("DELETE FROM world_scene_props WHERE id = ?1", params![assignment_id])
+        .execute(
+            "DELETE FROM world_scene_props WHERE id = ?1",
+            params![assignment_id],
+        )
         .map_err(|e| AppError::Database(e.to_string()))?;
     if changed == 0 {
         return Err(AppError::ScenePropNotFound);
@@ -407,8 +410,11 @@ pub fn delete_scene_prop_by_version(
         .optional()
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or(AppError::ScenePropNotFound)?;
-    tx.execute("DELETE FROM world_scene_props WHERE id = ?1", params![existing.id])
-        .map_err(|e| AppError::Database(e.to_string()))?;
+    tx.execute(
+        "DELETE FROM world_scene_props WHERE id = ?1",
+        params![existing.id],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(existing)
 }
 
@@ -513,7 +519,9 @@ pub fn update_scene_keyframe_asset(
 // Scene TBD Bindings
 // ---------------------------------------------------------------------------
 
-fn row_to_tbd_binding(row: &rusqlite::Row) -> rusqlite::Result<crate::scenes::model::SceneTbdBinding> {
+fn row_to_tbd_binding(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<crate::scenes::model::SceneTbdBinding> {
     let decision_str: String = row.get(5)?;
     Ok(crate::scenes::model::SceneTbdBinding {
         id: row.get(0)?,

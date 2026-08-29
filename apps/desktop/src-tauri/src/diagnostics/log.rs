@@ -64,8 +64,7 @@ impl DiagnosticLog {
             .lock
             .lock()
             .map_err(|_| AppError::FileSystem("diagnostics log lock poisoned".into()))?;
-        fs::create_dir_all(&self.directory)
-            .map_err(|e| AppError::FileSystem(e.to_string()))?;
+        fs::create_dir_all(&self.directory).map_err(|e| AppError::FileSystem(e.to_string()))?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -86,9 +85,7 @@ fn format_line(
 ) -> String {
     let redacted = DiagnosticsRedactor::redact_string(message);
     let correlation = correlation_id.unwrap_or("-");
-    format!(
-        "{timestamp}\t{subsystem}\t{event}\t{correlation}\t{redacted}\n"
-    )
+    format!("{timestamp}\t{subsystem}\t{event}\t{correlation}\t{redacted}\n")
 }
 
 #[cfg(test)]
@@ -142,10 +139,7 @@ mod tests {
         let temp = tempdir().unwrap();
         let log = DiagnosticLog::new(temp.path());
 
-        assert_eq!(
-            log.directory(),
-            temp.path().join("diagnostics").as_path()
-        );
+        assert_eq!(log.directory(), temp.path().join("diagnostics").as_path());
         assert_eq!(
             log.log_file(),
             temp.path().join("diagnostics").join("logs.txt")

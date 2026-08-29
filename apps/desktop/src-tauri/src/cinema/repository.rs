@@ -94,7 +94,11 @@ pub fn add_scene_prop(conn: &Connection, record: &ScenePropRecord) -> Result<(),
     conn.execute(
         "INSERT INTO scene_props (scene_id, prop_asset_version_id, display_order) \
          VALUES (?1, ?2, ?3)",
-        params![record.scene_id, record.prop_asset_version_id, record.display_order],
+        params![
+            record.scene_id,
+            record.prop_asset_version_id,
+            record.display_order
+        ],
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(())
@@ -156,10 +160,7 @@ pub fn list_shots(conn: &Connection, scene_id: &str) -> Result<Vec<ShotRecord>, 
 
 /// Persists one compilation record (input snapshot, compiled JSON, export
 /// artifact path and content hash).
-pub fn insert_compilation(
-    conn: &Connection,
-    record: &CinemaCompilation,
-) -> Result<(), AppError> {
+pub fn insert_compilation(conn: &Connection, record: &CinemaCompilation) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO cinema_compilations (id, project_id, scene_id, input_json, \
          compilation_json, export_path, export_sha256, created_at) \
@@ -275,9 +276,13 @@ pub fn list_scene_props(
         .collect()
 }
 
-
 /// Renames a scene within `project_id`, returning the updated record.
-pub fn rename_scene(conn: &Connection, project_id: &str, scene_id: &str, title: &str) -> Result<SceneRecord, AppError> {
+pub fn rename_scene(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    title: &str,
+) -> Result<SceneRecord, AppError> {
     let now = chrono::Utc::now().to_rfc3339();
     let updated = conn
         .execute(
@@ -292,7 +297,12 @@ pub fn rename_scene(conn: &Connection, project_id: &str, scene_id: &str, title: 
 }
 
 /// Pins or clears the scene's world plate version reference.
-pub fn set_scene_world(conn: &Connection, project_id: &str, scene_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+pub fn set_scene_world(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    version_id: Option<&str>,
+) -> Result<(), AppError> {
     let now = chrono::Utc::now().to_rfc3339();
     let updated = conn
         .execute(
@@ -330,7 +340,12 @@ pub fn update_scene_character(
 }
 
 /// Removes one cast record. Only the relationship row is deleted.
-pub fn remove_scene_character(conn: &Connection, project_id: &str, scene_id: &str, character_id: &str) -> Result<(), AppError> {
+pub fn remove_scene_character(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    character_id: &str,
+) -> Result<(), AppError> {
     get_scene(conn, project_id, scene_id)?;
     conn.execute(
         "DELETE FROM scene_characters WHERE scene_id = ?1 AND character_entity_id = ?2",
@@ -341,7 +356,12 @@ pub fn remove_scene_character(conn: &Connection, project_id: &str, scene_id: &st
 }
 
 /// Removes one prop relationship identified by its exact version id.
-pub fn remove_scene_prop(conn: &Connection, project_id: &str, scene_id: &str, prop_version_id: &str) -> Result<(), AppError> {
+pub fn remove_scene_prop(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    prop_version_id: &str,
+) -> Result<(), AppError> {
     get_scene(conn, project_id, scene_id)?;
     conn.execute(
         "DELETE FROM scene_props WHERE scene_id = ?1 AND prop_asset_version_id = ?2",
@@ -352,7 +372,11 @@ pub fn remove_scene_prop(conn: &Connection, project_id: &str, scene_id: &str, pr
 }
 
 /// Applies a field update to one shot within `project_id`.
-pub fn update_shot(conn: &Connection, project_id: &str, update: &ShotUpdate) -> Result<ShotRecord, AppError> {
+pub fn update_shot(
+    conn: &Connection,
+    project_id: &str,
+    update: &ShotUpdate,
+) -> Result<ShotRecord, AppError> {
     let existing = conn
         .query_row(
             "SELECT s.id FROM shots s JOIN scenes sc ON sc.id = s.scene_id \
@@ -388,15 +412,27 @@ pub fn update_shot(conn: &Connection, project_id: &str, update: &ShotUpdate) -> 
         return Err(AppError::ShotNotFound);
     }
     let scene_id: String = conn
-        .query_row("SELECT scene_id FROM shots WHERE id = ?1", params![update.shot_id], |row| row.get(0))
+        .query_row(
+            "SELECT scene_id FROM shots WHERE id = ?1",
+            params![update.shot_id],
+            |row| row.get(0),
+        )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let shots = list_shots(conn, &scene_id)?;
-    shots.into_iter().find(|shot| shot.id == update.shot_id).ok_or(AppError::ShotNotFound)
+    shots
+        .into_iter()
+        .find(|shot| shot.id == update.shot_id)
+        .ok_or(AppError::ShotNotFound)
 }
 
 /// Deletes one shot. Only the shot row is removed — never canon, assets, or
 /// versions.
-pub fn delete_shot(conn: &Connection, project_id: &str, scene_id: &str, shot_id: &str) -> Result<(), AppError> {
+pub fn delete_shot(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    shot_id: &str,
+) -> Result<(), AppError> {
     get_scene(conn, project_id, scene_id)?;
     conn.execute(
         "DELETE FROM shots WHERE id = ?1 AND scene_id = ?2",
@@ -450,7 +486,12 @@ pub fn reorder_shots(
     for (position, shot_id) in ordered_ids.iter().enumerate() {
         tx.execute(
             "UPDATE shots SET ordering = ?1, updated_at = ?2 WHERE id = ?3 AND scene_id = ?4",
-            params![position as i64, chrono::Utc::now().to_rfc3339(), shot_id, scene_id],
+            params![
+                position as i64,
+                chrono::Utc::now().to_rfc3339(),
+                shot_id,
+                scene_id
+            ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     }
@@ -459,12 +500,22 @@ pub fn reorder_shots(
 }
 
 /// Pins or clears one shot's canonical keyframe version reference.
-pub fn set_shot_keyframe(conn: &Connection, project_id: &str, shot_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+pub fn set_shot_keyframe(
+    conn: &Connection,
+    project_id: &str,
+    shot_id: &str,
+    version_id: Option<&str>,
+) -> Result<(), AppError> {
     let updated = conn
         .execute(
             "UPDATE shots SET keyframe_asset_version_id = ?1, updated_at = ?2 \
              WHERE id = ?3 AND scene_id IN (SELECT id FROM scenes WHERE project_id = ?4)",
-            params![version_id, chrono::Utc::now().to_rfc3339(), shot_id, project_id],
+            params![
+                version_id,
+                chrono::Utc::now().to_rfc3339(),
+                shot_id,
+                project_id
+            ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     if updated == 0 {

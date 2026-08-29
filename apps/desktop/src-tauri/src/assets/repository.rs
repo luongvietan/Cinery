@@ -1,4 +1,6 @@
-use crate::assets::model::{AssetRecord, AssetSummaryRecord, AssetVersionRecord, CanonicalPromotionResult};
+use crate::assets::model::{
+    AssetRecord, AssetSummaryRecord, AssetVersionRecord, CanonicalPromotionResult,
+};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
@@ -200,34 +202,34 @@ pub fn promote_canonical_version(
     let asset_id = target_version.asset_id.clone();
     let asset = get_asset(&tx, &asset_id)?;
 
-    let superseded_version_id =
-        if asset.canonical_version_id.as_deref() == Some(target_version_id) {
-            None
-        } else {
-            let current_canonical_id = asset.canonical_version_id.clone();
-            if let Some(current_id) = &current_canonical_id {
-                tx.execute(
-                    "UPDATE asset_versions SET status = 'superseded' WHERE id = ?1",
-                    params![current_id],
-                )
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            }
-
+    let superseded_version_id = if asset.canonical_version_id.as_deref() == Some(target_version_id)
+    {
+        None
+    } else {
+        let current_canonical_id = asset.canonical_version_id.clone();
+        if let Some(current_id) = &current_canonical_id {
             tx.execute(
-                "UPDATE asset_versions SET status = 'canonical' WHERE id = ?1",
-                params![target_version_id],
+                "UPDATE asset_versions SET status = 'superseded' WHERE id = ?1",
+                params![current_id],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
+        }
 
-            let now = Utc::now().to_rfc3339();
-            tx.execute(
-                "UPDATE assets SET canonical_version_id = ?1, updated_at = ?2 WHERE id = ?3",
-                params![target_version_id, now, asset_id],
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.execute(
+            "UPDATE asset_versions SET status = 'canonical' WHERE id = ?1",
+            params![target_version_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
 
-            current_canonical_id
-        };
+        let now = Utc::now().to_rfc3339();
+        tx.execute(
+            "UPDATE assets SET canonical_version_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![target_version_id, now, asset_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
+        current_canonical_id
+    };
 
     let canonical_count: i64 = tx
         .query_row(

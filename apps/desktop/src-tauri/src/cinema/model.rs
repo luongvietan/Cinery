@@ -252,7 +252,9 @@ mod tests {
         walk(&json, &mut keys);
         assert!(!keys.is_empty());
         assert!(
-            !keys.iter().any(|key| key == "providerId" || key == "modelId"),
+            !keys
+                .iter()
+                .any(|key| key == "providerId" || key == "modelId"),
             "provider-neutral prompt must not leak provider/model identifiers"
         );
         assert_eq!(json["behavioralLocks"]["speech"], "calm");

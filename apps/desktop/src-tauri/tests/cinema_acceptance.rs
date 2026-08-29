@@ -15,8 +15,7 @@ use std::fs;
 fn canonical_asset(root: &std::path::Path, asset_type: &str, label: &str) -> String {
     let asset = AssetService::create_asset(root, asset_type, label, None).unwrap();
     let source = support::test_image(root, "acceptance.png", [7, 7, 7, 255]);
-    let version =
-        AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
+    let version = AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
     AssetService::promote_asset_version(root, &version.id).unwrap();
     version.id
 }
@@ -50,9 +49,18 @@ fn p8_acceptance_one_sheet_one_world_8s_compiles_coherently() {
     let sum: f64 = prompt.shots.iter().map(|shot| shot.duration_seconds).sum();
     assert!((sum - 8.0).abs() < 1e-9);
 
-    assert_eq!(prompt.behavioral_locks.speech.as_deref(), Some("locked speech"));
-    assert_eq!(prompt.behavioral_locks.movement.as_deref(), Some("locked movement"));
-    assert_eq!(prompt.behavioral_locks.stillness.as_deref(), Some("locked stillness"));
+    assert_eq!(
+        prompt.behavioral_locks.speech.as_deref(),
+        Some("locked speech")
+    );
+    assert_eq!(
+        prompt.behavioral_locks.movement.as_deref(),
+        Some("locked movement")
+    );
+    assert_eq!(
+        prompt.behavioral_locks.stillness.as_deref(),
+        Some("locked stillness")
+    );
 
     assert_eq!(
         prompt.world_continuity.plate_asset_version_id.as_deref(),
@@ -108,12 +116,17 @@ fn p8_acceptance_one_sheet_one_world_8s_compiles_coherently() {
     .unwrap();
     let prompt: cinematic_desktop_lib::cinema::model::ProviderNeutralCinemaPrompt =
         serde_json::from_str(&compilation.compilation_json).unwrap();
-    assert!(!prompt.provider_prompt.contains("What is behind the red door?"));
+    assert!(!prompt
+        .provider_prompt
+        .contains("What is behind the red door?"));
 
     // Export artifact is durable on disk with a matching hash.
     let bytes = fs::read(setup.root.join(&compilation.export_path)).unwrap();
     use sha2::Digest;
     let mut hasher = sha2::Sha256::new();
     hasher.update(&bytes);
-    assert_eq!(format!("{:x}", hasher.finalize()), compilation.export_sha256);
+    assert_eq!(
+        format!("{:x}", hasher.finalize()),
+        compilation.export_sha256
+    );
 }

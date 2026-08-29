@@ -604,7 +604,10 @@ mod tests {
             "INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('w-1', 'missing-project', 'loc-1', 'asset-1', 'now', 'now')",
             [],
         );
-        assert!(fk_result.is_err(), "FK violation should be rejected, got {fk_result:?}");
+        assert!(
+            fk_result.is_err(),
+            "FK violation should be rejected, got {fk_result:?}"
+        );
     }
 
     #[test]
@@ -636,7 +639,10 @@ mod tests {
             "INSERT INTO worlds (id, project_id, canon_location_entity_id, world_plate_asset_id, created_at, updated_at) VALUES ('world-2', 'proj-1', 'loc-1', 'asset-1', 'now', 'now')",
             [],
         );
-        assert!(dup.is_err(), "duplicate World per Location should be rejected");
+        assert!(
+            dup.is_err(),
+            "duplicate World per Location should be rejected"
+        );
     }
 
     #[test]
@@ -705,7 +711,10 @@ mod tests {
             "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-2', 'scene-1', 'char-1', 'ver-2', 'now', 'now')",
             [],
         );
-        assert!(dup.is_err(), "duplicate Character assignment should be rejected");
+        assert!(
+            dup.is_err(),
+            "duplicate Character assignment should be rejected"
+        );
     }
 
     #[test]
@@ -728,18 +737,27 @@ mod tests {
             "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-bad', 'missing-scene', 'char-1', 'ver-1', 'now', 'now')",
             [],
         );
-        assert!(fk1.is_err(), "invalid scene_id should be rejected, got {fk1:?}");
+        assert!(
+            fk1.is_err(),
+            "invalid scene_id should be rejected, got {fk1:?}"
+        );
         // Invalid asset_version FK
         let fk2 = conn.execute(
             "INSERT INTO world_scene_characters (id, scene_id, character_entity_id, look_asset_version_id, created_at, updated_at) VALUES ('sc-bad2', 'scene-1', 'char-1', 'missing-version', 'now', 'now')",
             [],
         );
-        assert!(fk2.is_err(), "invalid look_asset_version_id should be rejected, got {fk2:?}");
+        assert!(
+            fk2.is_err(),
+            "invalid look_asset_version_id should be rejected, got {fk2:?}"
+        );
         // Invalid world FK
         let fk3 = conn.execute(
             "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, world_id, created_at, updated_at) VALUES ('scene-2', 'proj-1', 2, 'Title2', 'Summary2', 'missing-world', 'now', 'now')",
             [],
         );
-        assert!(fk3.is_err(), "invalid world_id should be rejected, got {fk3:?}");
+        assert!(
+            fk3.is_err(),
+            "invalid world_id should be rejected, got {fk3:?}"
+        );
     }
 }

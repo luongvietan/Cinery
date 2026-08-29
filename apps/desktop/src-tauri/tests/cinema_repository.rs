@@ -105,7 +105,9 @@ fn creates_scene_and_shots_with_ordering_uniqueness() {
 
     let scenes = repository::list_scenes(&conn, &project_id).unwrap();
     assert_eq!(scenes.len(), 1);
-    assert!(repository::list_scenes(&conn, "other-project").unwrap().is_empty());
+    assert!(repository::list_scenes(&conn, "other-project")
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -190,4 +192,3 @@ fn compilations_round_trip_with_scene_foreign_key() {
     let listed = repository::list_compilations(&conn, "scene-1").unwrap();
     assert_eq!(listed.len(), 1);
 }
-

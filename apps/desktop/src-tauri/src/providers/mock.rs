@@ -17,11 +17,13 @@ impl MockImageProvider {
         Self {
             statuses: Arc::new(Mutex::new(statuses)),
             result: ProviderResult {
-                outputs: (1..=4).map(|ordinal| ProviderOutput {
-                    uri: format!("mock://face-lock-{ordinal}.png"),
-                    mime_type: "image/png".into(),
-                    filename: Some(format!("face-lock-{ordinal}.png")),
-                }).collect(),
+                outputs: (1..=4)
+                    .map(|ordinal| ProviderOutput {
+                        uri: format!("mock://face-lock-{ordinal}.png"),
+                        mime_type: "image/png".into(),
+                        filename: Some(format!("face-lock-{ordinal}.png")),
+                    })
+                    .collect(),
                 provider_reported_model: Some("mock-image-v1".into()),
                 metadata: serde_json::json!({"fixture": true}),
             },
@@ -41,13 +43,21 @@ impl MockImageProvider {
 
 impl Default for MockImageProvider {
     fn default() -> Self {
-        Self::new(vec![ProviderJobStatus { lifecycle: ProviderLifecycle::Succeeded, progress_percent: Some(100), diagnostic: None }])
+        Self::new(vec![ProviderJobStatus {
+            lifecycle: ProviderLifecycle::Succeeded,
+            progress_percent: Some(100),
+            diagnostic: None,
+        }])
     }
 }
 
 impl GenerationProvider for MockImageProvider {
-    fn id(&self) -> &'static str { "mock" }
-    fn adapter_version(&self) -> u32 { 1 }
+    fn id(&self) -> &'static str {
+        "mock"
+    }
+    fn adapter_version(&self) -> u32 {
+        1
+    }
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities {
             media_types: vec![ProviderMediaType::Image],
@@ -64,8 +74,13 @@ impl GenerationProvider for MockImageProvider {
             max_reference_images: Some(8),
         }
     }
-    fn submit(&self, request: &ProviderExecutionRequest) -> Result<ProviderSubmission, ProviderError> {
-        self.capabilities().supports(request).map_err(|reason| ProviderError::new(ProviderErrorKind::UnsupportedCapability, reason))?;
+    fn submit(
+        &self,
+        request: &ProviderExecutionRequest,
+    ) -> Result<ProviderSubmission, ProviderError> {
+        self.capabilities().supports(request).map_err(|reason| {
+            ProviderError::new(ProviderErrorKind::UnsupportedCapability, reason)
+        })?;
         self.submitted.lock().unwrap().push(request.clone());
         Ok(ProviderSubmission {
             job: ProviderJobRef {
@@ -80,11 +95,26 @@ impl GenerationProvider for MockImageProvider {
         })
     }
     fn poll(&self, _: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError> {
-        Ok(self.statuses.lock().unwrap().pop().unwrap_or(ProviderJobStatus { lifecycle: ProviderLifecycle::Succeeded, progress_percent: Some(100), diagnostic: None }))
+        Ok(self
+            .statuses
+            .lock()
+            .unwrap()
+            .pop()
+            .unwrap_or(ProviderJobStatus {
+                lifecycle: ProviderLifecycle::Succeeded,
+                progress_percent: Some(100),
+                diagnostic: None,
+            }))
     }
     fn cancel(&self, job: &ProviderJobRef) -> Result<ProviderCancellationResult, ProviderError> {
-        self.cancelled.lock().unwrap().push(job.provider_job_id.clone());
-        Ok(ProviderCancellationResult { provider_job_id: job.provider_job_id.clone(), lifecycle: ProviderLifecycle::Cancelled })
+        self.cancelled
+            .lock()
+            .unwrap()
+            .push(job.provider_job_id.clone());
+        Ok(ProviderCancellationResult {
+            provider_job_id: job.provider_job_id.clone(),
+            lifecycle: ProviderLifecycle::Cancelled,
+        })
     }
     fn fetch_result(&self, _: &ProviderJobRef) -> Result<ProviderResult, ProviderError> {
         Ok(self.result.clone())
@@ -115,11 +145,17 @@ mod tests {
         let provider = MockImageProvider::default();
         let submission = provider.submit(&request()).unwrap();
         assert_eq!(submission.lifecycle, ProviderLifecycle::Submitted);
-        assert_eq!(provider.poll(&submission.job).unwrap().lifecycle, ProviderLifecycle::Succeeded);
+        assert_eq!(
+            provider.poll(&submission.job).unwrap().lifecycle,
+            ProviderLifecycle::Succeeded
+        );
         let result = provider.fetch_result(&submission.job).unwrap();
         assert_eq!(result.outputs.len(), 4);
         assert_eq!(result.outputs[0].uri, "mock://face-lock-1.png");
-        assert_eq!(provider.cancel(&submission.job).unwrap().lifecycle, ProviderLifecycle::Cancelled);
+        assert_eq!(
+            provider.cancel(&submission.job).unwrap().lifecycle,
+            ProviderLifecycle::Cancelled
+        );
         assert_eq!(provider.cancelled_jobs(), vec!["mock:run-1:execute:1"]);
     }
 }

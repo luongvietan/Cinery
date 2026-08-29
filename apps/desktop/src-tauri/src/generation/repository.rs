@@ -1,6 +1,9 @@
 //! Persistence helpers for generated result sets, artifacts, and lineage.
 
-use super::model::{ArtifactLineage, ArtifactPromotion, GeneratedArtifact, GeneratedArtifactSource, GenerationResultSet};
+use super::model::{
+    ArtifactLineage, ArtifactPromotion, GeneratedArtifact, GeneratedArtifactSource,
+    GenerationResultSet,
+};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -61,7 +64,12 @@ pub fn insert_sources(
             "INSERT INTO generated_artifact_sources
              (artifact_id, asset_version_id, role, ordinal)
              VALUES (?1, ?2, ?3, ?4)",
-            params![source.artifact_id, source.asset_version_id, source.role, source.ordinal],
+            params![
+                source.artifact_id,
+                source.asset_version_id,
+                source.role,
+                source.ordinal
+            ],
         )
         .map_err(db_error)?;
     }

@@ -23,7 +23,9 @@ use cinematic_desktop_lib::cinema::commands::{
 use cinematic_desktop_lib::generation::commands::{
     list_generation_results, promote_generated_artifact,
 };
-use cinematic_desktop_lib::project::commands::{create_project_standalone, open_project_standalone};
+use cinematic_desktop_lib::project::commands::{
+    create_project_standalone, open_project_standalone,
+};
 use cinematic_desktop_lib::workflow::commands::{
     advance_workflow_run, approve_workflow_step, create_workflow_run, get_workflow_run,
 };
@@ -32,7 +34,11 @@ use support::command_harness::CommandHarness;
 
 const SKILL_VERSION: &str = "1.1.0";
 
-fn run_to_waiting(harness: &CommandHarness, operation_id: &str, input: serde_json::Value) -> String {
+fn run_to_waiting(
+    harness: &CommandHarness,
+    operation_id: &str,
+    input: serde_json::Value,
+) -> String {
     let created = create_workflow_run(
         harness.root.to_string_lossy().to_string(),
         "character-builder".into(),
@@ -41,7 +47,11 @@ fn run_to_waiting(harness: &CommandHarness, operation_id: &str, input: serde_jso
         input,
     )
     .unwrap();
-    let waiting = advance_workflow_run(harness.root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
+    let waiting = advance_workflow_run(
+        harness.root.to_string_lossy().to_string(),
+        created.run.id.clone(),
+    )
+    .unwrap();
     assert_eq!(waiting.run.status, "waiting_for_approval");
     approve_workflow_step(
         harness.root.to_string_lossy().to_string(),
@@ -50,7 +60,11 @@ fn run_to_waiting(harness: &CommandHarness, operation_id: &str, input: serde_jso
         None,
     )
     .unwrap();
-    let completed = advance_workflow_run(harness.root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
+    let completed = advance_workflow_run(
+        harness.root.to_string_lossy().to_string(),
+        created.run.id.clone(),
+    )
+    .unwrap();
     assert_eq!(completed.run.status, "completed");
     created.run.id
 }
@@ -77,7 +91,14 @@ fn mvp_full_journey_through_command_boundaries() {
     let story_section_target = singletons.story.id.clone();
     let character = create_canon_entity(root.clone(), "character".into(), "Mara".into()).unwrap();
 
-    let summary = upsert_canon_section(root.clone(), character.id.clone(), "visual_summary".into(), json!({"text": "Angular face and dark hair."}), None).unwrap();
+    let summary = upsert_canon_section(
+        root.clone(),
+        character.id.clone(),
+        "visual_summary".into(),
+        json!({"text": "Angular face and dark hair."}),
+        None,
+    )
+    .unwrap();
     let locks = upsert_canon_section(
         root.clone(),
         character.id.clone(),
@@ -88,7 +109,14 @@ fn mvp_full_journey_through_command_boundaries() {
         None,
     )
     .unwrap();
-    let _ = upsert_canon_section(root.clone(), story_section_target.clone(), "premise".into(), json!({"text": "A courier outruns a siege."}), None).unwrap();
+    let _ = upsert_canon_section(
+        root.clone(),
+        story_section_target.clone(),
+        "premise".into(),
+        json!({"text": "A courier outruns a siege."}),
+        None,
+    )
+    .unwrap();
     lock_canon_section(root.clone(), summary.id.clone(), None).unwrap();
     lock_canon_section(root.clone(), locks.id.clone(), None).unwrap();
 
@@ -121,7 +149,10 @@ fn mvp_full_journey_through_command_boundaries() {
         }),
     );
     let face_results = list_generation_results(root.clone(), Some(face_run.clone())).unwrap();
-    assert!(!face_results.is_empty(), "face run must expose its result set");
+    assert!(
+        !face_results.is_empty(),
+        "face run must expose its result set"
+    );
     let face_artifact = &face_results[0].artifacts[0];
 
     let face_asset = create_asset(
@@ -131,7 +162,13 @@ fn mvp_full_journey_through_command_boundaries() {
         Some(character.id.clone()),
     )
     .unwrap();
-    let face_version = promote_generated_artifact(root.clone(), face_artifact.artifact.id.clone(), face_asset.id.clone(), true).unwrap();
+    let face_version = promote_generated_artifact(
+        root.clone(),
+        face_artifact.artifact.id.clone(),
+        face_asset.id.clone(),
+        true,
+    )
+    .unwrap();
 
     // 4. Outfit from the canonical Face: launch, promote its generated
     //    version, keep the canonical Outfit.
@@ -148,8 +185,20 @@ fn mvp_full_journey_through_command_boundaries() {
     );
     let outfit_results = list_generation_results(root.clone(), Some(outfit_run.clone())).unwrap();
     let outfit_artifact = &outfit_results[0].artifacts[0];
-    let outfit_asset = create_asset(root.clone(), "outfit".into(), "Mara Outfit".into(), Some(character.id.clone())).unwrap();
-    let outfit_version = promote_generated_artifact(root.clone(), outfit_artifact.artifact.id.clone(), outfit_asset.id.clone(), true).unwrap();
+    let outfit_asset = create_asset(
+        root.clone(),
+        "outfit".into(),
+        "Mara Outfit".into(),
+        Some(character.id.clone()),
+    )
+    .unwrap();
+    let outfit_version = promote_generated_artifact(
+        root.clone(),
+        outfit_artifact.artifact.id.clone(),
+        outfit_asset.id.clone(),
+        true,
+    )
+    .unwrap();
 
     // 5. Character Sheet from the canonical Outfit.
     let sheet_run = run_to_waiting(
@@ -164,31 +213,69 @@ fn mvp_full_journey_through_command_boundaries() {
     );
     let sheet_results = list_generation_results(root.clone(), Some(sheet_run.clone())).unwrap();
     let sheet_artifact = &sheet_results[0].artifacts[0];
-    let sheet_asset = create_asset(root.clone(), "character_sheet".into(), "Mara Sheet".into(), Some(character.id.clone())).unwrap();
-    let sheet_version = promote_generated_artifact(root.clone(), sheet_artifact.artifact.id.clone(), sheet_asset.id.clone(), true).unwrap();
+    let sheet_asset = create_asset(
+        root.clone(),
+        "character_sheet".into(),
+        "Mara Sheet".into(),
+        Some(character.id.clone()),
+    )
+    .unwrap();
+    let sheet_version = promote_generated_artifact(
+        root.clone(),
+        sheet_artifact.artifact.id.clone(),
+        sheet_asset.id.clone(),
+        true,
+    )
+    .unwrap();
 
     // 6. Import and promote World Plate, Prop Plate, Shot Keyframe through
     //    asset commands (import fixture + promote through commands).
-    let world_asset = create_asset(root.clone(), "world_plate".into(), "Station".into(), None).unwrap();
+    let world_asset =
+        create_asset(root.clone(), "world_plate".into(), "Station".into(), None).unwrap();
     let world_source = harness.image("world.png", [10, 20, 30, 255]);
-    let world_version = import_asset_version(root.clone(), world_asset.id.clone(), world_source.to_string_lossy().to_string(), None).unwrap();
+    let world_version = import_asset_version(
+        root.clone(),
+        world_asset.id.clone(),
+        world_source.to_string_lossy().to_string(),
+        None,
+    )
+    .unwrap();
     promote_asset_version(root.clone(), world_version.id.clone()).unwrap();
 
-    let prop_asset = create_asset(root.clone(), "prop_plate".into(), "Console".into(), None).unwrap();
+    let prop_asset =
+        create_asset(root.clone(), "prop_plate".into(), "Console".into(), None).unwrap();
     let prop_source = harness.image("prop.png", [200, 100, 50, 255]);
-    let prop_version = import_asset_version(root.clone(), prop_asset.id.clone(), prop_source.to_string_lossy().to_string(), None).unwrap();
+    let prop_version = import_asset_version(
+        root.clone(),
+        prop_asset.id.clone(),
+        prop_source.to_string_lossy().to_string(),
+        None,
+    )
+    .unwrap();
     promote_asset_version(root.clone(), prop_version.id.clone()).unwrap();
 
-    let keyframe_asset = create_asset(root.clone(), "shot_keyframe".into(), "KF 1".into(), None).unwrap();
+    let keyframe_asset =
+        create_asset(root.clone(), "shot_keyframe".into(), "KF 1".into(), None).unwrap();
     let keyframe_source = harness.image("keyframe.png", [90, 90, 90, 255]);
-    let keyframe_version = import_asset_version(root.clone(), keyframe_asset.id.clone(), keyframe_source.to_string_lossy().to_string(), None).unwrap();
+    let keyframe_version = import_asset_version(
+        root.clone(),
+        keyframe_asset.id.clone(),
+        keyframe_source.to_string_lossy().to_string(),
+        None,
+    )
+    .unwrap();
     promote_asset_version(root.clone(), keyframe_version.id.clone()).unwrap();
 
     // 7. Scene assembly: create, rename, choose world, cast with exact
     //    look/sheet, attach prop, create/edit shot, attach keyframe.
     let scene = create_scene(root.clone(), "Scene 001".into(), None, None).unwrap();
     rename_scene(root.clone(), scene.id.clone(), "Scene 001 - Ops".into()).unwrap();
-    set_scene_world(root.clone(), scene.id.clone(), Some(world_version.id.clone())).unwrap();
+    set_scene_world(
+        root.clone(),
+        scene.id.clone(),
+        Some(world_version.id.clone()),
+    )
+    .unwrap();
     add_scene_character(
         root.clone(),
         scene.id.clone(),
@@ -199,13 +286,39 @@ fn mvp_full_journey_through_command_boundaries() {
     .unwrap();
     add_scene_prop(root.clone(), scene.id.clone(), prop_version.id.clone()).unwrap();
 
-    let shot = create_shot(root.clone(), scene.id.clone(), None, 4.0, "Establish the ops room".into(), None, None).unwrap();
-    update_shot(root.clone(), shot.id.clone(), Some(5.0), Some("Close on console".into()), Some("Mara leans in".into()), Some("medium".into())).unwrap();
-    set_shot_keyframe(root.clone(), shot.id.clone(), Some(keyframe_version.id.clone())).unwrap();
+    let shot = create_shot(
+        root.clone(),
+        scene.id.clone(),
+        None,
+        4.0,
+        "Establish the ops room".into(),
+        None,
+        None,
+    )
+    .unwrap();
+    update_shot(
+        root.clone(),
+        shot.id.clone(),
+        Some(5.0),
+        Some("Close on console".into()),
+        Some("Mara leans in".into()),
+        Some("medium".into()),
+    )
+    .unwrap();
+    set_shot_keyframe(
+        root.clone(),
+        shot.id.clone(),
+        Some(keyframe_version.id.clone()),
+    )
+    .unwrap();
 
     // Readiness must be structured, not an exception.
     let readiness = get_scene_readiness(root.clone(), scene.id.clone()).unwrap();
-    assert!(readiness.ready, "scene must be ready before compile: {:?}", readiness.blockers);
+    assert!(
+        readiness.ready,
+        "scene must be ready before compile: {:?}",
+        readiness.blockers
+    );
 
     // 8. Compile the cinema prompt and verify runtime, export, hash.
     let compilation = compile_cinema(root.clone(), scene.id.clone(), 5.0, None).unwrap();
@@ -213,41 +326,83 @@ fn mvp_full_journey_through_command_boundaries() {
     let persisted = get_cinema_compilation(root.clone(), compilation.id.clone()).unwrap();
     assert_eq!(persisted.id, compilation.id);
     assert_eq!(persisted.export_path, compilation.export_path);
-    let compiled_prompt: serde_json::Value = serde_json::from_str(&compilation.compilation_json).unwrap();
-    let prompt_text = compiled_prompt["providerPrompt"].as_str().unwrap_or_default();
-    assert!(prompt_text.contains("right_eyebrow_scar") || prompt_text.contains("scar"), "behavioral/visual locks must appear in the compiled prompt");
+    let compiled_prompt: serde_json::Value =
+        serde_json::from_str(&compilation.compilation_json).unwrap();
+    let prompt_text = compiled_prompt["providerPrompt"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        prompt_text.contains("right_eyebrow_scar") || prompt_text.contains("scar"),
+        "behavioral/visual locks must appear in the compiled prompt"
+    );
 
     // 9. Provenance traversal: compilation -> scene, results -> lineage.
     let all_results = list_generation_results(root.clone(), None).unwrap();
-    assert!(all_results.len() >= 3, "face/outfit/sheet result sets must persist");
+    assert!(
+        all_results.len() >= 3,
+        "face/outfit/sheet result sets must persist"
+    );
     let face_detail = get_workflow_run(root.clone(), face_run.clone()).unwrap();
     assert_eq!(face_detail.run.status, "completed");
-    assert!(face_detail.provider_executions.iter().any(|e| e.provider_id == "mock" && e.model_id == "mock-image-v1"));
+    assert!(face_detail
+        .provider_executions
+        .iter()
+        .any(|e| e.provider_id == "mock" && e.model_id == "mock-image-v1"));
 
     // 10. Close and reopen the project, then verify exact references.
     drop(opened);
     open_project_standalone(root.clone()).unwrap();
 
     let reopened_scene = get_scene(root.clone(), scene.id.clone()).unwrap();
-    assert_eq!(reopened_scene.scene.world_asset_version_id.as_deref(), Some(world_version.id.as_str()));
-    assert_eq!(reopened_scene.characters[0].look_asset_version_id, outfit_version.id);
-    assert_eq!(reopened_scene.characters[0].sheet_asset_version_id.as_deref(), Some(sheet_version.id.as_str()));
-    assert_eq!(reopened_scene.props[0].prop_asset_version_id, prop_version.id);
-    assert_eq!(reopened_scene.shots[0].keyframe_asset_version_id.as_deref(), Some(keyframe_version.id.as_str()));
+    assert_eq!(
+        reopened_scene.scene.world_asset_version_id.as_deref(),
+        Some(world_version.id.as_str())
+    );
+    assert_eq!(
+        reopened_scene.characters[0].look_asset_version_id,
+        outfit_version.id
+    );
+    assert_eq!(
+        reopened_scene.characters[0]
+            .sheet_asset_version_id
+            .as_deref(),
+        Some(sheet_version.id.as_str())
+    );
+    assert_eq!(
+        reopened_scene.props[0].prop_asset_version_id,
+        prop_version.id
+    );
+    assert_eq!(
+        reopened_scene.shots[0].keyframe_asset_version_id.as_deref(),
+        Some(keyframe_version.id.as_str())
+    );
 
     let reopened_results = list_generation_results(root.clone(), Some(face_run.clone())).unwrap();
     assert_eq!(reopened_results.len(), face_results.len());
-    assert_eq!(reopened_results[0].artifacts[0].artifact.id, face_artifact.artifact.id);
+    assert_eq!(
+        reopened_results[0].artifacts[0].artifact.id,
+        face_artifact.artifact.id
+    );
 
-    let reopened_compilation = get_cinema_compilation(root.clone(), compilation.id.clone()).unwrap();
-    assert_eq!(reopened_compilation.export_sha256, compilation.export_sha256);
+    let reopened_compilation =
+        get_cinema_compilation(root.clone(), compilation.id.clone()).unwrap();
+    assert_eq!(
+        reopened_compilation.export_sha256,
+        compilation.export_sha256
+    );
 
     let reopened_readiness = get_scene_readiness(root.clone(), scene.id.clone()).unwrap();
     assert!(reopened_readiness.ready);
 
     let reopened_assets = list_assets(root.clone()).unwrap();
-    let reopened_face = reopened_assets.iter().find(|a| a.id == face_asset.id).unwrap();
-    assert_eq!(reopened_face.canonical_version_id.as_deref(), Some(face_version.id.as_str()));
+    let reopened_face = reopened_assets
+        .iter()
+        .find(|a| a.id == face_asset.id)
+        .unwrap();
+    assert_eq!(
+        reopened_face.canonical_version_id.as_deref(),
+        Some(face_version.id.as_str())
+    );
 }
 
 #[test]

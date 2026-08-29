@@ -132,7 +132,8 @@ pub fn list_shots(
     project_root_path: String,
     scene_id: String,
 ) -> Result<Vec<ShotRecord>, AppCommandError> {
-    CinemaService::list_shots(root_path(&project_root_path)?, &scene_id).map_err(AppCommandError::from)
+    CinemaService::list_shots(root_path(&project_root_path)?, &scene_id)
+        .map_err(AppCommandError::from)
 }
 
 #[tauri::command]
@@ -176,8 +177,8 @@ fn scene_detail(root: &Path, scene_id: &str) -> Result<SceneDetail, AppCommandEr
     let conn = crate::db::open_existing_connection(&root.join("project.db"))?;
     let characters = crate::cinema::repository::list_scene_characters(&conn, &scene.id)
         .map_err(AppCommandError::from)?;
-    let props =
-        crate::cinema::repository::list_scene_props(&conn, &scene.id).map_err(AppCommandError::from)?;
+    let props = crate::cinema::repository::list_scene_props(&conn, &scene.id)
+        .map_err(AppCommandError::from)?;
     let shots = CinemaService::list_shots(root, &scene.id).map_err(AppCommandError::from)?;
     Ok(SceneDetail {
         scene,
@@ -203,8 +204,12 @@ pub fn set_scene_world(
     scene_id: String,
     world_asset_version_id: Option<String>,
 ) -> Result<(), AppCommandError> {
-    CinemaService::set_scene_world(root_path(&project_root_path)?, &scene_id, world_asset_version_id.as_deref())
-        .map_err(AppCommandError::from)
+    CinemaService::set_scene_world(
+        root_path(&project_root_path)?,
+        &scene_id,
+        world_asset_version_id.as_deref(),
+    )
+    .map_err(AppCommandError::from)
 }
 
 #[tauri::command]
@@ -231,8 +236,12 @@ pub fn remove_scene_character(
     scene_id: String,
     character_entity_id: String,
 ) -> Result<(), AppCommandError> {
-    CinemaService::remove_scene_character(root_path(&project_root_path)?, &scene_id, &character_entity_id)
-        .map_err(AppCommandError::from)
+    CinemaService::remove_scene_character(
+        root_path(&project_root_path)?,
+        &scene_id,
+        &character_entity_id,
+    )
+    .map_err(AppCommandError::from)
 }
 
 #[tauri::command]
@@ -241,8 +250,12 @@ pub fn remove_scene_prop(
     scene_id: String,
     prop_asset_version_id: String,
 ) -> Result<(), AppCommandError> {
-    CinemaService::remove_scene_prop(root_path(&project_root_path)?, &scene_id, &prop_asset_version_id)
-        .map_err(AppCommandError::from)
+    CinemaService::remove_scene_prop(
+        root_path(&project_root_path)?,
+        &scene_id,
+        &prop_asset_version_id,
+    )
+    .map_err(AppCommandError::from)
 }
 
 #[tauri::command]

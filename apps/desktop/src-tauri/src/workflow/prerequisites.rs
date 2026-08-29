@@ -33,11 +33,7 @@ pub fn evaluate_prerequisites(
     })
 }
 
-fn resolve_world_location(
-    conn: &Connection,
-    project_id: &str,
-    input_id: &str,
-) -> Option<String> {
+fn resolve_world_location(conn: &Connection, project_id: &str, input_id: &str) -> Option<String> {
     conn.query_row(
         "SELECT canon_location_entity_id FROM worlds WHERE project_id = ?1 AND id = ?2",
         params![project_id, input_id],
@@ -59,8 +55,8 @@ pub fn evaluate_tbd_guards(
         match guard {
             TbdGuard::EntityScope { entity_input_ref } => {
                 let raw_entity_id = input_string(input, entity_input_ref)?;
-                let entity_id =
-                    resolve_world_location(conn, project_id, &raw_entity_id).unwrap_or(raw_entity_id);
+                let entity_id = resolve_world_location(conn, project_id, &raw_entity_id)
+                    .unwrap_or(raw_entity_id);
                 let mut statement = conn
                     .prepare("SELECT topic FROM canon_tbds WHERE project_id = ?1 AND protected = 1 AND status = 'open' AND canon_entity_id = ?2 ORDER BY id")
                     .map_err(db_error)?;
@@ -78,8 +74,8 @@ pub fn evaluate_tbd_guards(
                 section_key,
             } => {
                 let raw_entity_id = input_string(input, entity_input_ref)?;
-                let entity_id =
-                    resolve_world_location(conn, project_id, &raw_entity_id).unwrap_or(raw_entity_id);
+                let entity_id = resolve_world_location(conn, project_id, &raw_entity_id)
+                    .unwrap_or(raw_entity_id);
                 let mut statement = conn
                     .prepare("SELECT topic FROM canon_tbds WHERE project_id = ?1 AND protected = 1 AND status = 'open' AND canon_entity_id = ?2 AND section_key = ?3 ORDER BY id")
                     .map_err(db_error)?;
@@ -144,8 +140,8 @@ fn evaluate_one(
             section_key,
         } => {
             let raw_entity_id = input_string(input, entity_input_ref)?;
-            let entity_id = resolve_world_location(conn, project_id, &raw_entity_id)
-                .unwrap_or(raw_entity_id);
+            let entity_id =
+                resolve_world_location(conn, project_id, &raw_entity_id).unwrap_or(raw_entity_id);
             let found: Option<String> = conn
                 .query_row(
                     "SELECT s.id FROM canon_sections s JOIN canon_entities e ON e.id = s.canon_entity_id WHERE e.project_id = ?1 AND e.id = ?2 AND s.section_key = ?3 AND s.status = 'locked'",

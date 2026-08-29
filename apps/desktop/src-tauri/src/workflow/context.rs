@@ -128,7 +128,11 @@ pub fn resolve_character_face_lock_context(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
     {
-        vec![load_selected_asset_snapshot(conn, project_id, asset_version_id)?]
+        vec![load_selected_asset_snapshot(
+            conn,
+            project_id,
+            asset_version_id,
+        )?]
     } else {
         Vec::new()
     };
@@ -240,13 +244,12 @@ pub fn resolve_character_outfit_context(
     }
 
     let protected_tbds = load_protected_tbds(conn, project_id)?;
-    let wardrobe_proposal = input.get("wardrobeProposal").cloned().unwrap_or(Value::Null);
-    let canonical_face_version = load_canonical_asset_version(
-        conn,
-        project_id,
-        character_id,
-        "face_lock",
-    )?;
+    let wardrobe_proposal = input
+        .get("wardrobeProposal")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let canonical_face_version =
+        load_canonical_asset_version(conn, project_id, character_id, "face_lock")?;
     let assets = if let Some(version_id) = &canonical_face_version {
         vec![load_selected_asset_snapshot(conn, project_id, version_id)?]
     } else {
@@ -365,12 +368,8 @@ pub fn resolve_character_sheet_context(
     }
 
     let protected_tbds = load_protected_tbds(conn, project_id)?;
-    let canonical_outfit_version = load_canonical_asset_version(
-        conn,
-        project_id,
-        character_id,
-        "outfit",
-    )?;
+    let canonical_outfit_version =
+        load_canonical_asset_version(conn, project_id, character_id, "outfit")?;
     let assets = if let Some(version_id) = &canonical_outfit_version {
         vec![load_selected_asset_snapshot(conn, project_id, version_id)?]
     } else {
@@ -463,7 +462,9 @@ pub fn resolve_world_plate_context(
         .get("worldId")
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AppError::WorkflowInputInvalid("worldId must be a non-empty string".into()))?;
+        .ok_or_else(|| {
+            AppError::WorkflowInputInvalid("worldId must be a non-empty string".into())
+        })?;
     let world_row: (String, String, String, String) = conn
         .query_row(
             "SELECT id, project_id, canon_location_entity_id, world_plate_asset_id FROM worlds WHERE id = ?1 AND project_id = ?2",
@@ -519,7 +520,10 @@ pub fn resolve_world_plate_context(
             let value: Value = serde_json::from_str(&value_json)
                 .map_err(|error| AppError::Database(error.to_string()))?;
             // Only include relevant location keys: description, geography, visual_tags, rules
-            if !matches!(section_key.as_str(), "description" | "geography" | "visual_tags" | "rules") {
+            if !matches!(
+                section_key.as_str(),
+                "description" | "geography" | "visual_tags" | "rules"
+            ) {
                 continue;
             }
             canon.push(CanonSnapshotRef {
@@ -538,10 +542,16 @@ pub fn resolve_world_plate_context(
             }));
             match section_key.as_str() {
                 "description" => {
-                    description_text = value.get("text").and_then(Value::as_str).map(str::to_string);
+                    description_text = value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                 }
                 "geography" => {
-                    geography_text = value.get("text").and_then(Value::as_str).map(str::to_string);
+                    geography_text = value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
                 }
                 "visual_tags" => {
                     if let Some(tags) = value.get("tags").and_then(Value::as_array) {
@@ -555,7 +565,8 @@ pub fn resolve_world_plate_context(
                 "rules" => {
                     if let Some(rules) = value.get("rules").and_then(Value::as_array) {
                         location_rules = Some(
-                            rules.iter()
+                            rules
+                                .iter()
                                 .filter_map(|v| v.as_str().map(str::to_string))
                                 .collect(),
                         );
@@ -590,7 +601,11 @@ pub fn resolve_world_plate_context(
             )
             .map_err(db_error)?;
         if let Ok((section_id, value_json, revision)) = stmt.query_row([&story_entity_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         }) {
             let value: Value = serde_json::from_str(&value_json)
                 .map_err(|error| AppError::Database(error.to_string()))?;
@@ -634,7 +649,11 @@ pub fn resolve_world_plate_context(
             let (entity_id, name, section_id, value_json, revision) = row.map_err(db_error)?;
             let value: Value = serde_json::from_str(&value_json)
                 .map_err(|error| AppError::Database(error.to_string()))?;
-            let rule_text = value.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+            let rule_text = value
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             canon.push(CanonSnapshotRef {
                 entity_id: entity_id.clone(),
                 entity_type: CanonEntityType::WorldRule,
@@ -666,7 +685,11 @@ pub fn resolve_world_plate_context(
             )
             .map_err(db_error)?;
         if let Ok((section_id, value_json, revision)) = stmt.query_row([&prod_entity_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
         }) {
             let value: Value = serde_json::from_str(&value_json)
                 .map_err(|error| AppError::Database(error.to_string()))?;
@@ -782,7 +805,9 @@ pub fn resolve_scene_keyframe_context(
         .or_else(|| input.get("scene_id"))
         .and_then(Value::as_str)
         .filter(|v| !v.trim().is_empty())
-        .ok_or_else(|| AppError::WorkflowInputInvalid("sceneId must be a non-empty string".into()))?;
+        .ok_or_else(|| {
+            AppError::WorkflowInputInvalid("sceneId must be a non-empty string".into())
+        })?;
 
     // Load scene
     let scene_row: (String, String, i64, String, String, Option<String>, Option<String>) = conn
@@ -795,7 +820,15 @@ pub fn resolve_scene_keyframe_context(
             rusqlite::Error::QueryReturnedNoRows => AppError::SceneNotFound,
             other => AppError::Database(other.to_string()),
         })?;
-    let (scene_db_id, scene_project_id, scene_ordinal, scene_title, scene_summary, scene_world_id, scene_world_version_id) = scene_row;
+    let (
+        scene_db_id,
+        scene_project_id,
+        scene_ordinal,
+        scene_title,
+        scene_summary,
+        scene_world_id,
+        scene_world_version_id,
+    ) = scene_row;
     if scene_project_id != project_id {
         return Err(AppError::SceneNotFound);
     }
@@ -807,8 +840,12 @@ pub fn resolve_scene_keyframe_context(
     if scene_summary.trim().is_empty() {
         return Err(AppError::SceneNotReady("summary is empty".into()));
     }
-    let world_id = scene_world_id.clone().ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
-    let world_version_id = scene_world_version_id.clone().ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
+    let world_id = scene_world_id
+        .clone()
+        .ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
+    let world_version_id = scene_world_version_id
+        .clone()
+        .ok_or_else(|| AppError::SceneNotReady("world reference missing".into()))?;
 
     // Validate world reference is not broken (allow historical/superseded)
     let world_version: (String, String, i64, String, String) = conn
@@ -824,12 +861,18 @@ pub fn resolve_scene_keyframe_context(
             params![world_version.1],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .map_err(|_| AppError::SceneReferenceBroken(format!("world asset {} not found", world_version.1)))?;
+        .map_err(|_| {
+            AppError::SceneReferenceBroken(format!("world asset {} not found", world_version.1))
+        })?;
     if world_asset.1 != project_id {
-        return Err(AppError::SceneReferenceBroken("world asset project mismatch".into()));
+        return Err(AppError::SceneReferenceBroken(
+            "world asset project mismatch".into(),
+        ));
     }
     if world_asset.2 != "world_plate" {
-        return Err(AppError::SceneReferenceBroken("world asset type mismatch".into()));
+        return Err(AppError::SceneReferenceBroken(
+            "world asset type mismatch".into(),
+        ));
     }
     // Verify world exists and owns asset
     let world_location_check: String = conn
@@ -840,7 +883,9 @@ pub fn resolve_scene_keyframe_context(
         )
         .map_err(|_| AppError::SceneReferenceBroken("world not found".into()))?;
     if world_asset.3.as_deref() != Some(world_id.as_str()) {
-        return Err(AppError::SceneReferenceBroken("world asset owner mismatch".into()));
+        return Err(AppError::SceneReferenceBroken(
+            "world asset owner mismatch".into(),
+        ));
     }
     let _ = world_location_check;
     // Check that world asset still exists, but canonical may have changed; that's okay for historical
@@ -875,36 +920,42 @@ pub fn resolve_scene_keyframe_context(
     let mut asset_snapshots: Vec<crate::workflow::model::AssetSnapshotRef> = Vec::new();
 
     // Helper to create asset snapshot
-    let load_asset_snapshot = |version_id: &str| -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
-        let (asset_id, asset_type_str, version_number, _status, file_path): (String, String, i64, String, String) = conn
+    let load_asset_snapshot =
+        |version_id: &str| -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
+            let (asset_id, asset_type_str, version_number, _status, file_path): (String, String, i64, String, String) = conn
             .query_row(
                 "SELECT av.asset_id, a.type, av.version_number, av.status, av.file_path FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
                 params![version_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .map_err(|_| AppError::SceneReferenceBroken(format!("asset version {} not found", version_id)))?;
-        let asset_type = match asset_type_str.as_str() {
-            "face_lock" => AssetType::FaceLock,
-            "outfit" => AssetType::Outfit,
-            "character_sheet" => AssetType::CharacterSheet,
-            "world_plate" => AssetType::WorldPlate,
-            "shot_keyframe" => AssetType::ShotKeyframe,
-            "prop_plate" => AssetType::PropPlate,
-            "image" => AssetType::Image,
-            "video" => AssetType::Video,
-            "audio" => AssetType::Audio,
-            _ => return Err(AppError::SceneReferenceBroken(format!("unknown asset type {}", asset_type_str))),
+            let asset_type = match asset_type_str.as_str() {
+                "face_lock" => AssetType::FaceLock,
+                "outfit" => AssetType::Outfit,
+                "character_sheet" => AssetType::CharacterSheet,
+                "world_plate" => AssetType::WorldPlate,
+                "shot_keyframe" => AssetType::ShotKeyframe,
+                "prop_plate" => AssetType::PropPlate,
+                "image" => AssetType::Image,
+                "video" => AssetType::Video,
+                "audio" => AssetType::Audio,
+                _ => {
+                    return Err(AppError::SceneReferenceBroken(format!(
+                        "unknown asset type {}",
+                        asset_type_str
+                    )))
+                }
+            };
+            // For historical, status may be superseded but we store as Canonical for snapshot compatibility
+            Ok(crate::workflow::model::AssetSnapshotRef {
+                asset_id,
+                asset_version_id: version_id.to_string(),
+                asset_type,
+                version_number,
+                status: crate::workflow::model::AssetSnapshotStatus::Canonical,
+                path: file_path,
+            })
         };
-        // For historical, status may be superseded but we store as Canonical for snapshot compatibility
-        Ok(crate::workflow::model::AssetSnapshotRef {
-            asset_id,
-            asset_version_id: version_id.to_string(),
-            asset_type,
-            version_number,
-            status: crate::workflow::model::AssetSnapshotStatus::Canonical,
-            path: file_path,
-        })
-    };
 
     // World asset snapshot (exact pinned)
     let world_asset_snapshot = load_asset_snapshot(&world_version_id)?;
@@ -914,7 +965,8 @@ pub fn resolve_scene_keyframe_context(
     let mut canon_revision_refs: Vec<Value> = Vec::new();
 
     for row in char_rows {
-        let (assignment_id, char_entity_id, look_version_id, sheet_version_id) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        let (assignment_id, char_entity_id, look_version_id, sheet_version_id) =
+            row.map_err(|e| AppError::Database(e.to_string()))?;
         entity_ids_for_tbd.push(char_entity_id.clone());
 
         // Validate look version
@@ -925,8 +977,13 @@ pub fn resolve_scene_keyframe_context(
                 |row| Ok((row.get(0)?, row.get(1)?, row.get::<_, Option<String>>(2)?.unwrap_or_default())),
             )
             .map_err(|_| AppError::SceneReferenceBroken(format!("look version {} not found", look_version_id)))?;
-        if look_version.1 == "world_plate" || look_version.1 == "prop_plate" || look_version.1 == "shot_keyframe" {
-            return Err(AppError::SceneReferenceBroken("look asset type invalid".into()));
+        if look_version.1 == "world_plate"
+            || look_version.1 == "prop_plate"
+            || look_version.1 == "shot_keyframe"
+        {
+            return Err(AppError::SceneReferenceBroken(
+                "look asset type invalid".into(),
+            ));
         }
         if look_version.2 != char_entity_id {
             return Err(AppError::SceneReferenceBroken("look owner mismatch".into()));
@@ -938,9 +995,13 @@ pub fn resolve_scene_keyframe_context(
                 params![char_entity_id, project_id],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::SceneReferenceBroken(format!("character {} not found", char_entity_id)))?;
+            .map_err(|_| {
+                AppError::SceneReferenceBroken(format!("character {} not found", char_entity_id))
+            })?;
         if char_type != "character" {
-            return Err(AppError::SceneReferenceBroken("character type mismatch".into()));
+            return Err(AppError::SceneReferenceBroken(
+                "character type mismatch".into(),
+            ));
         }
 
         let look_asset_id = look_version.0.clone();
@@ -964,10 +1025,14 @@ pub fn resolve_scene_keyframe_context(
                 )
                 .map_err(|_| AppError::SceneReferenceBroken(format!("sheet version {} not found", sheet_id)))?;
             if sheet_version.1 != "character_sheet" && sheet_version.1 != "outfit" {
-                return Err(AppError::SceneReferenceBroken("sheet asset type invalid".into()));
+                return Err(AppError::SceneReferenceBroken(
+                    "sheet asset type invalid".into(),
+                ));
             }
             if sheet_version.2 != char_entity_id {
-                return Err(AppError::SceneReferenceBroken("sheet owner mismatch".into()));
+                return Err(AppError::SceneReferenceBroken(
+                    "sheet owner mismatch".into(),
+                ));
             }
             let sheet_asset_id = sheet_version.0.clone();
             let sheet_snapshot = load_asset_snapshot(&sheet_id)?;
@@ -986,11 +1051,14 @@ pub fn resolve_scene_keyframe_context(
         .prepare("SELECT id, prop_asset_version_id FROM world_scene_props WHERE scene_id = ?1")
         .map_err(|e| AppError::Database(e.to_string()))?;
     let prop_rows = prop_stmt
-        .query_map(params![scene_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map(params![scene_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .map_err(|e| AppError::Database(e.to_string()))?;
     let mut props: Vec<Value> = Vec::new();
     for row in prop_rows {
-        let (assignment_id, prop_version_id) = row.map_err(|e| AppError::Database(e.to_string()))?;
+        let (assignment_id, prop_version_id) =
+            row.map_err(|e| AppError::Database(e.to_string()))?;
         let prop_asset: (String, String) = conn
             .query_row(
                 "SELECT av.asset_id, a.type FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = ?1",
@@ -999,7 +1067,9 @@ pub fn resolve_scene_keyframe_context(
             )
             .map_err(|_| AppError::SceneReferenceBroken(format!("prop version {} not found", prop_version_id)))?;
         if prop_asset.1 != "prop_plate" {
-            return Err(AppError::SceneReferenceBroken("prop asset type invalid".into()));
+            return Err(AppError::SceneReferenceBroken(
+                "prop asset type invalid".into(),
+            ));
         }
         let prop_asset_id = prop_asset.0.clone();
         let prop_snapshot = load_asset_snapshot(&prop_version_id)?;
@@ -1012,7 +1082,8 @@ pub fn resolve_scene_keyframe_context(
     }
 
     // TBD handling: load applicable protected open TBDs and require bindings
-    let applicable = crate::workflow::tbd_policy::load_applicable_tbds(conn, project_id, &entity_ids_for_tbd)?;
+    let applicable =
+        crate::workflow::tbd_policy::load_applicable_tbds(conn, project_id, &entity_ids_for_tbd)?;
     // Load scene bindings
     let mut tbd_decisions: Vec<Value> = Vec::new();
     let mut protected_tbds_for_snapshot: Vec<CanonTbdSnapshot> = Vec::new();
@@ -1029,17 +1100,23 @@ pub fn resolve_scene_keyframe_context(
             )
             .optional()
             .map_err(|e| AppError::Database(e.to_string()))?;
-        let (topic_snapshot, note_snapshot, decision_str, justification) = binding.ok_or_else(|| {
-            AppError::TbdDecisionRequired(format!(
-                "TBD {} requires explicit handling decision for scene {}",
-                tbd.id, scene_id
-            ))
-        })?;
+        let (topic_snapshot, note_snapshot, decision_str, justification) =
+            binding.ok_or_else(|| {
+                AppError::TbdDecisionRequired(format!(
+                    "TBD {} requires explicit handling decision for scene {}",
+                    tbd.id, scene_id
+                ))
+            })?;
         // Validate decision via policy
         let decision_kind = match decision_str.as_str() {
             "preserve_unknown" => crate::workflow::tbd_policy::TbdDecisionKind::PreserveUnknown,
             "not_applicable" => crate::workflow::tbd_policy::TbdDecisionKind::NotApplicable,
-            _ => return Err(AppError::TbdDecisionRequired(format!("TBD {} has invalid decision", tbd.id))),
+            _ => {
+                return Err(AppError::TbdDecisionRequired(format!(
+                    "TBD {} has invalid decision",
+                    tbd.id
+                )))
+            }
         };
         let tbd_record = crate::canon::model::CanonTbdRecord {
             id: tbd.id.clone(),
@@ -1106,10 +1183,17 @@ pub fn resolve_scene_keyframe_context(
                 "SELECT id, value_json, revision FROM canon_sections WHERE canon_entity_id = ?1 AND section_key = 'rules' AND status = 'locked' LIMIT 1",
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
-        if let Ok((section_id, value_json, revision)) = stmt.query_row(params![prod_entity_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?))
-        }) {
-            let value: Value = serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
+        if let Ok((section_id, value_json, revision)) =
+            stmt.query_row(params![prod_entity_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+        {
+            let value: Value =
+                serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(rules) = value.get("rules").and_then(Value::as_array) {
                 for rule in rules {
                     production_rules.push(rule.clone());
@@ -1150,8 +1234,10 @@ pub fn resolve_scene_keyframe_context(
             })
             .map_err(|e| AppError::Database(e.to_string()))?;
         for row in rows {
-            let (section_id, section_key, value_json, revision) = row.map_err(|e| AppError::Database(e.to_string()))?;
-            let value: Value = serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
+            let (section_id, section_key, value_json, revision) =
+                row.map_err(|e| AppError::Database(e.to_string()))?;
+            let value: Value =
+                serde_json::from_str(&value_json).map_err(|e| AppError::Database(e.to_string()))?;
             canon_snapshots.push(CanonSnapshotRef {
                 entity_id: world_loc_entity.clone(),
                 entity_type: CanonEntityType::Location,
@@ -1404,7 +1490,10 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             &selected,
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap();
 
@@ -1420,7 +1509,8 @@ mod tests {
             "INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
               VALUES ('face-asset', 'p', 'face_lock', 'MARA-FACE', 'now', 'now')",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         for (id, number) in [("face-v002", 2), ("face-v003", 3)] {
             let hash = format!("hash-{number}");
             conn.execute(
@@ -1430,12 +1520,14 @@ mod tests {
                   VALUES (?1, 'face-asset', ?2, 'canonical', 'assets/face.png',
                           'thumbnails/face.webp', ?3, 'face.png', 'image/png', 1, 'now')",
                 params![id, number, hash],
-            ).unwrap();
+            )
+            .unwrap();
         }
         conn.execute(
             "UPDATE assets SET canonical_version_id = 'face-v003' WHERE id = 'face-asset'",
             [],
-        ).unwrap();
+        )
+        .unwrap();
         let mut selected = input();
         selected["sourceAssetVersionId"] = serde_json::json!("face-v002");
 
@@ -1446,8 +1538,12 @@ mod tests {
             "1.0.0",
             "character.create_face_lock",
             &selected,
-            PrerequisiteReport { passed: true, checks: vec![] },
-        ).unwrap_err();
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
+        )
+        .unwrap_err();
 
         assert!(matches!(error, AppError::WorkflowPrerequisiteFailed(_)));
     }
@@ -1477,7 +1573,11 @@ mod tests {
     fn world_plate_context_requires_locked_description_and_geography() {
         let conn = world_fixture();
         // Remove description -> should fail
-        conn.execute("UPDATE canon_sections SET status = 'draft' WHERE id = 's-desc'", []).unwrap();
+        conn.execute(
+            "UPDATE canon_sections SET status = 'draft' WHERE id = 's-desc'",
+            [],
+        )
+        .unwrap();
         let err = resolve_world_plate_context(
             &conn,
             "p",
@@ -1485,13 +1585,24 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &world_input(),
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap_err();
         assert!(matches!(err, AppError::WorkflowPrerequisiteFailed(_)));
         // Restore description, remove geography
-        conn.execute("UPDATE canon_sections SET status = 'locked' WHERE id = 's-desc'", []).unwrap();
-        conn.execute("UPDATE canon_sections SET status = 'draft' WHERE id = 's-geo'", []).unwrap();
+        conn.execute(
+            "UPDATE canon_sections SET status = 'locked' WHERE id = 's-desc'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE canon_sections SET status = 'draft' WHERE id = 's-geo'",
+            [],
+        )
+        .unwrap();
         let err2 = resolve_world_plate_context(
             &conn,
             "p",
@@ -1499,12 +1610,19 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &world_input(),
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap_err();
         assert!(matches!(err2, AppError::WorkflowPrerequisiteFailed(_)));
         // Restore both -> should pass
-        conn.execute("UPDATE canon_sections SET status = 'locked' WHERE id = 's-geo'", []).unwrap();
+        conn.execute(
+            "UPDATE canon_sections SET status = 'locked' WHERE id = 's-geo'",
+            [],
+        )
+        .unwrap();
         let ok = resolve_world_plate_context(
             &conn,
             "p",
@@ -1512,7 +1630,10 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &world_input(),
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap();
         assert_eq!(ok.resolved_context["worldId"], "world-1");
@@ -1532,20 +1653,41 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &world_input(),
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap();
         assert_eq!(snapshot.resolved_context["world"]["id"], "world-1");
         assert_eq!(snapshot.resolved_context["worldId"], "world-1");
-        assert_eq!(snapshot.resolved_context["location"]["description"], "A derelict station");
-        assert_eq!(snapshot.resolved_context["location"]["geography"], "Rust belt");
-        assert_eq!(snapshot.resolved_context["location"]["visualTags"][0], "neon");
+        assert_eq!(
+            snapshot.resolved_context["location"]["description"],
+            "A derelict station"
+        );
+        assert_eq!(
+            snapshot.resolved_context["location"]["geography"],
+            "Rust belt"
+        );
+        assert_eq!(
+            snapshot.resolved_context["location"]["visualTags"][0],
+            "neon"
+        );
         // Draft excluded
         assert!(snapshot.canon.iter().all(|c| c.section_key != "psychology"));
-        assert!(snapshot.canon.iter().any(|c| c.section_key == "description" && c.revision == 1));
-        assert!(snapshot.canon.iter().any(|c| c.section_key == "geography" && c.revision == 2));
+        assert!(snapshot
+            .canon
+            .iter()
+            .any(|c| c.section_key == "description" && c.revision == 1));
+        assert!(snapshot
+            .canon
+            .iter()
+            .any(|c| c.section_key == "geography" && c.revision == 2));
         // Ensure no character canon
-        assert!(snapshot.canon.iter().all(|c| c.entity_type != crate::canon::model::CanonEntityType::Character));
+        assert!(snapshot
+            .canon
+            .iter()
+            .all(|c| c.entity_type != crate::canon::model::CanonEntityType::Character));
         assert!(snapshot.assets.is_empty());
     }
 
@@ -1571,15 +1713,27 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &input,
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap();
-        assert_eq!(snapshot.resolved_context["worldRules"][0]["rule"], "Low gravity");
+        assert_eq!(
+            snapshot.resolved_context["worldRules"][0]["rule"],
+            "Low gravity"
+        );
         assert_eq!(snapshot.resolved_context["productionRules"][0]["id"], "r1");
-        assert_eq!(snapshot.resolved_context["tbdDecisions"][0]["tbdId"], "tbd-1");
+        assert_eq!(
+            snapshot.resolved_context["tbdDecisions"][0]["tbdId"],
+            "tbd-1"
+        );
         assert_eq!(snapshot.protected_tbds.len(), 1);
         assert_eq!(snapshot.protected_tbds[0].topic, "Secret");
-        assert!(snapshot.canon.iter().any(|c| c.entity_type == crate::canon::model::CanonEntityType::WorldRule));
+        assert!(snapshot
+            .canon
+            .iter()
+            .any(|c| c.entity_type == crate::canon::model::CanonEntityType::WorldRule));
     }
 
     #[test]
@@ -1594,7 +1748,10 @@ mod tests {
             "1.0.0",
             "world.create_plate",
             &input,
-            PrerequisiteReport { passed: true, checks: vec![] },
+            PrerequisiteReport {
+                passed: true,
+                checks: vec![],
+            },
         )
         .unwrap_err();
         assert_eq!(err.code(), "TBD_DECISION_REQUIRED");

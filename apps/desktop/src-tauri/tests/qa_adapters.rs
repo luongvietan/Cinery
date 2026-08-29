@@ -55,7 +55,10 @@ fn mock_adapter_is_deterministic_and_declares_local_execution() {
 
     assert_eq!(adapter.execution_location(), "local");
     assert!(adapter.capabilities().supports_image_analysis);
-    assert_eq!(adapter.analyze(&request).unwrap(), adapter.analyze(&request).unwrap());
+    assert_eq!(
+        adapter.analyze(&request).unwrap(),
+        adapter.analyze(&request).unwrap()
+    );
 }
 
 struct FixtureTransport {
@@ -115,7 +118,10 @@ fn openai_compatible_adapter_sends_only_declared_media_and_marks_cloud() {
         .unwrap();
 
     assert_eq!(adapter.execution_location(), "cloud:api.example");
-    assert_eq!(response.response_text, "{\"schemaVersion\":1,\"checks\":[]}");
+    assert_eq!(
+        response.response_text,
+        "{\"schemaVersion\":1,\"checks\":[]}"
+    );
     let requests = requests.lock().unwrap();
     assert_eq!(requests[0].0, "https://api.example/v1/chat/completions");
     assert_eq!(requests[0].1["model"], "gpt-4o-mini");

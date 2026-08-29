@@ -83,33 +83,34 @@ pub fn resolve_qa_context(
             other => AppError::Database(other.to_string()),
         })?;
 
-    let (visual_locks, canonical_face, canonical_look) = if let Some(owner_id) = &target.owner_entity_id {
-        ensure_character_owner(conn, &request.project_id, owner_id)?;
-        let visual_locks = load_locked_visual_locks(conn, owner_id)?;
-        let canonical_face = load_canonical_reference(
-            conn,
-            &request.project_id,
-            owner_id,
-            &["face_lock"],
-            "identity_reference",
-        )?;
-        if canonical_face.is_none() {
-            return Err(QaError::InvalidData(
-                "QA blocked: character has no exact canonical Face version".into(),
-            )
-            .into());
-        }
-        let canonical_look = load_canonical_reference(
-            conn,
-            &request.project_id,
-            owner_id,
-            &["character_sheet", "outfit"],
-            "look_reference",
-        )?;
-        (visual_locks, canonical_face, canonical_look)
-    } else {
-        (Vec::new(), None, None)
-    };
+    let (visual_locks, canonical_face, canonical_look) =
+        if let Some(owner_id) = &target.owner_entity_id {
+            ensure_character_owner(conn, &request.project_id, owner_id)?;
+            let visual_locks = load_locked_visual_locks(conn, owner_id)?;
+            let canonical_face = load_canonical_reference(
+                conn,
+                &request.project_id,
+                owner_id,
+                &["face_lock"],
+                "identity_reference",
+            )?;
+            if canonical_face.is_none() {
+                return Err(QaError::InvalidData(
+                    "QA blocked: character has no exact canonical Face version".into(),
+                )
+                .into());
+            }
+            let canonical_look = load_canonical_reference(
+                conn,
+                &request.project_id,
+                owner_id,
+                &["character_sheet", "outfit"],
+                "look_reference",
+            )?;
+            (visual_locks, canonical_face, canonical_look)
+        } else {
+            (Vec::new(), None, None)
+        };
 
     Ok(ResolvedQaContext {
         project_id: request.project_id.clone(),
@@ -165,8 +166,8 @@ fn load_locked_visual_locks(
     let Some((section_id, section_revision, value_json)) = row else {
         return Ok(Vec::new());
     };
-    let value: Value = serde_json::from_str(&value_json)
-        .map_err(|_| AppError::InvalidCanonSectionValue)?;
+    let value: Value =
+        serde_json::from_str(&value_json).map_err(|_| AppError::InvalidCanonSectionValue)?;
     let locks = value
         .get("locks")
         .and_then(Value::as_array)

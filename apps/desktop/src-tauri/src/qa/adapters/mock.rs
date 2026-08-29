@@ -1,6 +1,4 @@
-use super::{
-    RawVisualQaResponse, VisualQaAdapter, VisualQaAdapterError, VisualQaCapabilities,
-};
+use super::{RawVisualQaResponse, VisualQaAdapter, VisualQaAdapterError, VisualQaCapabilities};
 use crate::qa::models::VisualQaRequest;
 use serde_json::Value;
 

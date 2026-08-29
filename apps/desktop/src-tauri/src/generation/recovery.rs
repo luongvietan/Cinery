@@ -58,11 +58,13 @@ pub fn quarantine_orphan_generated_files(project_root: &Path) -> Result<usize, A
                     continue;
                 }
                 if let Some(parent) = destination.parent() {
-                    fs::create_dir_all(parent)
-                        .map_err(|error| AppError::GenerationArtifactCaptureFailed(error.to_string()))?;
+                    fs::create_dir_all(parent).map_err(|error| {
+                        AppError::GenerationArtifactCaptureFailed(error.to_string())
+                    })?;
                 }
-                fs::rename(&file_entry, &destination)
-                    .map_err(|error| AppError::GenerationArtifactCaptureFailed(error.to_string()))?;
+                fs::rename(&file_entry, &destination).map_err(|error| {
+                    AppError::GenerationArtifactCaptureFailed(error.to_string())
+                })?;
                 quarantined += 1;
             }
         }
@@ -86,7 +88,13 @@ fn read_directories(path: &Path) -> Result<Vec<PathBuf>, AppError> {
         .map_err(|error| AppError::GenerationArtifactCaptureFailed(error.to_string()))?;
     Ok(entries
         .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_type().ok().filter(|kind| kind.is_dir()).map(|_| entry.path()))
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|kind| kind.is_dir())
+                .map(|_| entry.path())
+        })
         .collect())
 }
 
@@ -95,6 +103,12 @@ fn read_files(path: &Path) -> Result<Vec<PathBuf>, AppError> {
         .map_err(|error| AppError::GenerationArtifactCaptureFailed(error.to_string()))?;
     Ok(entries
         .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_type().ok().filter(|kind| kind.is_file()).map(|_| entry.path()))
+        .filter_map(|entry| {
+            entry
+                .file_type()
+                .ok()
+                .filter(|kind| kind.is_file())
+                .map(|_| entry.path())
+        })
         .collect())
 }

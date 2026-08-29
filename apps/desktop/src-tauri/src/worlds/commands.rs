@@ -25,10 +25,7 @@ pub fn list_worlds(project_root_path: String) -> Result<Vec<World>, AppCommandEr
 
 /// Gets a single World by id.
 #[tauri::command]
-pub fn get_world(
-    project_root_path: String,
-    world_id: String,
-) -> Result<World, AppCommandError> {
+pub fn get_world(project_root_path: String, world_id: String) -> Result<World, AppCommandError> {
     project_service::validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
     WorldService::get_world(&root, &world_id).map_err(Into::into)
