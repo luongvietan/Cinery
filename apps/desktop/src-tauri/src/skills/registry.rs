@@ -39,6 +39,18 @@ impl SkillRegistry {
         entries
     }
 
+    /// Resolves the newest registered version of a skill by id, ignoring
+    /// version. Used when a persisted lineage references a skill version
+    /// that is no longer present in the registry.
+    pub fn find_skill_any_version(&self, skill_id: &str) -> Option<&SkillDefinition> {
+        self.skills
+            .values()
+            .filter(|definition| definition.id == skill_id)
+            .max_by(|left, right| {
+                registry_key(&left.id, &left.version).cmp(&registry_key(&right.id, &right.version))
+            })
+    }
+
     pub fn find_operation(
         &self,
         skill_id: &str,

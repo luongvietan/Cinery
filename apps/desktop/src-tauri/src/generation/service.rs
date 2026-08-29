@@ -12,7 +12,7 @@ use crate::providers::model::{ProviderOutput, ProviderResult};
 use crate::providers::http::{HttpTransport, UreqTransport};
 use chrono::Utc;
 use image::{ImageBuffer, ImageFormat, Rgba, RgbaImage};
-use rusqlite::TransactionBehavior;
+use rusqlite::{OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::Path;
@@ -271,6 +271,11 @@ impl GenerationService {
         if target.asset.project_id != project.id {
             return Err(AppError::GenerationProjectMismatch);
         }
+        // Eligibility: the target must match the artifact's expected asset
+        // type and owning entity. The owner is resolved from the workflow
+        // run input that produced the artifact (ownerEntityInputRef).
+        let expected = expected_output_for_run(&conn, &lineage.workflow_run_id)?;
+        validate_promotion_target(&conn, &lineage.workflow_run_id, expected.as_ref(), target.asset.asset_type.as_str(), target.asset.owner_entity_id.as_deref())?;
         let source_path = project_root.join(&artifact.storage_path);
         let imported = match AssetService::import_asset_version(
             project_root,
@@ -365,8 +370,7 @@ fn deterministic_mock_png(seed: &str) -> Vec<u8> {
     cursor.into_inner()
 }
 
-fn cleanup_stored(project_root: &Path, stored: &[(i64, MaterializedArtifact)]) {
-    for (_, metadata) in stored {
+fn cleanup_stored(project_root: &Path, stored: &[(i64, MaterializedArtifact)]) {    for (_, metadata) in stored {
         let _ = std::fs::remove_file(project_root.join(&metadata.storage_path));
     }
     if let Some(attempt_dir) = stored
@@ -378,4 +382,78 @@ fn cleanup_stored(project_root: &Path, stored: &[(i64, MaterializedArtifact)]) {
             let _ = std::fs::remove_dir(run_dir);
         }
     }
+}
+
+/// Resolves the expected output definition of the operation that produced
+/// an artifact, from the producing run's skill/operation identity recorded
+/// in `workflow_runs`. Returns `None` for runs without a resolvable
+/// operation (then only project checks apply).
+fn expected_output_for_run(
+    conn: &rusqlite::Connection,
+    workflow_run_id: &str,
+) -> Result<Option<crate::skills::model::ExpectedOutputDefinition>, AppError> {
+    let row = conn
+        .query_row(
+            "SELECT skill_id, skill_version, operation_id FROM workflow_runs WHERE id = ?1",
+            rusqlite::params![workflow_run_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let Some((skill_id, skill_version, operation_id)) = row else {
+        return Ok(None);
+    };
+    let registry = crate::skills::registry::SkillRegistry::builtin()?;
+    let operation = match registry.find_operation(&skill_id, &skill_version, &operation_id) {
+        Ok((_, operation)) => Some(operation.clone()),
+        Err(_) => registry
+            .find_skill_any_version(&skill_id)
+            .and_then(|skill| skill.operations.iter().find(|operation| operation.id == operation_id))
+            .cloned(),
+    };
+    Ok(operation.and_then(|operation| operation.expected_output))
+}
+
+/// Central promotion-eligibility validation shared by every operation:
+/// - the target asset type must equal the operation's expected asset type;
+/// - when the operation declares an owner entity input reference, the
+///   target's owner must equal the run input's value for that reference.
+fn validate_promotion_target(
+    conn: &rusqlite::Connection,
+    workflow_run_id: &str,
+    expected: Option<&crate::skills::model::ExpectedOutputDefinition>,
+    target_asset_type: &str,
+    target_owner: Option<&str>,
+) -> Result<(), AppError> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    if target_asset_type != expected.asset_type.as_str() {
+        return Err(AppError::GenerationArtifactNotPromotable);
+    }
+    let Some(owner_ref) = &expected.owner_entity_input_ref else {
+        return Ok(());
+    };
+    let input_json: Option<String> = conn
+        .query_row(
+            "SELECT input_json FROM workflow_runs WHERE id = ?1",
+            rusqlite::params![workflow_run_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let run_owner = input_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+        .and_then(|value| value.get(owner_ref).and_then(serde_json::Value::as_str).map(str::to_string));
+    if target_owner != run_owner.as_deref() {
+        return Err(AppError::GenerationArtifactNotPromotable);
+    }
+    Ok(())
 }
