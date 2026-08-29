@@ -1,6 +1,7 @@
 use super::adapter::GenerationProvider;
 use super::dry_run::DryRunProvider;
 use super::mock::MockImageProvider;
+use super::openai::OpenAiImageProvider;
 use super::error::{ProviderError, ProviderErrorKind};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,6 +15,9 @@ impl ProviderRegistry {
         let mut registry = Self { providers: BTreeMap::new() };
         registry.register(DryRunProvider);
         registry.register(MockImageProvider::default());
+        // Register OpenAI for discovery/capability queries. The execution
+        // path replaces this placeholder with a credential-backed adapter.
+        registry.register(OpenAiImageProvider::new("https://api.openai.com/v1", ""));
         registry
     }
 
@@ -35,8 +39,9 @@ mod tests {
     #[test]
     fn builtin_registry_resolves_only_explicit_provider_ids() {
         let registry = ProviderRegistry::builtin();
-        assert_eq!(registry.ids(), vec!["dry_run", "mock"]);
+        assert_eq!(registry.ids(), vec!["dry_run", "mock", "openai"]);
         assert_eq!(registry.get("mock").unwrap().id(), "mock");
+        assert_eq!(registry.get("openai").unwrap().id(), "openai");
         let error = match registry.get("missing") {
             Ok(_) => panic!("missing provider should not resolve"),
             Err(error) => error,
