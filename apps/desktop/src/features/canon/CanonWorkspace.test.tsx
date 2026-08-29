@@ -11,5 +11,5 @@ beforeEach(() => { vi.mocked(ensureCanonSingletons).mockResolvedValue({ story, p
 
 describe("CanonWorkspace", () => {
   it("shows every Story section as draft when it has no stored value", async () => { render(<CanonWorkspace projectRootPath="/projects/red-door" />); expect(await screen.findByRole("heading", { name: "Story Canon" })).toBeInTheDocument(); expect(screen.getByText("Premise")).toBeInTheDocument(); expect(screen.getByText("Active Skill Rules")).toBeInTheDocument(); expect(screen.getAllByText("DRAFT").length).toBe(7); });
-  it("navigates to Characters without inventing data", async () => { const user = userEvent.setup(); render(<CanonWorkspace projectRootPath="/projects/red-door" />); await user.click(screen.getByRole("button", { name: "Characters" })); expect(await screen.findByRole("heading", { name: "Characters" })).toBeInTheDocument(); expect(screen.getByText("Select a character.")).toBeInTheDocument(); });
+  it("navigates to Characters without inventing data", async () => { const user = userEvent.setup(); render(<CanonWorkspace projectRootPath="/projects/red-door" />); await user.click(screen.getByRole("button", { name: "Characters" })); expect(await screen.findByRole("heading", { name: "Characters" })).toBeInTheDocument(); expect(screen.getByText(/Add a character above/)).toBeInTheDocument(); });
 });

@@ -394,8 +394,6 @@ export function ProviderSettings({ projectRootPath }: { projectRootPath: string 
         : <p className="workflow-field-help">Loading connection types…</p>}
     </fieldset>
 
-    {activePreset && activePreset.id !== "llm" ? null : null}
-
     <label>Display name<input value={draft.displayName} onChange={(event) => updateDraft("displayName", event.target.value)} placeholder="My AI Service" /></label>
 
     {activePreset?.requiresAccountId ? <label>Account ID<input value={draft.runtime?.accountId ?? ""} onChange={(event) => updateRuntime({ accountId: event.target.value })} placeholder="Cloudflare account ID" aria-describedby="account-id-help" /><span id="account-id-help" className="workflow-field-help">Find it in the Cloudflare dashboard overview. It is not a secret.</span></label> : null}

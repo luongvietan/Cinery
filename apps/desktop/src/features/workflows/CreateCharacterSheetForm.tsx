@@ -23,8 +23,8 @@ export function CreateCharacterSheetForm({ projectRootPath, characters, pending,
     <section className="workflow-editor" aria-labelledby="sheet-form-title">
       <header className="workflow-panel-header">
         <div>
-          <h2 id="sheet-form-title">Create Character Sheet</h2>
-          <p>Compiles a three-panel character sheet (front headless, rear, chest-up face) from the canonical outfit. Requires a canonical outfit.</p>
+          <h2 id="sheet-form-title">Generate character sheet</h2>
+          <p>A full-body reference sheet built from the approved outfit, giving every scene an exact view of the character.</p>
         </div>
       </header>
       <form className="workflow-form" onSubmit={handleSubmit}>
@@ -34,7 +34,7 @@ export function CreateCharacterSheetForm({ projectRootPath, characters, pending,
         </select>
         <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
         <div className="workflow-form-actions">
-          <button type="submit" disabled={pending}>Create workflow run</button>
+          <button type="submit" disabled={pending}>{pending ? "Starting…" : "Generate character sheet"}</button>
           <button type="button" onClick={onCancel} disabled={pending}>Cancel</button>
         </div>
       </form>

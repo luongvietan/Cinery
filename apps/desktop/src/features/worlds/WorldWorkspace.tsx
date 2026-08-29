@@ -61,7 +61,7 @@ export function WorldWorkspace({
               onBack={() => setSelectedWorldId(null)}
             />
           ) : (
-            <p>Select a world to inspect its canonical environment authority.</p>
+            <p>Select a world to see its backdrop and generate its scenery.</p>
           )}
         </div>
       </div>

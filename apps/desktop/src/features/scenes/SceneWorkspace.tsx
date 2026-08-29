@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SceneList } from "./SceneList";
 import { SceneEditor } from "./SceneEditor";
 import { SceneWorldAssignment } from "./SceneWorldAssignment";
@@ -8,19 +8,28 @@ import { SceneTbdPanel } from "./SceneTbdPanel";
 import { SceneReadinessPanel } from "./SceneReadinessPanel";
 import { SceneShots } from "./SceneShots";
 import { SceneCompile } from "./SceneCompile";
-import { createScene } from "./api";
+import { createScene, getCompileReadiness } from "./api";
 import { describeError } from "../../lib/errors";
-import { useEffect, useRef } from "react";
+
+type SceneTab = "Setup" | "Shots" | "Render";
+
+interface SceneWorkspaceProps {
+  projectRootPath: string;
+  initialSceneId?: string | null;
+  /** Deep-links the editor tab when arriving from a scoped action
+   * (e.g. Overview's "Compile the final prompt" opens Render directly). */
+  initialTab?: SceneTab;
+}
 
 export function SceneWorkspace({
   projectRootPath,
   initialSceneId = null,
-}: {
-  projectRootPath: string;
-  initialSceneId?: string | null;
-}) {
+  initialTab,
+}: SceneWorkspaceProps) {
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(initialSceneId);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [tab, setTab] = useState<SceneTab>(initialTab ?? "Setup");
+  const [readiness, setReadiness] = useState<{ ready: boolean; blockers: Array<{ message: string }> } | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
@@ -48,9 +57,20 @@ export function SceneWorkspace({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isCreateOpen]);
 
+  // Scene readiness drives the header status and the dominant Render CTA.
+  useEffect(() => {
+    if (!selectedSceneId) { setReadiness(null); return; }
+    let cancelled = false;
+    getCompileReadiness(projectRootPath, selectedSceneId)
+      .then((next) => { if (!cancelled) setReadiness(next); })
+      .catch(() => { if (!cancelled) setReadiness(null); });
+    return () => { cancelled = true; };
+  }, [projectRootPath, selectedSceneId, refreshKey]);
+
   function handleCreated(sceneId: string) {
     setRefreshKey((k) => k + 1);
     setSelectedSceneId(sceneId);
+    setTab("Setup");
     setIsCreateOpen(false);
     setNewTitle("");
     setNewSummary("");
@@ -80,12 +100,18 @@ export function SceneWorkspace({
     }
   }
 
+  function handleChanged() {
+    setRefreshKey((k) => k + 1);
+  }
+
+  const blockers = readiness?.blockers ?? [];
+
   return (
     <section aria-label="Scenes workspace" className="canon-workspace" style={{ width: "100%" }}>
       <div className="canon-workspace-toolbar">
         <div>
           <h2>Scenes</h2>
-          <p>Assemble exact immutable visual references — World, Characters, Props — without copying asset IDs manually.</p>
+          <p>Stage each scene in its world with your characters, then generate its keyframes and video.</p>
         </div>
         <button type="button" ref={triggerRef} onClick={() => setIsCreateOpen(true)}>
           New Scene
@@ -106,48 +132,98 @@ export function SceneWorkspace({
         <div className="canon-editor-pane" style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}>
           {selectedSceneId ? (
             <>
-              <SceneEditor
-                key={`editor-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onUpdated={() => setRefreshKey((k) => k + 1)}
-                onBack={() => setSelectedSceneId(null)}
-              />
-              <SceneWorldAssignment
-                key={`world-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onChanged={() => setRefreshKey((k) => k + 1)}
-              />
-              <SceneCharacterAssignments
-                key={`chars-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onChanged={() => setRefreshKey((k) => k + 1)}
-              />
-              <ScenePropAssignments
-                key={`props-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onChanged={() => setRefreshKey((k) => k + 1)}
-              />
-              <SceneTbdPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} />
-              <SceneReadinessPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} refreshKey={refreshKey} />
-              <SceneShots
-                key={`shots-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onChanged={() => setRefreshKey((k) => k + 1)}
-              />
-              <SceneCompile
-                key={`compile-${selectedSceneId}-${refreshKey}`}
-                projectRootPath={projectRootPath}
-                sceneId={selectedSceneId}
-                onChanged={() => setRefreshKey((k) => k + 1)}
-              />
+              <div className="scene-header" role="group" aria-label="Scene header">
+                <div className="scene-header__tabs" role="tablist" aria-label="Scene editor sections">
+                  {(["Setup", "Shots", "Render"] as const).map((item) => (
+                    <button
+                      type="button"
+                      role="tab"
+                      key={item}
+                      id={`scene-tab-${item.toLowerCase()}`}
+                      aria-selected={tab === item}
+                      aria-controls={`scene-panel-${item.toLowerCase()}`}
+                      className={tab === item ? "nav-button nav-button--active scene-header__tab" : "nav-button scene-header__tab"}
+                      onClick={() => setTab(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+                <div className="scene-header__status">
+                  {blockers.length ? (
+                    <span className="scene-status-chip scene-status-chip--blocked" title={blockers.map((blocker) => blocker.message).join(" ")}>
+                      <span aria-hidden="true">!</span> {blockers.length} to fix
+                    </span>
+                  ) : (
+                    <span className="scene-status-chip scene-status-chip--ready"><span aria-hidden="true">✓</span> Ready to render</span>
+                  )}
+                  {tab !== "Render" ? (
+                    <button type="button" className="scene-header__cta" onClick={() => setTab("Render")}>
+                      Go to Render
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div
+                role="tabpanel"
+                id={`scene-panel-${tab.toLowerCase()}`}
+                aria-labelledby={`scene-tab-${tab.toLowerCase()}`}
+                style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}
+              >
+                {tab === "Setup" ? (
+                  <>
+                    <SceneEditor
+                      key={`editor-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onUpdated={handleChanged}
+                      onBack={() => setSelectedSceneId(null)}
+                    />
+                    <SceneWorldAssignment
+                      key={`world-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onChanged={handleChanged}
+                    />
+                    <SceneCharacterAssignments
+                      key={`chars-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onChanged={handleChanged}
+                    />
+                    <ScenePropAssignments
+                      key={`props-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onChanged={handleChanged}
+                    />
+                    <SceneTbdPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} />
+                    <SceneReadinessPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} refreshKey={refreshKey} />
+                  </>
+                ) : null}
+                {tab === "Shots" ? (
+                  <SceneShots
+                    key={`shots-${selectedSceneId}-${refreshKey}`}
+                    projectRootPath={projectRootPath}
+                    sceneId={selectedSceneId}
+                    onChanged={handleChanged}
+                  />
+                ) : null}
+                {tab === "Render" ? (
+                  <SceneCompile
+                    key={`compile-${selectedSceneId}-${refreshKey}`}
+                    projectRootPath={projectRootPath}
+                    sceneId={selectedSceneId}
+                    onChanged={handleChanged}
+                  />
+                ) : null}
+              </div>
             </>
           ) : (
-            <p>Select a scene to assemble its World, Characters, and Props — or create a new Scene.</p>
+            <div className="empty-state" role="status">
+              <p>No scene selected</p>
+              <p>Pick a scene on the left to stage it, or create a new one. A scene pulls in your world, cast, and props, and breaks down into shots you can render.</p>
+            </div>
           )}
         </div>
       </div>
@@ -162,12 +238,12 @@ export function SceneWorkspace({
             onClick={(event) => event.stopPropagation()}
           >
             <header>
-              <h2 id="create-scene-title">Create Scene</h2>
+              <h2 id="create-scene-title">New Scene</h2>
               <button type="button" className="canon-secondary-button" onClick={() => setIsCreateOpen(false)} aria-label="Close">
                 ✕
               </button>
             </header>
-            <p>Scenes assemble exact immutable references. New scenes are numbered sequentially (SCENE-001, SCENE-002…) and persist across restarts.</p>
+            <p>Scenes are numbered automatically (SCENE-001, SCENE-002…) and stay on your computer.</p>
             {createError ? <p role="alert">{createError}</p> : null}
             <div className="canon-field-grid" style={{ marginTop: "var(--space-12)" }}>
               <label htmlFor="new-scene-title">
@@ -186,7 +262,7 @@ export function SceneWorkspace({
                   id="new-scene-summary"
                   value={newSummary}
                   onChange={(event) => setNewSummary(event.target.value)}
-                  placeholder="Brief summary of the scene…"
+                  placeholder="What happens in this scene…"
                   rows={3}
                   style={{
                     width: "100%",

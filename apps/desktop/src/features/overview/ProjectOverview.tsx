@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import type { OverviewAction, ProjectOverview as ProjectOverviewData, ReadinessStep } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
-import { getProjectOverview } from "./api";
+import { openPanel } from "../../lib/panelNavigation";
+import { countConnectedAiServices, getProjectOverview } from "./api";
 import { getProjectHealth } from "./healthApi";
 import { readinessCopy } from "./readinessCopy";
+import { AiDirectorBar } from "./AiDirectorBar";
 
 function stepCopy(step: ReadinessStep): { title: string; detail: string; actionLabel: string | null } {
   const plain = readinessCopy(step.id);
@@ -29,6 +31,7 @@ export function ProjectOverview({
   const [overview, setOverview] = useState<ProjectOverviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [healthIssues, setHealthIssues] = useState<import("@cinematic/domain").ProjectHealthIssue[]>([]);
+  const [aiServiceCount, setAiServiceCount] = useState<number | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -37,6 +40,11 @@ export function ProjectOverview({
     void Promise.all([getProjectOverview(projectRootPath), getProjectHealth(projectRootPath)])
       .then(([value, issues]) => { if (current) { setOverview(value); setHealthIssues(issues); } })
       .catch((reason) => { if (current) setError(describeError(reason)); });
+    // A missing AI service is the hidden prerequisite of every generation
+    // step, so surface it here rather than waiting for the first failure.
+    countConnectedAiServices(projectRootPath)
+      .then((count) => { if (current) setAiServiceCount(count); })
+      .catch(() => { if (current) setAiServiceCount(null); });
     return () => { current = false; };
   }, [projectRootPath]);
 
@@ -49,6 +57,15 @@ export function ProjectOverview({
 
   return (
     <section className="project-overview" aria-labelledby="production-progress-title">
+      {aiServiceCount === 0 ? (
+        <div className="provider-banner" role="status">
+          <div>
+            <strong>No AI service connected yet.</strong>
+            <p>Cinery generates images and video through an AI service you connect. Connect one to unlock the steps below — your project and story stay on your computer either way.</p>
+          </div>
+          <button type="button" onClick={() => openPanel("providers")}>Connect an AI service</button>
+        </div>
+      ) : null}
       <header className="project-overview__header">
         <div>
           <span className="production-kicker">Production / Readiness</span>
@@ -65,6 +82,7 @@ export function ProjectOverview({
           </button>
         ) : <span className="project-overview__complete">Production path complete</span>}
       </header>
+      <AiDirectorBar projectRootPath={projectRootPath} />
       <ol className="project-overview__steps">
         {overview.readiness.steps.map((step) => {
           const copy = stepCopy(step);

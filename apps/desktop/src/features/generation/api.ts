@@ -1,12 +1,5 @@
-import type { AssetVersion, GenerationResultSetDetail, RouteProductionIntentResult } from "@cinematic/domain";
+import type { AssetVersion, GenerationResultSetDetail } from "@cinematic/domain";
 import { invokeCommand } from "../../lib/tauri";
-
-export function routeProductionIntent(
-  projectRootPath: string,
-  text: string,
-): Promise<RouteProductionIntentResult> {
-  return invokeCommand("route_production_intent", { request: { projectRootPath, text } });
-}
 
 export function listGenerationResults(
   projectRootPath: string,

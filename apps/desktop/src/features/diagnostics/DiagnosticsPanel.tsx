@@ -55,10 +55,11 @@ export function DiagnosticsPanel({ projectRootPath }: Props) {
     <section className="diagnostics-panel" aria-labelledby="diagnostics-title">
       <header className="workflow-panel-header">
         <div>
-          <h2 id="diagnostics-title">Diagnostics</h2>
+          <h2 id="diagnostics-title">Support</h2>
           <p>
-            Export a redacted diagnostics bundle to diagnose this project without
-            raw database inspection. No media or credentials are included.
+            If something looks wrong, export a diagnostics bundle to share with
+            support or keep for yourself. It never contains your media, prompts,
+            or credentials.
           </p>
         </div>
       </header>

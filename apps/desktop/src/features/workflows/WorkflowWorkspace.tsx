@@ -7,7 +7,7 @@ import { CreateOutfitForm } from "./CreateOutfitForm";
 import { CreateCharacterSheetForm } from "./CreateCharacterSheetForm";
 import { OperationCatalog } from "./OperationCatalog";
 import { WorkflowRunView } from "./WorkflowRunView";
-import { humanizeWorkflowStatus } from "./format";
+import { formatRunTime, runTitle, runStatusLabel } from "./labels";
 
 /** Maps an operation id to the skill that owns it (registry key + version). */
 function resolveSkillRef(operationId: string): [string, string] {
@@ -18,25 +18,15 @@ function resolveSkillRef(operationId: string): [string, string] {
   throw new Error(`No skill is registered for operation ${operationId}`);
 }
 
-/**
- * Operations whose input forms are not offered in this workspace. They have
- * real context entry points elsewhere (Asset Inspector, Worlds, Scenes) and
- * must never fall through to a character form.
- */
-const OPERATIONS_WITH_EXTERNAL_ENTRY = ["asset.", "world.", "scene."];
+/** Character operations have entry forms here; everything else runs from the
+ * screen where its content lives (Assets, Worlds, Scenes). */
+const CHARACTER_OPERATION_IDS = [
+  "character.create_face_lock",
+  "character.create_outfit",
+  "character.create_character_sheet",
+];
 
-function operationEntryHint(operationId: string): string {
-  if (operationId.startsWith("asset.")) {
-    return "Run Visual QA and Repair from an asset version in the Assets panel.";
-  }
-  if (operationId.startsWith("world.")) {
-    return "Generate a world plate from the World detail in the Worlds panel.";
-  }
-  if (operationId.startsWith("scene.")) {
-    return "Generate a shot keyframe from its shot in the Scenes panel.";
-  }
-  return "This operation is started from its production context.";
-}
+const ACTIVE_RUN_STATUSES = new Set(["created", "running", "waiting_for_approval", "ready_for_execution"]);
 
 function isCharacterOperation(operationId: string): boolean {
   return operationId.startsWith("character.");
@@ -106,18 +96,43 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
     setRuns((current) => current.map((run) => run.id === nextDetail.run.id ? nextDetail.run : run));
   }
 
+  const activeRuns = runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const pastRuns = runs.filter((run) => !ACTIVE_RUN_STATUSES.has(run.status));
+  const runnableTools = operations.filter((operation) => CHARACTER_OPERATION_IDS.includes(operation.id));
+
   return (
     <div className="workflow-workspace">
       {error ? <p role="alert">{error}</p> : null}
-      <div className="workflow-overview" aria-busy={loading}>
-        <OperationCatalog operations={operations} onSelect={selectOperation} />
-        <section className="workflow-recent" aria-labelledby="recent-runs-title" aria-busy={loading}>
-          <header className="workflow-panel-header"><div><h2 id="recent-runs-title">Recent runs</h2><p>Every generation you've started, kept even after you close the app.</p></div></header>
-          {loading ? <p className="workflow-loading" role="status">Loading workflow history…</p> : runs.length === 0 ? <div className="empty-state" role="status"><p>No workflow runs yet.</p><p>Start one from Production, or pick an operation above.</p></div> : (
-            <ul>{runs.map((run) => <li key={run.id}><button type="button" onClick={(event) => openRun(run.id, event.currentTarget)} disabled={pending}><span>{run.operationId}</span><span className={`workflow-status workflow-status--${run.status}`}><span aria-hidden="true">●</span><span>{humanizeWorkflowStatus(run.status)}</span></span><span>{run.skillId}@{run.skillVersion}</span></button></li>)}</ul>
-          )}
-        </section>
+      <div className="workflow-recent" aria-labelledby="recent-runs-title" aria-busy={loading}>
+        <header className="workflow-panel-header">
+          <div>
+            <h2 id="recent-runs-title">Generations</h2>
+            <p>Every image and video the AI made for this project, kept even after you close the app.</p>
+          </div>
+        </header>
+        {loading ? <p className="workflow-loading" role="status">Loading generation history…</p> : runs.length === 0 ? (
+          <div className="empty-state" role="status">
+            <p>Nothing generated yet</p>
+            <p>Results appear here the moment you generate a face, outfit, world backdrop, keyframe, or video — start from the screen where you're working, or use the tools below.</p>
+          </div>
+        ) : (
+          <>
+            {activeRuns.length ? (
+              <section aria-label="Generations in progress">
+                <h3>In progress</h3>
+                <ul>{activeRuns.map((run) => <li key={run.id}><button type="button" onClick={(event) => openRun(run.id, event.currentTarget)} disabled={pending}><span>{runTitle(run)}</span><span className={`workflow-status workflow-status--${run.status}`}><span aria-hidden="true">●</span><span>{runStatusLabel(run.status)}</span></span></button></li>)}</ul>
+              </section>
+            ) : null}
+            {pastRuns.length ? (
+              <section aria-label="Completed generations">
+                <h3>History</h3>
+                <ul>{pastRuns.map((run) => <li key={run.id}><button type="button" onClick={(event) => openRun(run.id, event.currentTarget)} disabled={pending}><span>{runTitle(run)}</span><span className={`workflow-status workflow-status--${run.status}`}><span aria-hidden="true">●</span><span>{runStatusLabel(run.status)}</span></span><time>{formatRunTime(run.createdAt)}</time></button></li>)}</ul>
+              </section>
+            ) : null}
+          </>
+        )}
       </div>
+      <OperationCatalog operations={runnableTools} onSelect={selectOperation} />
       {selectedOperation ? (
         isCharacterOperation(selectedOperation.id) ? (
           selectedOperation.id === "character.create_outfit" ? (
@@ -126,20 +141,8 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
             <CreateCharacterSheetForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
           ) : selectedOperation.id === "character.create_face_lock" ? (
             <CreateFaceLockForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
-          ) : (
-            <section aria-label="Unsupported operation" className="workflow-panel-header">
-              <p role="status">
-                {`"${selectedOperation.id}" has no form in this workspace. ${operationEntryHint(selectedOperation.id)}`}
-              </p>
-            </section>
-          )
-        ) : (
-          <section aria-label="Unsupported operation" className="workflow-panel-header">
-            <p role="status">
-              {`"${selectedOperation.id}" is started from its production context. ${operationEntryHint(selectedOperation.id)}`}
-            </p>
-          </section>
-        )
+          ) : null
+        ) : null
       ) : null}
       {selectedRun ? <WorkflowRunView projectRootPath={projectRootPath} detail={selectedRun} onChange={handleRunChange} /> : null}
     </div>

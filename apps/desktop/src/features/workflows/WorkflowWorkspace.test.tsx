@@ -6,7 +6,7 @@ import { advanceWorkflowRun, listSkillOperations, listWorkflowCharacters, listWo
 
 vi.mock("./api");
 
-describe("WorkflowWorkspace", () => {
+describe("WorkflowWorkspace (Generations)", () => {
   beforeEach(() => {
     vi.mocked(listSkillOperations).mockResolvedValue([
       {
@@ -44,63 +44,54 @@ describe("WorkflowWorkspace", () => {
     vi.mocked(advanceWorkflowRun).mockReset();
   });
 
-  it("shows operations and persisted state without auto-advancing a run", async () => {
+  it("shows history and tools without auto-advancing a run", async () => {
     render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
 
-    expect(await screen.findByRole("heading", { name: "Create Face Lock" })).toBeInTheDocument();
-    expect(await screen.findByText("Waiting for approval")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Generations" })).toBeInTheDocument();
+    expect(await screen.findByText("Needs your approval")).toBeInTheDocument();
     expect(advanceWorkflowRun).not.toHaveBeenCalled();
 
-    const launchButton = screen.getByRole("button", { name: "Create Face Lock" });
+    const launchButton = screen.getByRole("button", { name: "Generate face reference" });
     await userEvent.click(launchButton);
     await waitFor(() => expect(screen.getByRole("combobox", { name: "Character" })).toHaveValue("mara"));
-    expect(screen.getByRole("combobox", { name: "Character" })).toHaveFocus();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(launchButton).toHaveFocus());
+  });
+
+  it("keeps character runs human-named in history", async () => {
+    render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
+    expect(await screen.findByText("Face reference")).toBeInTheDocument();
+    expect(screen.queryByText(/character-builder@1\.0\.0/)).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state with direction when nothing has been generated", async () => {
+    vi.mocked(listWorkflowRuns).mockResolvedValue([]);
+    render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
+    expect(await screen.findByText(/Nothing generated yet/i)).toBeInTheDocument();
   });
 });
 
 describe("WorkflowWorkspace operation routing (regression)", () => {
-  const qaOperation = {
-    id: "asset.run_visual_qa",
-    name: "Run Visual QA",
-    description: "Evaluate one exact image asset version.",
-    intentExamples: [],
-    inputSchemaId: "run_visual_qa",
-    prerequisites: [],
-    tbdGuards: [],
-    workflow: [{ id: "validate-input", type: "validate_input" } as never],
-    expectedOutput: null,
-  };
-
-  it("does not open a character form for QA operations and never submits the wrong skill", async () => {
-    const user = userEvent.setup();
-    vi.mocked(listSkillOperations).mockResolvedValue([qaOperation]);
-    render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
-
-    const opButton = await screen.findByRole("button", { name: /Run Visual QA/ });
-    await user.click(opButton);
-
-    // No character form fields may appear; the user is pointed at the
-    // operation's real entry point instead.
-    expect(screen.queryByRole("combobox", { name: "Character" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("status")).toHaveTextContent(/Assets panel/);
-    expect(screen.queryByRole("button", { name: "Execute" })).not.toBeInTheDocument();
-  });
-
-  it("keeps unknown operations from submitting any skill", async () => {
-    const user = userEvent.setup();
+  it("never renders non-character operations as launchable tools", async () => {
     vi.mocked(listSkillOperations).mockResolvedValue([
       {
-        ...qaOperation,
-        id: "mystery.some_operation",
-        name: "Mystery Operation",
-      },
+        id: "asset.run_visual_qa",
+        name: "Run Visual QA",
+        description: "Evaluate one exact image asset version.",
+        intentExamples: [],
+        inputSchemaId: "run_visual_qa",
+        prerequisites: [],
+        tbdGuards: [],
+        workflow: [{ id: "validate-input", type: "validate_input" } as never],
+        expectedOutput: null,
+      } as never,
     ]);
+    vi.mocked(listWorkflowRuns).mockResolvedValue([]);
+    vi.mocked(listWorkflowCharacters).mockResolvedValue([]);
     render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
 
-    await user.click(await screen.findByRole("button", { name: /Mystery Operation/ }));
-    expect(await screen.findByRole("status")).toHaveTextContent(/production context/);
+    // QA runs from the Assets panel; it must not appear as a tool here.
+    expect(screen.queryByRole("button", { name: /Run Visual QA/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Character" })).not.toBeInTheDocument();
   });
 });

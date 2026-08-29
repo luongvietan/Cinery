@@ -14,16 +14,26 @@ import {
   resolveSceneReferences,
   type Shot,
 } from "./api";
-import { advanceWorkflowRun, createWorkflowRun } from "../workflows/api";
+import { advanceWorkflowRun, createWorkflowRun, listSkillOperations } from "../workflows/api";
+import {
+  listAssets,
+} from "../assets/api";
 import {
   listGenerationResults,
   promoteGeneratedArtifact,
-} from "../production/api";
-import type { WorkflowRunDetail } from "@cinematic/domain";
+} from "../generation/api";
+import type { WorkflowRunDetail, AssetSummary, GenerationResultSetDetail } from "@cinematic/domain";
 
 vi.mock("./api");
 vi.mock("../workflows/api");
-vi.mock("../production/api");
+vi.mock("../generation/api");
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => `mock-asset://${path}`,
+}));
+vi.mock("../assets/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../assets/api")>();
+  return { ...actual, listAssets: vi.fn(), getAssetWithVersions: vi.fn() };
+});
 vi.mock("../worlds/api", () => ({
   listWorlds: vi.fn().mockResolvedValue([]),
   listWorldsDetailed: vi.fn().mockResolvedValue([]),
@@ -118,12 +128,40 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
     vi.mocked(ensureSceneKeyframeAsset).mockResolvedValue({ id: "kf-asset", label: "KF" });
     vi.mocked(createWorkflowRun).mockResolvedValue(runDetail("created"));
     vi.mocked(advanceWorkflowRun).mockResolvedValue(runDetail("completed"));
+    vi.mocked(listSkillOperations).mockResolvedValue([
+      {
+        id: "scene.create_keyframe",
+        name: "Create Keyframe",
+        description: "",
+        intentExamples: [],
+        inputSchemaId: "create_keyframe",
+        prerequisites: [],
+        tbdGuards: [],
+        workflow: [],
+        expectedOutput: { assetType: "shot_keyframe", mediaType: "image", desiredStatus: "candidate", ownerEntityInputRef: null },
+      },
+    ] as never);
+    vi.mocked(listAssets).mockResolvedValue([
+      {
+        id: "kf-asset",
+        projectId: "project-1",
+        type: "shot_keyframe",
+        label: "Scene 001 Keyframes",
+        ownerEntityId: scene.id,
+        canonicalVersionId: null,
+        versionCount: 0,
+        canonicalVersionNumber: null,
+        previewThumbnailPath: null,
+        createdAt: "now",
+        updatedAt: "now",
+      } as AssetSummary,
+    ]);
     vi.mocked(listGenerationResults).mockResolvedValue([
       {
         resultSet: { id: "rs-1" },
-        artifacts: [{ artifact: { id: "artifact-1", sha256: "a".repeat(64) } }],
+        artifacts: [{ artifact: { id: "artifact-1", ordinal: 1, sha256: "a".repeat(64), storagePath: "g/1.png", mimeType: "image/png", width: 512, height: 512, byteSize: 1, mediaKind: "image", captureStatus: "available", resultSetId: "rs-1", createdAt: "now" }, lineage: null }],
       },
-    ] as never);
+    ] as unknown as GenerationResultSetDetail[]);
     vi.mocked(promoteGeneratedArtifact).mockResolvedValue({ id: "kf-v1" } as never);
     vi.mocked(setShotKeyframe).mockImplementation(async (_root, shotId, versionId) => {
       shots = shots.map((shot) =>
@@ -136,12 +174,13 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
     const user = userEvent.setup();
     render(<SceneWorkspace projectRootPath="C:/projects/red-door" />);
 
-    // Select the scene.
+    // Select the scene, then open its Shots tab.
     await user.click(await screen.findByRole("button", { name: /Scene 001/ }));
+    await user.click(await screen.findByRole("tab", { name: "Shots" }));
 
     // 1. Add a shot.
     await user.click(await screen.findByRole("button", { name: "Add Shot" }));
-    await user.type(screen.getByLabelText(/Intent \(required\)/), "Establish the ops room");
+    await user.type(screen.getByLabelText(/What happens in this shot \(required\)/), "Establish the ops room");
     await user.click(screen.getByRole("button", { name: "Create Shot" }));
     await waitFor(() =>
       expect(screen.getByText("Establish the ops room")).toBeInTheDocument(),
@@ -156,7 +195,7 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
     );
 
     // 2. Generate a keyframe through the workflow runtime.
-    await user.click(screen.getByRole("button", { name: "Generate Keyframe" }));
+    await user.click(screen.getByRole("button", { name: /Generate keyframe/i }));
     await waitFor(() =>
       expect(createWorkflowRun).toHaveBeenCalledWith(
         "C:/projects/red-door",
@@ -166,13 +205,15 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
         { sceneId: "scene-001" },
       ),
     );
-    // The run view renders the completed keyframe run for review.
-    expect(await screen.findByText(/completed/i)).toBeInTheDocument();
 
-    // 3. The runtime's mock provider executes synchronously through approval
-    //    and execution; the mocked advance resolves to a completed run, so
-    //    the pin action becomes available immediately.
-    await user.click(await screen.findByRole("button", { name: /Pin keyframe/i }));
+    // 3. The completed run surfaces a reviewable candidate grid; the user
+    //    picks a result and saves it — never a silent first-candidate pin.
+    const resultCard = await screen.findByRole("button", { name: /Select result 1/i });
+    await user.click(resultCard);
+    await user.click(screen.getByRole("button", { name: /Use this keyframe/i }));
+    const dialog = await screen.findByRole("dialog");
+    const { within } = await import("@testing-library/react");
+    await user.click(within(dialog).getByRole("button", { name: /Save version/i }));
     await waitFor(() => expect(promoteGeneratedArtifact).toHaveBeenCalledWith(
       "C:/projects/red-door",
       "artifact-1",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StatefulTauriFacade } from "../../test/StatefulTauriFacade";
+import { StatefulTauriFacade } from "./StatefulTauriFacade";
 
 describe("StatefulTauriFacade", () => {
   it("mutates subsequent list/detail responses after mutations", async () => {

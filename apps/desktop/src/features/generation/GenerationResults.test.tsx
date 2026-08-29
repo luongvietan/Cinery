@@ -141,7 +141,7 @@ describe("GenerationResults", () => {
         onPromoted={vi.fn()}
       />,
     );
-    const targetSelect = await screen.findByLabelText(/Target asset/);
+    const targetSelect = await screen.findByLabelText(/Save into/);
     const values = Array.from((targetSelect as HTMLSelectElement).options).map((option) => option.value);
     expect(values).toContain("eligible");
     expect(values).not.toContain("wrong-type");
@@ -181,18 +181,18 @@ describe("GenerationResults", () => {
       />,
     );
     // No eligible target: show create form instead of a dead-end select.
-    expect(screen.queryByLabelText(/Target asset/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Create asset/ }));
-    await user.type(screen.getByLabelText(/Asset name/), "New Mara Outfit");
+    expect(screen.queryByLabelText(/Save into/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Create outfit asset/ }));
+    await user.type(screen.getByLabelText(/Name/), "New Mara Outfit");
     await user.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(createAsset).toHaveBeenCalledWith(expect.objectContaining({ type: "outfit", ownerEntityId: "mara" })));
 
-    // The new asset becomes the selected target, but promotion still needs
+    // The new asset becomes the selected target, but saving still needs
     // an explicit Save click.
-    const saveButton = await screen.findByRole("button", { name: /Save as Asset Version/ });
+    const saveButton = await screen.findByRole("button", { name: /Save to Assets/ });
     await user.click(saveButton);
     const dialog = await screen.findByRole("dialog");
-    await user.click(withinDialog(dialog).getByRole("button", { name: "Save Version" }));
+    await user.click(withinDialog(dialog).getByRole("button", { name: /Save version/ }));
     await waitFor(() => expect(promoteGeneratedArtifact).toHaveBeenCalledWith("C:/p", "artifact-1", "new-asset", false));
     await waitFor(() => expect(onPromoted).toHaveBeenCalled());
   });

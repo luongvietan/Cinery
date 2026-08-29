@@ -35,33 +35,43 @@ describe("WorkflowRunView", () => {
     vi.mocked(advanceWorkflowRun).mockReset();
 
     render(<WorkflowRunView projectRootPath="C:/projects/red-door" detail={waiting} onChange={onChange} />);
-    await userEvent.click(screen.getByRole("button", { name: "Approve request" }));
+    await userEvent.click(screen.getByRole("button", { name: "Approve and generate" }));
 
     expect(approveWorkflowStep).toHaveBeenCalledWith("C:/projects/red-door", "run-1", "approve-request", null);
     expect(advanceWorkflowRun).not.toHaveBeenCalled();
     expect(onChange).toHaveBeenCalledWith(ready);
   });
 
-  it("exposes DryRun execution as a separate explicit action", async () => {
+  it("exposes a test run as a separate explicit action when no AI service is selected", async () => {
     const ready = detail("ready_for_execution");
     const completed = detail("completed");
     vi.mocked(advanceWorkflowRun).mockResolvedValue(completed);
 
     render(<WorkflowRunView projectRootPath="C:/projects/red-door" detail={ready} onChange={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Execute Dry Run" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run test" }));
 
     expect(advanceWorkflowRun).toHaveBeenCalledWith("C:/projects/red-door", "run-1");
   });
 
-  it("requires an explicit confirmation before rejection", async () => {
+  it("requires an explicit confirmation before stopping a generation", async () => {
     const waiting = detail("waiting_for_approval");
     vi.mocked(rejectWorkflowStep).mockResolvedValue(detail("rejected"));
 
     render(<WorkflowRunView projectRootPath="C:/projects/red-door" detail={waiting} onChange={vi.fn()} />);
-    await userEvent.click(screen.getByRole("button", { name: "Reject request" }));
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(rejectWorkflowStep).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Confirm rejection" }));
+    await userEvent.click(screen.getByRole("button", { name: "Yes, stop it" }));
     expect(rejectWorkflowStep).toHaveBeenCalledWith("C:/projects/red-door", "run-1", "approve-request", null);
+  });
+
+  it("shows plain operation names and keeps skill ids inside Technical details", () => {
+    render(<WorkflowRunView projectRootPath="C:/projects/red-door" detail={detail("ready_for_execution")} onChange={vi.fn()} />);
+    expect(screen.getByRole("heading", { name: "Face reference" })).toBeInTheDocument();
+    // Raw skill@version ids live only inside the collapsed technical section.
+    const technical = screen.getByText(/Technical details/).closest("details");
+    expect(technical).not.toBeNull();
+    expect(technical).toHaveTextContent(/character-builder@1\.0\.0/);
+    expect(screen.queryByText(/Ready for explicit execution/)).not.toBeInTheDocument();
   });
 });

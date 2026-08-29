@@ -8,7 +8,7 @@ import {
 } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
-import { getGeneratedArtifact } from "../production/api";
+import { getGeneratedArtifact } from "../generation/api";
 import { QaPanel } from "../qa/QaPanel";
 import { ProvenancePanel } from "../provenance/ProvenancePanel";
 import {
@@ -130,10 +130,10 @@ export function AssetInspector({
 
     const versionLabel = formatVersionNumber(versionNumber);
     const confirmationDetail = data.asset.canonicalVersionId
-      ? "The current canonical version will be preserved and marked Superseded."
-      : "This version will become the asset's canonical version.";
+      ? "The previous approved version is kept in the history."
+      : "This version becomes the approved one scenes use.";
     const confirmed = window.confirm(
-      `Make ${versionLabel} the canonical version of ${data.asset.label}?\n${confirmationDetail}`,
+      `Set ${versionLabel} as the approved version of ${data.asset.label}?\n${confirmationDetail}`,
     );
     if (!confirmed) {
       return;
@@ -188,7 +188,7 @@ export function AssetInspector({
   const canonicalLabel = canonicalVersion
     ? formatVersionNumber(canonicalVersion.versionNumber)
     : versions.length > 0
-      ? "No canonical version"
+      ? "No approved version yet"
       : "No versions";
   const qaVersion =
     sortedVersions.find((version) => version.id === qaVersionId) ??
@@ -205,7 +205,7 @@ export function AssetInspector({
           <h2>{asset.label}</h2>
           <p>{humanizeAssetType(asset.type)}</p>
           <p className="asset-inspector-canonical-line">
-            Canonical: {canonicalLabel}
+            Approved: {canonicalLabel}
           </p>
         </div>
         <div className="asset-inspector-actions">
@@ -233,10 +233,10 @@ export function AssetInspector({
 
       {canonicalVersion ? (
         <section
-          aria-label="Canonical Version"
+          aria-label="Approved Version"
           className="asset-canonical-panel"
         >
-          <h3>Canonical Version</h3>
+          <h3>Approved version</h3>
           <article className="asset-canonical-card">
             {isVideoVersion(canonicalVersion) ? (
               <video
@@ -259,10 +259,10 @@ export function AssetInspector({
                 {formatVersionNumber(canonicalVersion.versionNumber)}
               </p>
               <p className="asset-version-badge asset-version-badge--canonical">
-                Canonical
+                Approved
               </p>
               <p>
-                Imported: {formatImportedDate(canonicalVersion.createdAt)}
+                Saved: {formatImportedDate(canonicalVersion.createdAt)}
               </p>
               <p>
                 {isVideoVersion(canonicalVersion)
@@ -306,7 +306,7 @@ export function AssetInspector({
                     </span>
                     {isCanonical ? (
                       <span className="asset-version-badge asset-version-badge--canonical">
-                        Canonical
+                        Approved
                       </span>
                     ) : null}
                   </div>
@@ -347,7 +347,7 @@ export function AssetInspector({
                         · {formatImageFormat(version.mimeType)} ·{" "}
                         {formatByteSize(version.byteSize)}
                       </p>
-                      <p>Imported: {formatImportedDate(version.createdAt)}</p>
+                      <p>Saved: {formatImportedDate(version.createdAt)}</p>
                     </div>
                   </div>
                   <div className="asset-version-actions">
@@ -361,8 +361,8 @@ export function AssetInspector({
                         }}
                       >
                         {promotingVersionId === version.id
-                          ? "Setting canonical…"
-                          : "Set Canonical"}
+                          ? "Approving…"
+                          : "Set as approved"}
                       </button>
                     ) : null}
                     <button

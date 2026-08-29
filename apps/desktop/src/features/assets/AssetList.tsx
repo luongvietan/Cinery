@@ -150,8 +150,8 @@ export function AssetList({
       {loaded && !error && assets.length === 0 ? (
         <div className="empty-state" role="status">
           <p>No assets yet</p>
-          <p>Approved faces, outfits, and world backdrops appear here once you generate them in Production.</p>
-          <button type="button" onClick={() => openPanel("production")}>Go to Production</button>
+          <p>Approved faces, outfits, world backdrops, and keyframes appear here once you generate them for your characters, worlds, and scenes.</p>
+          <button type="button" onClick={() => openPanel("canon")}>Go to Story</button>
         </div>
       ) : (
         <ul className="asset-sidebar-list">

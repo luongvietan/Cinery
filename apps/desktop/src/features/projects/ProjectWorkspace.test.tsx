@@ -96,12 +96,12 @@ describe("ProjectWorkspace", () => {
     vi.mocked(listWorkflowRuns).mockReset().mockResolvedValue([]);
   });
 
-  it("opens the project workflow workspace from primary navigation", async () => {
+  it("opens the project generations workspace from primary navigation", async () => {
     render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Workflows" }));
+    await userEvent.click(screen.getByRole("button", { name: "Generations" }));
 
-    expect(await screen.findByRole("heading", { name: "Available operations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /Generation tools/i })).toBeInTheDocument();
     expect(listWorkflowRuns).toHaveBeenCalledWith(project.rootPath);
   });
 

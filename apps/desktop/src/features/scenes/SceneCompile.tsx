@@ -123,9 +123,9 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       style={{ padding: "var(--space-16)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-lg)" }}
     >
       <header>
-        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>COMPILE / EXPORT</h3>
+        <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>Render</h3>
         <p style={{ margin: "var(--space-4) 0 0", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-          Compile the scene into a deterministic provider-neutral production prompt.
+          Compile this scene into a ready-to-send video request, then generate the video.
         </p>
       </header>
 
@@ -133,7 +133,7 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
 
       {readiness && !readiness.ready ? (
         <div role="status" style={{ margin: "var(--space-12) 0" }}>
-          <p style={{ margin: "0 0 var(--space-4)", fontWeight: 600 }}>Not ready to compile:</p>
+          <p style={{ margin: "0 0 var(--space-4)", fontWeight: 600 }}>Before this scene can render:</p>
           <ul style={{ margin: 0, paddingLeft: "var(--space-20)" }}>
             {readiness.blockers.map((blocker) => (
               <li key={`${blocker.code}-${blocker.shotId ?? blocker.entityId ?? "scene"}`}>{blocker.message}</li>
@@ -207,8 +207,8 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
           />
           {videoRun.run.status === "completed" ? (
             <p style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-              The generated video was imported into this scene&apos;s video asset as a candidate. Promote it from
-              Assets when you want it as the official version.
+              Your video is saved as a candidate in this scene&apos;s video asset. Open <strong>Assets</strong> to
+              set it as the approved version.
             </p>
           ) : null}
         </div>

@@ -141,8 +141,8 @@ describe("AssetInspector", () => {
     expect(versions[0]).toHaveTextContent("v002");
     expect(versions[0]).toHaveTextContent("Candidate");
     expect(versions[1]).toHaveTextContent("v001");
-    expect(versions[1]).toHaveTextContent("Canonical");
-    expect(screen.getByText("Canonical: v001")).toBeInTheDocument();
+    expect(versions[1]).toHaveTextContent("Approved");
+    expect(screen.getByText("Approved: v001")).toBeInTheDocument();
     expect(versions[0]).toHaveTextContent("GENERATED");
     expect(versions[0]).toHaveTextContent("View generation details");
   });
@@ -187,7 +187,7 @@ describe("AssetInspector", () => {
     expect(version).toHaveTextContent("first.png");
     expect(version).toHaveTextContent("512 × 512");
     expect(version).toHaveTextContent("PNG");
-    expect(screen.getByText("Canonical: No canonical version")).toBeInTheDocument();
+    expect(screen.getByText("Approved: No approved version yet")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reveal" })).toBeInTheDocument();
   });
@@ -252,20 +252,20 @@ describe("AssetInspector", () => {
     );
 
     const promoteButton = await screen.findByRole("button", {
-      name: "Set Canonical",
+      name: "Set as approved",
     });
     expect(promoteAssetVersion).not.toHaveBeenCalled();
 
     await user.click(promoteButton);
 
     expect(confirm).toHaveBeenCalledWith(
-      "Make v002 the canonical version of MARA-FACE?\nThe current canonical version will be preserved and marked Superseded.",
+      "Set v002 as the approved version of MARA-FACE?\nThe previous approved version is kept in the history.",
     );
     expect(promoteAssetVersion).toHaveBeenCalledWith({
       projectRootPath: "/projects/red-door",
       assetVersionId: "v2",
     });
-    expect(await screen.findByText("Canonical: v002")).toBeInTheDocument();
+    expect(await screen.findByText("Approved: v002")).toBeInTheDocument();
     expect(getAssetWithVersions).toHaveBeenCalledTimes(2);
   });
 });

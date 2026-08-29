@@ -23,10 +23,15 @@ interface GenerationResultsProps {
   projectRootPath: string;
   context: GenerationResultContext;
   assets: AssetSummary[];
+  /** Overrides the primary save action label, e.g. "Use this keyframe". */
+  saveActionLabel?: string;
+  /** Pre-checks "set as approved" in the save dialog (keyframe pinning
+   * requires an approved version, so the flow that demands it defaults on). */
+  defaultCanonical?: boolean;
   onPromoted?(targetAssetId: string, versionId: string): void;
 }
 
-export function GenerationResults({ projectRootPath, context, assets, onPromoted }: GenerationResultsProps) {
+export function GenerationResults({ projectRootPath, context, assets, saveActionLabel, defaultCanonical, onPromoted }: GenerationResultsProps) {
   const resultSets = context.resultSets;
   const artifacts = useMemo(() => resultSets.flatMap((result) => result.artifacts), [resultSets]);
   const [selectedId, setSelectedId] = useState(artifacts[0]?.artifact.id ?? "");
@@ -93,9 +98,9 @@ export function GenerationResults({ projectRootPath, context, assets, onPromoted
     <section className="generation-results" aria-labelledby="generation-results-title">
       <header className="production-panel-header">
         <div>
-          <span className="production-kicker">Candidate set</span>
+          <span className="production-kicker">Results</span>
           <h2 id="generation-results-title">{operationLabel} Results</h2>
-          <p>{artifacts.length} candidates generated from the pinned source references.</p>
+          <p>{artifacts.length} {artifacts.length === 1 ? "result" : "results"} generated from your approved references. Pick the one you want to keep.</p>
         </div>
       </header>
       <div className="generation-result-grid">
@@ -111,7 +116,7 @@ export function GenerationResults({ projectRootPath, context, assets, onPromoted
       </div>
       {eligibleAssets.length || extraAsset ? (
         <label className="generation-target-row">
-          Target asset
+          Save into
           <select
             value={targetAsset?.id ?? ""}
             onChange={(event) => setSelectedTargetId(event.target.value || null)}
@@ -128,7 +133,7 @@ export function GenerationResults({ projectRootPath, context, assets, onPromoted
         <div className="generation-target-row">
           {creating ? (
             <div className="generation-create-asset">
-              <label htmlFor="generation-create-name">Asset name</label>
+              <label htmlFor="generation-create-name">Name</label>
               <input
                 id="generation-create-name"
                 value={createName}
@@ -148,14 +153,14 @@ export function GenerationResults({ projectRootPath, context, assets, onPromoted
             </div>
           ) : (
             <button type="button" onClick={() => setCreating(true)}>
-              Create asset
+              Create {operationLabel.toLowerCase()} asset
             </button>
           )}
         </div>
       )}
       <div className="generation-results-actions">
         <ActionButton disabled={!selected || !targetAsset} disabledReason={blockedReason} onClick={() => setPromoting(true)}>
-          Save as Asset Version
+          {saveActionLabel ?? "Save to Assets"}
         </ActionButton>
       </div>
       {promoting && selected && targetAsset ? (
@@ -163,6 +168,7 @@ export function GenerationResults({ projectRootPath, context, assets, onPromoted
           projectRootPath={projectRootPath}
           artifactId={selected.artifact.id}
           targetAsset={targetAsset}
+          defaultCanonical={defaultCanonical}
           onClose={() => setPromoting(false)}
           onPromoted={(version: AssetVersion) => {
             setPromoting(false);

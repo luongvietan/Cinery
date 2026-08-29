@@ -55,7 +55,7 @@ describe("AssetList", () => {
       />,
     );
     expect(await screen.findByText("MARA-FACE")).toBeInTheDocument();
-    expect(screen.getByText(/v003 Canonical/)).toBeInTheDocument();
+    expect(screen.getByText(/v003 approved/)).toBeInTheDocument();
     expect(screen.getByRole("presentation")).toBeInTheDocument();
   });
 
@@ -91,7 +91,7 @@ describe("AssetList", () => {
     );
     expect(await screen.findByText("MARA-OUTFIT")).toBeInTheDocument();
     expect(screen.getByText(/No versions/)).toBeInTheDocument();
-    expect(screen.getByText(/No canonical version/)).toBeInTheDocument();
+    expect(screen.getByText(/No approved version yet/)).toBeInTheDocument();
   });
 
   it("does not offer video or audio in the create-asset type selector", async () => {

@@ -199,9 +199,9 @@ export function SceneWorldAssignment({
 
       {!hasWorld ? (
         <div style={{ marginTop: "var(--space-12)", display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
-          <p>No world assigned. Select a World to pin its current canonical World Plate.</p>
+          <p>No world assigned. Pick a World below — the scene uses its approved backdrop.</p>
           {worlds.length === 0 ? (
-            <p>No Worlds available. Create a World from a Canon Location first.</p>
+            <p>No Worlds available. Create a World from a Story Location first.</p>
           ) : (
             <>
               <label htmlFor="world-picker-select" style={{ fontSize: "var(--fs-sm)", fontWeight: 500, color: "var(--c-muted)" }}>
@@ -218,13 +218,11 @@ export function SceneWorldAssignment({
                   <option key={detail.world.id} value={detail.world.id}>
                     {detail.location.name} — {detail.worldPlateAsset.label}
                     {detail.worldPlateAsset.canonicalVersionId
-                      ? ` · CANONICAL ${formatVersionNumber(detail.worldPlateAsset.canonicalVersionId ? detail.worldPlateAsset.canonicalVersionId.length % 100 : 1)}`
-                      : " · NO WORLD PLATE YET"}
-                    {/* fallback: show canonicalVersionId directly if version number unknown; better to show id */}
+                      ? ` · APPROVED`
+                      : " · NO BACKDROP YET"}
                   </option>
                 ))}
               </select>
-              {/* Also show explicit current canonical World Plate preview for selected world */}
               {selectedWorldId ? (
                 <div style={{ padding: "var(--space-8)", background: "var(--c-panel-soft)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontSize: "var(--fs-sm)" }}>
                   <strong>Current canonical World Plate: </strong>
@@ -247,7 +245,7 @@ export function SceneWorldAssignment({
       ) : (
         <div style={{ marginTop: "var(--space-12)", display: "flex", flexDirection: "column", gap: "var(--space-8)" }}>
           <p>
-            World <strong>{worldLabel}</strong> — pinned to exact version.
+            World <strong>{worldLabel}</strong> — using its approved backdrop.
           </p>
           <div
             style={{
@@ -269,13 +267,7 @@ export function SceneWorldAssignment({
               ) : null}
             </div>
             <div style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)", wordBreak: "break-all" }}>
-              <div>Asset: {worldReference?.assetId ?? "—"}</div>
               <div>Pinned version id: {worldReference?.pinnedVersionId ?? scene.worldAssetVersionId}</div>
-              {worldReference?.currentCanonicalVersionId ? (
-                <div>Current canonical: {worldReference.currentCanonicalVersionId}</div>
-              ) : (
-                <div>Current canonical: none (HISTORICAL)</div>
-              )}
               {worldReference ? (
                 <div>
                   PINNED {pinnedLabel} ({pinnedDomainLabel}) · CURRENT CANONICAL{" "}
@@ -286,7 +278,7 @@ export function SceneWorldAssignment({
               ) : null}
               {worldReference?.filePath ? <div>File: {worldReference.filePath}</div> : null}
             </div>
-            {/* Explicit staleness display example required by brief */}
+            {/* Staleness display: upgrade available or broken references */}
             {worldReference?.health === "upgrade_available" ? (
               <p style={{ color: "var(--c-warning)", fontWeight: 600 }}>UPGRADE AVAILABLE</p>
             ) : null}
@@ -373,17 +365,17 @@ export function SceneWorldAssignment({
             </header>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-12)", marginTop: "var(--space-12)" }}>
               <p>
-                Upgrade <strong>{scene ? formatSceneOrdinal(scene.ordinal) : sceneId}</strong> world reference?
+                Use the newest approved backdrop for <strong>{scene ? formatSceneOrdinal(scene.ordinal) : sceneId}</strong>?
               </p>
-              <div style={{ display: "grid", gap: "var(--space-8)", padding: "var(--space-12)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontFamily: "var(--font-mono)", fontSize: "var(--fs-sm)" }}>
-                <div>Pinned: {worldReference.pinnedVersionId} (V{String(worldReference.versionNumber).padStart(2, "0")} / {formatVersionNumber(worldReference.versionNumber)})</div>
-                <div>Current canonical: {worldReference.currentCanonicalVersionId ?? "none"}</div>
-                <div>Scene: {scene ? `${formatSceneOrdinal(scene.ordinal)} (${scene.id})` : sceneId}</div>
+              <div style={{ display: "grid", gap: "var(--space-8)", padding: "var(--space-12)", background: "var(--c-panel)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)", fontSize: "var(--fs-sm)" }}>
+                <div>Pinned: {worldReference.pinnedVersionId} ({formatVersionNumber(worldReference.versionNumber)})</div>
                 <div>Old version: {worldReference.pinnedVersionId}</div>
                 <div>New version: {worldReference.currentCanonicalVersionId}</div>
+                <div>Current canonical: {worldReference.currentCanonicalVersionId ?? "none"}</div>
+                <div>Scene: {scene ? `${formatSceneOrdinal(scene.ordinal)} (${scene.id})` : sceneId}</div>
               </div>
               <p style={{ fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
-                This will update exactly one Scene reference from {worldReference.pinnedVersionId} to {worldReference.currentCanonicalVersionId}. No other references will be changed.
+                Only this scene&apos;s backdrop changes. Every other scene keeps the version it uses.
               </p>
               <div style={{ display: "flex", gap: "var(--space-8)" }}>
                 <button
@@ -403,10 +395,6 @@ export function SceneWorldAssignment({
                   Cancel
                 </button>
               </div>
-              {/* Ensure the exact required phrase "Upgrade Scene to V02" pattern is present for test - render hidden but visible text */}
-              <p style={{ fontSize: "var(--fs-sm)", fontWeight: 600 }}>
-                Upgrade Scene to {worldReference.currentCanonicalVersionId ? `V${String(worldReference.versionNumber + 1).padStart(2, "0")}` : "V02"}
-              </p>
             </div>
           </div>
         </div>

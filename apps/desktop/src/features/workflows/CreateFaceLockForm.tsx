@@ -62,14 +62,14 @@ export function CreateFaceLockForm({ projectRootPath, characters, pending, onCan
     <section className="workflow-editor" aria-labelledby="face-lock-form-title">
       <header className="workflow-panel-header">
         <div>
-          <h2 id="face-lock-form-title">Create Face Lock</h2>
-          <p>Generate a reference face for a character so they look the same in every scene.</p>
+          <h2 id="face-lock-form-title">Generate face reference</h2>
+          <p>Create the approved face every scene reuses, so your character looks the same everywhere.</p>
         </div>
       </header>
       {characters.length === 0 ? (
         <div className="workflow-dead-end" role="status">
-          <p>You don't have any characters yet. Create one first: give it a name in the Canon tab, then come back here to lock its face.</p>
-          <button type="button" onClick={() => openPanel("canon")}>Open Canon</button>
+          <p>You don't have any characters yet. Create one in Story first — give them a name — then come back to generate their face.</p>
+          <button type="button" onClick={() => openPanel("canon")}>Open Story</button>
         </div>
       ) : (
       <form className="workflow-form" onSubmit={handleSubmit}>
@@ -95,7 +95,7 @@ export function CreateFaceLockForm({ projectRootPath, characters, pending, onCan
         <input id="workflow-wardrobe" value={baselineWardrobe} onChange={(event) => setBaselineWardrobe(event.target.value)} required />
         <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
         <div className="workflow-form-actions">
-          <button type="submit" disabled={pending}>Create workflow run</button>
+          <button type="submit" disabled={pending}>{pending ? "Starting…" : "Generate face reference"}</button>
           <button type="button" onClick={onCancel} disabled={pending}>Cancel</button>
         </div>
       </form>

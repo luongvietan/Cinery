@@ -224,6 +224,7 @@ describe("SceneWorkspace", () => {
     const sceneButton = await screen.findByRole("button", { name: /Night Transmission/ });
     await user.click(sceneButton);
 
+    // Setup tab shows the staging sections.
     expect(await screen.findByText("SCENE-001 Night Transmission")).toBeInTheDocument();
     expect(screen.getByLabelText("Title")).toBeInTheDocument();
     expect(screen.getByText("WORLD")).toBeInTheDocument();
@@ -231,9 +232,16 @@ describe("SceneWorkspace", () => {
     expect(screen.getByText("PROPS")).toBeInTheDocument();
     expect(screen.getByText("TBD DECISIONS")).toBeInTheDocument();
     expect(screen.getByText("READINESS")).toBeInTheDocument();
-    expect(screen.getByText("SHOTS")).toBeInTheDocument();
     // readiness indicator in list should be READY
     expect(screen.getByText("READY")).toBeInTheDocument();
+
+    // Shots and Render live behind their tabs.
+    expect(screen.getByRole("tab", { name: "Shots" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Shots" }));
+    expect(await screen.findByText("Shots", { selector: "h3" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Render" }));
+    expect(screen.getByRole("group", { name: "Scene header" })).toBeInTheDocument();
   });
 
   it("handles reduced-motion and responsive layout", async () => {

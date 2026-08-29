@@ -68,7 +68,7 @@ export function describeAssetListStatus(summary: {
     return "No versions";
   }
   if (summary.canonicalVersionNumber !== null) {
-    return `${formatVersionNumber(summary.canonicalVersionNumber)} Canonical`;
+    return `${formatVersionNumber(summary.canonicalVersionNumber)} approved`;
   }
-  return "No canonical version";
+  return "No approved version yet";
 }

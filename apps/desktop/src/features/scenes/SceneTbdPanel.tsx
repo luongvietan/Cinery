@@ -221,7 +221,7 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
         </ul>
       )}
       <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-sm)", color: "var(--c-muted)" }}>
-        Scene {scene ? `${scene.id} ordinal ${scene.ordinal}` : sceneId} — TBD bindings are immutable snapshots copied at decision time.
+        Each answer is recorded with the scene at decision time, so later changes never rewrite history.
       </p>
     </section>
   );

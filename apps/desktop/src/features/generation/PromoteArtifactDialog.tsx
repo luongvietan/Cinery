@@ -1,0 +1,34 @@
+import { useEffect, useRef, useState } from "react";
+import type { AssetSummary, AssetVersion } from "@cinematic/domain";
+import { describeError } from "../../lib/errors";
+import { promoteGeneratedArtifact } from "./api";
+
+export function PromoteArtifactDialog({ projectRootPath, artifactId, targetAsset, defaultCanonical = false, onClose, onPromoted }: { projectRootPath: string; artifactId: string; targetAsset: AssetSummary; defaultCanonical?: boolean; onClose: () => void; onPromoted: (version: AssetVersion) => void }) {
+  const [setCanonical, setSetCanonical] = useState(defaultCanonical);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const firstFocusRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    firstFocusRef.current?.focus();
+  }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !pending) {
+        event.preventDefault();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pending, onClose]);
+
+  async function save() {
+    setPending(true); setError(null);
+    try { onPromoted(await promoteGeneratedArtifact(projectRootPath, artifactId, targetAsset.id, setCanonical)); }
+    catch (reason) { setError(describeError(reason)); }
+    finally { setPending(false); }
+  }
+  return <div className="production-dialog-backdrop" role="presentation"><section className="production-dialog" role="dialog" aria-modal="true" aria-labelledby="promotion-title" aria-describedby={error ? "promotion-error" : "promotion-description"}><header><div><span className="production-kicker">Save result</span><h2 id="promotion-title">Save to {targetAsset.label}</h2></div><button className="production-secondary" type="button" onClick={onClose} disabled={pending}>Close</button></header><p id="promotion-description">Saving adds this result as a new version of <strong>{targetAsset.label}</strong> (current approved version: v{String(targetAsset.canonicalVersionNumber ?? 0).padStart(3, "0")}).</p>{error ? <p role="alert" id="promotion-error">{error}</p> : null}<label className="production-checkbox"><input type="checkbox" checked={setCanonical} onChange={(event) => setSetCanonical(event.target.checked)} /> Set as the approved version (used by scenes)</label><div className="production-form-actions"><button ref={firstFocusRef} type="button" onClick={() => void save()} disabled={pending}>{pending ? "Saving…" : "Save version"}</button><button className="production-secondary" type="button" onClick={onClose} disabled={pending}>Cancel</button></div></section></div>;
+}

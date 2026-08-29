@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ProjectSummary } from "@cinematic/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +13,7 @@ import {
   listWorkflowRuns,
 } from "../features/workflows/api";
 import { listScenes, getCompileReadiness, listShots } from "../features/scenes/api";
-import { getProjectOverview } from "../features/overview/api";
+import { countConnectedAiServices, getProjectOverview } from "../features/overview/api";
 import { getProjectHealth } from "../features/overview/healthApi";
 import { getDiagnosticsFolder } from "../features/diagnostics/api";
 
@@ -39,7 +39,11 @@ vi.mock("../features/scenes/api", () => ({
   getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] }),
   listCinemaCompilations: vi.fn().mockResolvedValue([]),
 }));
-vi.mock("../features/overview/api");
+vi.mock("../features/overview/api", () => ({
+  getProjectOverview: vi.fn(),
+  routeProductionIntent: vi.fn().mockResolvedValue(null),
+  countConnectedAiServices: vi.fn().mockResolvedValue(1),
+}));
 vi.mock("../features/overview/healthApi");
 vi.mock("../features/diagnostics/api");
 vi.mock("../features/canon/api", () => ({
@@ -58,7 +62,7 @@ vi.mock("../features/qa/api", () => ({
 vi.mock("../features/jobs/JobsPanel", () => ({
   JobsPanel: () => null,
 }));
-vi.mock("../features/production/api", () => ({
+vi.mock("../features/generation/api", () => ({
   routeProductionIntent: vi.fn().mockResolvedValue(null),
   listGenerationResults: vi.fn().mockResolvedValue([]),
   getGeneratedArtifact: vi.fn().mockResolvedValue(null),
@@ -193,17 +197,19 @@ describe("MVP golden path (deterministic UI portions)", () => {
     const user = userEvent.setup();
     render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
 
+    const nav = await screen.findByRole("navigation", { name: "Workspace areas" });
     for (const route of [
       "Overview",
+      "Story",
+      "Worlds",
+      "Scenes",
       "Assets",
-      "Canon",
-      "Workflows",
-      "Production",
+      "Generations",
       "AI Services",
-      "Diagnostics",
+      "Support",
     ]) {
-      await user.click(screen.getByRole("button", { name: route }));
-      const navButton = screen.getByRole("button", { name: route });
+      const navButton = within(nav).getByRole("button", { name: route });
+      await user.click(navButton);
       expect(navButton).toHaveAttribute("aria-pressed", "true");
     }
   });

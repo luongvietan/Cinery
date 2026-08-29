@@ -30,8 +30,8 @@ export function CreateOutfitForm({ projectRootPath, characters, pending, onCance
     <section className="workflow-editor" aria-labelledby="outfit-form-title">
       <header className="workflow-panel-header">
         <div>
-          <h2 id="outfit-form-title">Create Outfit</h2>
-          <p>Generates a direct-on-character outfit reference from the canonical face. Requires a canonical face lock.</p>
+          <h2 id="outfit-form-title">Generate outfit</h2>
+          <p>What this character wears — generated on top of their approved face, so scenes reuse the same outfit.</p>
         </div>
       </header>
       <form className="workflow-form" onSubmit={handleSubmit}>
@@ -43,7 +43,7 @@ export function CreateOutfitForm({ projectRootPath, characters, pending, onCance
         <textarea id="outfit-wardrobe" value={wardrobeDescription} onChange={(event) => setWardrobeDescription(event.target.value)} required rows={4} placeholder="charcoal long-sleeve top, dark utility trousers, black boots, black watch on left wrist" />
         <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
         <div className="workflow-form-actions">
-          <button type="submit" disabled={pending}>Create workflow run</button>
+          <button type="submit" disabled={pending}>{pending ? "Starting…" : "Generate outfit"}</button>
           <button type="button" onClick={onCancel} disabled={pending}>Cancel</button>
         </div>
       </form>

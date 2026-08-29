@@ -11,8 +11,11 @@ import {
   updateShot,
   type Shot,
 } from "./api";
-import { advanceWorkflowRun, createWorkflowRun } from "../workflows/api";
-import { listGenerationResults, promoteGeneratedArtifact } from "../production/api";
+import { advanceWorkflowRun, createWorkflowRun, listSkillOperations } from "../workflows/api";
+import { listAssets } from "../assets/api";
+import { deriveGenerationResultContext, type AssetSummary } from "@cinematic/domain";
+import { GenerationResults } from "../generation/GenerationResults";
+import { listGenerationResults } from "../generation/api";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
 
 interface SceneShotsProps {
@@ -24,12 +27,13 @@ interface SceneShotsProps {
 interface KeyframeRunState {
   shotId: string;
   detail: WorkflowRunDetail;
+  context: ReturnType<typeof deriveGenerationResultContext>;
 }
 
 /**
  * Shot list for the authoritative Scene: create, edit, delete, reorder, and
- * the Shot → Keyframe workflow (generate via the existing workflow runtime,
- * review the candidate, promote it canonically, pin the exact version).
+ * the Shot → Keyframe flow — generate, review every candidate in a grid,
+ * then explicitly "Use this keyframe" to pin the chosen version.
  */
 export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsProps) {
   const [shots, setShots] = useState<Shot[]>([]);
@@ -52,6 +56,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
 
   const [keyframeRun, setKeyframeRun] = useState<KeyframeRunState | null>(null);
   const [pinningShotId, setPinningShotId] = useState<string | null>(null);
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,7 +204,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
         sceneId,
       });
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
-      setKeyframeRun({ shotId, detail: waiting });
+      await applyRun(shotId, waiting);
     } catch (caught: unknown) {
       setActionError(describeError(caught));
     } finally {
@@ -207,34 +212,49 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
     }
   }
 
-  async function handleRunChange(next: WorkflowRunDetail) {
-    if (keyframeRun) {
-      setKeyframeRun({ ...keyframeRun, detail: next });
+  /** Resolve the run review state: fetch candidates once a run completes so
+   * the user always picks from the actual images before pinning. */
+  async function applyRun(shotId: string, detail: WorkflowRunDetail) {
+    let context: KeyframeRunState["context"] = null;
+    let assetSummaries = assets;
+    if (detail.run.status === "completed") {
+      try {
+        const [operations, assetList, resultSets] = await Promise.all([
+          listSkillOperations(),
+          listAssets(projectRootPath),
+          listGenerationResults(projectRootPath, detail.run.id),
+        ]);
+        const operation = operations.find((candidate) => candidate.id === detail.run.operationId) ?? null;
+        if (operation) {
+          const derived = deriveGenerationResultContext(detail, operation);
+          if (derived && resultSets.some((resultSet) => resultSet.artifacts.length > 0)) {
+            context = { ...derived, resultSets };
+          }
+        }
+        assetSummaries = assetList;
+      } catch {
+        // The run view still shows the completed run without candidates.
+      }
     }
+    setKeyframeRun({ shotId, detail, context });
+    setAssets(assetSummaries);
   }
 
-  async function handlePinKeyframe(shotId: string) {
-    if (!keyframeRun || keyframeRun.shotId !== shotId) return;
+  function handleRunChange(next: WorkflowRunDetail) {
+    if (!keyframeRun) return;
+    if (next.run.status === "completed") {
+      void applyRun(keyframeRun.shotId, next);
+      return;
+    }
+    setKeyframeRun({ ...keyframeRun, detail: next });
+  }
+
+  /** Pin the already-saved version (the results dialog saved + approved it). */
+  async function handlePinSavedVersion(shotId: string, versionId: string) {
     setPinningShotId(shotId);
     setActionError(null);
     try {
-      const runId = keyframeRun.detail.run.id;
-      const results = await listGenerationResults(projectRootPath, runId);
-      const firstArtifact = results[0]?.artifacts[0]?.artifact;
-      if (!firstArtifact) {
-        setActionError("No generated candidate found for this run");
-        return;
-      }
-      // Promote the candidate to the scene's stable keyframe asset as the
-      // canonical version, then pin that exact immutable version on the shot.
-      const keyframeAsset = await ensureSceneKeyframeAsset(projectRootPath, sceneId);
-      const promoted = await promoteGeneratedArtifact(
-        projectRootPath,
-        firstArtifact.id,
-        keyframeAsset.id,
-        true,
-      );
-      await setShotKeyframe(projectRootPath, shotId, promoted.id);
+      await setShotKeyframe(projectRootPath, shotId, versionId);
       setKeyframeRun(null);
       await refresh();
       notifyChanged();
@@ -252,9 +272,9 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
     >
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--space-12)" }}>
         <div>
-          <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>SHOTS</h3>
+          <h3 style={{ margin: 0, textTransform: "uppercase", fontSize: "var(--fs-md)", letterSpacing: "0.04em" }}>Shots</h3>
           <p style={{ margin: "var(--space-4) 0 0", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-            Ordered shot list. Each shot can pin one exact keyframe version.
+            The ordered moments of this scene. Generate a keyframe image for each shot before rendering video.
           </p>
         </div>
         <button type="button" onClick={() => setAdding((value) => !value)} aria-expanded={adding}>
@@ -268,7 +288,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
       {adding ? (
         <div style={{ display: "grid", gap: "var(--space-8)", margin: "var(--space-12) 0", padding: "var(--space-12)", border: "1px solid var(--c-hairline)", borderRadius: "var(--radius-md)" }}>
           <label htmlFor="new-shot-intent">
-            Intent (required)
+            What happens in this shot (required)
             <input id="new-shot-intent" value={intent} onChange={(event) => setIntent(event.target.value)} placeholder="e.g. Establish the ops room" />
           </label>
           <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
@@ -299,15 +319,18 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
       {loading ? (
         <p role="status">Loading shots…</p>
       ) : shots.length === 0 ? (
-        <p>No shots yet. Add the first shot to make this scene compilable.</p>
+        <div className="empty-state" role="status">
+          <p>No shots yet</p>
+          <p>Break this scene into moments — one row per shot. Add your first shot to make this scene renderable.</p>
+        </div>
       ) : (
-        <ol style={{ margin: "var(--space-12) 0 0", paddingLeft: "var(--space-20)", display: "grid", gap: "var(--space-8)" }}>
+        <ol className="shot-list" style={{ margin: "var(--space-12) 0 0", paddingLeft: "var(--space-20)", display: "grid", gap: "var(--space-8)" }}>
           {shots.map((shot, index) => (
             <li key={shot.id} style={{ borderBottom: "1px solid var(--c-hairline)", paddingBottom: "var(--space-8)" }}>
               {editingId === shot.id ? (
                 <div style={{ display: "grid", gap: "var(--space-8)" }}>
                   <label htmlFor={`shot-intent-${shot.id}`}>
-                    Intent
+                    What happens in this shot
                     <input id={`shot-intent-${shot.id}`} value={editIntent} onChange={(event) => setEditIntent(event.target.value)} />
                   </label>
                   <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
@@ -349,28 +372,23 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
                     )}
                   </div>
                   {shot.action ? <span style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>{shot.action}</span> : null}
-                  <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
+                  <div className="shot-actions" style={{ display: "flex", gap: "var(--space-4)", flexWrap: "wrap" }}>
+                    {!shot.keyframeAssetVersionId ? (
+                      <button type="button" className="shot-actions__primary" onClick={() => void handleGenerateKeyframe(shot.id)} disabled={pending}>
+                        Generate keyframe
+                      </button>
+                    ) : null}
                     <button type="button" className="asset-secondary-button" onClick={() => beginEdit(shot)} disabled={pending}>
                       Edit
                     </button>
-                    <button type="button" className="asset-secondary-button" onClick={() => void handleMove(shot.id, -1)} disabled={pending || index === 0}>
-                      Move up
+                    <button type="button" className="asset-secondary-button shot-icon-action" onClick={() => void handleMove(shot.id, -1)} disabled={pending || index === 0} aria-label={`Move shot ${index + 1} up`} title="Move up">
+                      ↑
                     </button>
-                    <button type="button" className="asset-secondary-button" onClick={() => void handleMove(shot.id, 1)} disabled={pending || index === shots.length - 1}>
-                      Move down
+                    <button type="button" className="asset-secondary-button shot-icon-action" onClick={() => void handleMove(shot.id, 1)} disabled={pending || index === shots.length - 1} aria-label={`Move shot ${index + 1} down`} title="Move down">
+                      ↓
                     </button>
-                    {!shot.keyframeAssetVersionId ? (
-                      <button type="button" className="asset-secondary-button" onClick={() => void handleGenerateKeyframe(shot.id)} disabled={pending}>
-                        Generate Keyframe
-                      </button>
-                    ) : null}
-                    {keyframeRun?.shotId === shot.id && keyframeRun.detail.run.status === "completed" ? (
-                      <button type="button" onClick={() => void handlePinKeyframe(shot.id)} disabled={pending || pinningShotId === shot.id}>
-                        {pinningShotId === shot.id ? "Pinning…" : "Review done — Pin keyframe"}
-                      </button>
-                    ) : null}
-                    <button type="button" className="asset-secondary-button" onClick={() => void handleDelete(shot.id)} disabled={pending}>
-                      Delete
+                    <button type="button" className="asset-secondary-button shot-icon-action shot-icon-action--danger" onClick={() => void handleDelete(shot.id)} disabled={pending} aria-label={`Delete shot ${index + 1}`} title="Delete shot">
+                      ✕
                     </button>
                   </div>
                 </div>
@@ -382,17 +400,30 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
 
       {keyframeRun ? (
         <div style={{ marginTop: "var(--space-16)" }}>
-          <WorkflowRunView
-            projectRootPath={projectRootPath}
-            detail={keyframeRun.detail}
-            onChange={(next) => void handleRunChange(next)}
-          />
-          {keyframeRun.detail.run.status === "completed" ? (
+          {keyframeRun.detail.run.status === "completed" && keyframeRun.context ? (
+            <GenerationResults
+              projectRootPath={projectRootPath}
+              context={keyframeRun.context}
+              assets={assets}
+              saveActionLabel="Use this keyframe"
+              defaultCanonical
+              onPromoted={(_targetAssetId, versionId) => {
+                void handlePinSavedVersion(keyframeRun.shotId, versionId);
+              }}
+            />
+          ) : (
+            <WorkflowRunView
+              projectRootPath={projectRootPath}
+              detail={keyframeRun.detail}
+              onChange={handleRunChange}
+            />
+          )}
+          {keyframeRun.detail.run.status === "completed" && keyframeRun.context ? (
             <p style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-              The generated candidate was imported into this scene&apos;s keyframe asset. Pinning promotes it to the
-              canonical version and binds the exact immutable version to the shot.
+              Pick the image you want as this shot&apos;s keyframe, then choose <strong>Use this keyframe</strong>. It becomes the approved version this scene renders with.
             </p>
           ) : null}
+          {pinningShotId ? <p role="status">Pinning keyframe…</p> : null}
         </div>
       ) : null}
     </section>
