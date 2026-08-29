@@ -284,3 +284,13 @@ mod tests {
         assert!(compute_time_budget(8.0, Some(0)).is_err());
     }
 }
+
+/// Caller-supplied field update for one shot (service/command boundary).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShotUpdate {
+    pub shot_id: String,
+    pub duration_seconds: Option<f64>,
+    pub intent: Option<String>,
+    pub action: Option<String>,
+    pub camera: Option<String>,
+}

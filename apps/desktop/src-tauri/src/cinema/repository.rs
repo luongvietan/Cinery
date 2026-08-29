@@ -1,5 +1,5 @@
 use crate::cinema::model::{
-    CinemaCompilation, SceneCharacterRecord, ScenePropRecord, SceneRecord, ShotRecord,
+    CinemaCompilation, SceneCharacterRecord, ScenePropRecord, SceneRecord, ShotRecord, ShotUpdate,
 };
 use crate::error::AppError;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -275,3 +275,200 @@ pub fn list_scene_props(
         .collect()
 }
 
+
+/// Renames a scene within `project_id`, returning the updated record.
+pub fn rename_scene(conn: &Connection, project_id: &str, scene_id: &str, title: &str) -> Result<SceneRecord, AppError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE scenes SET title = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4",
+            params![title, now, scene_id, project_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    get_scene(conn, project_id, scene_id)
+}
+
+/// Pins or clears the scene's world plate version reference.
+pub fn set_scene_world(conn: &Connection, project_id: &str, scene_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE scenes SET world_asset_version_id = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4",
+            params![version_id, now, scene_id, project_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    Ok(())
+}
+
+/// Updates the exact look/sheet pins of one cast record.
+pub fn update_scene_character(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    character_id: &str,
+    look_id: Option<&str>,
+    sheet_id: Option<&str>,
+) -> Result<(), AppError> {
+    get_scene(conn, project_id, scene_id)?;
+    let updated = conn
+        .execute(
+            "UPDATE scene_characters SET look_asset_version_id = ?1, sheet_asset_version_id = ?2 \
+             WHERE scene_id = ?3 AND character_entity_id = ?4",
+            params![look_id, sheet_id, scene_id, character_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::SceneNotFound);
+    }
+    Ok(())
+}
+
+/// Removes one cast record. Only the relationship row is deleted.
+pub fn remove_scene_character(conn: &Connection, project_id: &str, scene_id: &str, character_id: &str) -> Result<(), AppError> {
+    get_scene(conn, project_id, scene_id)?;
+    conn.execute(
+        "DELETE FROM scene_characters WHERE scene_id = ?1 AND character_entity_id = ?2",
+        params![scene_id, character_id],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// Removes one prop relationship identified by its exact version id.
+pub fn remove_scene_prop(conn: &Connection, project_id: &str, scene_id: &str, prop_version_id: &str) -> Result<(), AppError> {
+    get_scene(conn, project_id, scene_id)?;
+    conn.execute(
+        "DELETE FROM scene_props WHERE scene_id = ?1 AND prop_asset_version_id = ?2",
+        params![scene_id, prop_version_id],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// Applies a field update to one shot within `project_id`.
+pub fn update_shot(conn: &Connection, project_id: &str, update: &ShotUpdate) -> Result<ShotRecord, AppError> {
+    let existing = conn
+        .query_row(
+            "SELECT s.id FROM shots s JOIN scenes sc ON sc.id = s.scene_id \
+             WHERE s.id = ?1 AND sc.project_id = ?2",
+            params![update.shot_id, project_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?
+        .ok_or(AppError::ShotNotFound)?;
+    let _ = existing;
+    let now = chrono::Utc::now().to_rfc3339();
+    let updated = conn
+        .execute(
+            "UPDATE shots SET \
+               duration_seconds = COALESCE(?1, duration_seconds), \
+               intent = COALESCE(?2, intent), \
+               action = ?3, \
+               camera = ?4, \
+               updated_at = ?5 \
+             WHERE id = ?6",
+            params![
+                update.duration_seconds,
+                update.intent,
+                update.action,
+                update.camera,
+                now,
+                update.shot_id,
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::ShotNotFound);
+    }
+    let scene_id: String = conn
+        .query_row("SELECT scene_id FROM shots WHERE id = ?1", params![update.shot_id], |row| row.get(0))
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let shots = list_shots(conn, &scene_id)?;
+    shots.into_iter().find(|shot| shot.id == update.shot_id).ok_or(AppError::ShotNotFound)
+}
+
+/// Deletes one shot. Only the shot row is removed — never canon, assets, or
+/// versions.
+pub fn delete_shot(conn: &Connection, project_id: &str, scene_id: &str, shot_id: &str) -> Result<(), AppError> {
+    get_scene(conn, project_id, scene_id)?;
+    conn.execute(
+        "DELETE FROM shots WHERE id = ?1 AND scene_id = ?2",
+        params![shot_id, scene_id],
+    )
+    .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(())
+}
+
+/// Reorders the scene's shots into the exact given order, transactionally
+/// and contiguously. Rejects duplicates, foreign ids, and incomplete sets
+/// without changing any state.
+pub fn reorder_shots(
+    conn: &mut Connection,
+    project_id: &str,
+    scene_id: &str,
+    ordered_ids: &[String],
+) -> Result<Vec<ShotRecord>, AppError> {
+    use std::collections::HashSet;
+    get_scene(conn, project_id, scene_id)?;
+    let existing = list_shots(conn, scene_id)?;
+    let existing_ids: HashSet<&str> = existing.iter().map(|shot| shot.id.as_str()).collect();
+    if ordered_ids.len() != existing.len() {
+        return Err(AppError::WorkflowInputInvalid(
+            "reorder must list every shot of the scene exactly once".into(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    for id in ordered_ids {
+        if !existing_ids.contains(id.as_str()) || !seen.insert(id.as_str()) {
+            return Err(AppError::WorkflowInputInvalid(
+                "reorder must not duplicate or reference foreign shots".into(),
+            ));
+        }
+    }
+
+    let tx = conn
+        .transaction()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    // Two-phase update so a UNIQUE(scene_id, ordering) constraint cannot
+    // collide mid-reorder: shift everything far up first, then write the
+    // final contiguous positions.
+    let offset = existing.len() as i64 + 10_000;
+    for (position, shot_id) in ordered_ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE shots SET ordering = ?1 WHERE id = ?2 AND scene_id = ?3",
+            params![offset + position as i64, shot_id, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+    for (position, shot_id) in ordered_ids.iter().enumerate() {
+        tx.execute(
+            "UPDATE shots SET ordering = ?1, updated_at = ?2 WHERE id = ?3 AND scene_id = ?4",
+            params![position as i64, chrono::Utc::now().to_rfc3339(), shot_id, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    }
+    tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+    list_shots(conn, scene_id)
+}
+
+/// Pins or clears one shot's canonical keyframe version reference.
+pub fn set_shot_keyframe(conn: &Connection, project_id: &str, shot_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+    let updated = conn
+        .execute(
+            "UPDATE shots SET keyframe_asset_version_id = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND scene_id IN (SELECT id FROM scenes WHERE project_id = ?4)",
+            params![version_id, chrono::Utc::now().to_rfc3339(), shot_id, project_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::ShotNotFound);
+    }
+    Ok(())
+}
