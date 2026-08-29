@@ -6,7 +6,7 @@ use crate::cinema::export;
 use crate::cinema::model;
 use crate::cinema::model::{
     validate_shot_duration, BehavioralLocks, CinemaCompilation, CinemaCompileInput,
-    SceneCharacterRecord, SceneRecord, ShotRecord, WorldContinuity,
+    SceneCharacterRecord, SceneRecord, ShotRecord, ShotUpdate, WorldContinuity,
 };
 use crate::cinema::repository;
 use crate::cinema::tbd_guard;
@@ -551,6 +551,204 @@ impl CinemaService {
         repository::get_scene(&conn, &project.id, scene_id)?;
         repository::list_compilations(&conn, scene_id)
     }
+
+    /// Renames a scene with title validation.
+    pub fn rename_scene(project_root: &Path, scene_id: &str, title: &str) -> Result<SceneRecord, AppError> {
+        let title = validate_title(title)?;
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::rename_scene(&conn, &project.id, scene_id, &title)
+    }
+
+    /// Pins or clears the scene's canonical World Plate version.
+    pub fn set_scene_world(project_root: &Path, scene_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::get_scene(&conn, &project.id, scene_id)?;
+        if let Some(version) = version_id {
+            ensure_canonical_version(&conn, &project.id, version, &["world_plate"])?;
+        }
+        repository::set_scene_world(&conn, &project.id, scene_id, version_id)
+    }
+
+    /// Updates one cast member's exact look/sheet pins. Both versions must
+    /// be canonical versions of the expected asset types.
+    pub fn update_scene_character(
+        project_root: &Path,
+        scene_id: &str,
+        character_id: &str,
+        look_asset_version_id: Option<&str>,
+        sheet_asset_version_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::get_scene(&conn, &project.id, scene_id)?;
+        let cast = repository::list_scene_characters(&conn, scene_id)?;
+        if !cast.iter().any(|member| member.character_entity_id == character_id) {
+            return Err(AppError::CanonEntityNotFound);
+        }
+        let look = look_asset_version_id
+            .or_else(|| cast.iter().find(|m| m.character_entity_id == character_id).map(|m| m.look_asset_version_id.as_str()));
+        let look = look.ok_or_else(|| AppError::WorkflowPrerequisiteFailed(
+            "cast member has no look version to keep".into(),
+        ))?;
+        ensure_canonical_version(&conn, &project.id, look, &["outfit", "character_sheet"])?;
+        if let Some(sheet) = sheet_asset_version_id {
+            ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"])?;
+        }
+        repository::update_scene_character(&conn, &project.id, scene_id, character_id, Some(look), sheet_asset_version_id)
+    }
+
+    /// Removes one cast relationship. Canon entities and assets are never
+    /// deleted.
+    pub fn remove_scene_character(project_root: &Path, scene_id: &str, character_id: &str) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::remove_scene_character(&conn, &project.id, scene_id, character_id)
+    }
+
+    /// Removes one prop relationship by exact version id.
+    pub fn remove_scene_prop(project_root: &Path, scene_id: &str, prop_asset_version_id: &str) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::remove_scene_prop(&conn, &project.id, scene_id, prop_asset_version_id)
+    }
+
+    /// Applies a field update to one shot with validation.
+    pub fn update_shot(project_root: &Path, update: &ShotUpdate) -> Result<ShotRecord, AppError> {
+        if let Some(duration) = update.duration_seconds {
+            model::validate_shot_duration(duration)?;
+        }
+        if let Some(intent) = &update.intent {
+            validate_intent(intent)?;
+        }
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::update_shot(&conn, &project.id, update)
+    }
+
+    /// Deletes one shot. Deleting the last shot is allowed and makes the
+    /// scene not ready.
+    pub fn delete_shot(project_root: &Path, scene_id: &str, shot_id: &str) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::delete_shot(&conn, &project.id, scene_id, shot_id)
+    }
+
+    /// Reorders the scene's shots transactionally into a contiguous,
+    /// deterministic order.
+    pub fn reorder_shots(project_root: &Path, scene_id: &str, ordered_ids: &[String]) -> Result<Vec<ShotRecord>, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        repository::reorder_shots(&mut conn, &project.id, scene_id, ordered_ids)
+    }
+
+    /// Pins or clears one shot's canonical keyframe version.
+    pub fn set_shot_keyframe(project_root: &Path, shot_id: &str, version_id: Option<&str>) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        if let Some(version) = version_id {
+            ensure_canonical_version(&conn, &project.id, version, &["shot_keyframe"])?;
+        }
+        repository::set_shot_keyframe(&conn, &project.id, shot_id, version_id)
+    }
+
+    /// Computes structured readiness for one scene without exceptions as
+    /// the normal control flow.
+    pub fn scene_readiness(project_root: &Path, scene_id: &str) -> Result<CinemaReadiness, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
+        let mut blockers: Vec<CinemaReadinessBlocker> = Vec::new();
+
+        if scene.world_asset_version_id.is_none() {
+            blockers.push(CinemaReadinessBlocker {
+                code: "missing_world".into(),
+                scene_id: scene.id.clone(),
+                entity_id: None,
+                shot_id: None,
+                message: "No World Plate is pinned to this scene.".into(),
+                action_target: "world".into(),
+            });
+        }
+
+        let cast = repository::list_scene_characters(&conn, &scene.id)?;
+        if cast.is_empty() {
+            blockers.push(CinemaReadinessBlocker {
+                code: "missing_cast_look".into(),
+                scene_id: scene.id.clone(),
+                entity_id: None,
+                shot_id: None,
+                message: "No character is cast in this scene.".into(),
+                action_target: "cast".into(),
+            });
+        }
+        for member in &cast {
+            let look_canonical = ensure_canonical_version(
+                &conn,
+                &project.id,
+                &member.look_asset_version_id,
+                &["outfit", "character_sheet"],
+            )
+            .is_ok();
+            if !look_canonical {
+                blockers.push(CinemaReadinessBlocker {
+                    code: "missing_cast_look".into(),
+                    scene_id: scene.id.clone(),
+                    entity_id: Some(member.character_entity_id.clone()),
+                    shot_id: None,
+                    message: "The pinned cast look is not the current canonical version.".into(),
+                    action_target: "cast".into(),
+                });
+            }
+            if let Some(sheet) = &member.sheet_asset_version_id {
+                if ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"]).is_err() {
+                    blockers.push(CinemaReadinessBlocker {
+                        code: "missing_cast_sheet".into(),
+                        scene_id: scene.id.clone(),
+                        entity_id: Some(member.character_entity_id.clone()),
+                        shot_id: None,
+                        message: "The pinned character sheet is not canonical.".into(),
+                        action_target: "cast".into(),
+                    });
+                }
+            }
+        }
+
+        let shots = repository::list_shots(&conn, &scene.id)?;
+        if shots.is_empty() {
+            blockers.push(CinemaReadinessBlocker {
+                code: "missing_shot_keyframe".into(),
+                scene_id: scene.id.clone(),
+                entity_id: None,
+                shot_id: None,
+                message: "This scene has no shots.".into(),
+                action_target: "shot".into(),
+            });
+        }
+        for shot in &shots {
+            if let Some(keyframe) = &shot.keyframe_asset_version_id {
+                if ensure_canonical_version(&conn, &project.id, keyframe, &["shot_keyframe"]).is_err() {
+                    blockers.push(CinemaReadinessBlocker {
+                        code: "missing_shot_keyframe".into(),
+                        scene_id: scene.id.clone(),
+                        entity_id: None,
+                        shot_id: Some(shot.id.clone()),
+                        message: "The pinned shot keyframe is not the current canonical version.".into(),
+                        action_target: "shot".into(),
+                    });
+                }
+            }
+        }
+
+        Ok(CinemaReadiness {
+            scene_id: scene.id,
+            ready: blockers.is_empty(),
+            blockers,
+        })
+    }
 }
 
 /// Verifies `version_id` is the current canonical version of an asset of one
@@ -620,5 +818,28 @@ fn validate_intent(intent: &str) -> Result<String, AppError> {
         return Err(AppError::InvalidShotIntent);
     }
     Ok(trimmed.to_string())
+}
+
+/// A structured readiness blocker for one scene. The UI renders these
+/// verbatim and offers the matching section control.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CinemaReadinessBlocker {
+    pub code: String,
+    pub scene_id: String,
+    pub entity_id: Option<String>,
+    pub shot_id: Option<String>,
+    pub message: String,
+    pub action_target: String,
+}
+
+/// Structured readiness for one scene: `ready` is true only when no
+/// blocker remains.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CinemaReadiness {
+    pub scene_id: String,
+    pub ready: bool,
+    pub blockers: Vec<CinemaReadinessBlocker>,
 }
 
