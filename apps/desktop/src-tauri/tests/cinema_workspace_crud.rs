@@ -1,6 +1,7 @@
-//! Cinema workspace CRUD repository tests: rename, world pinning, cast and
-//! prop relationship updates, shot updates, transactional reorder, and
-//! keyframe assignment. All mutations are project-scoped.
+//! Shot-domain CRUD repository tests on the authoritative `scene_shots`
+//! table: field updates, keyframe assignment, transactional reorder, delete,
+//! and persistence after reopen. Scene/cast/prop CRUD is covered by the
+//! `scenes` module suites; these tests seed a `world_scenes` row directly.
 
 use cinematic_desktop_lib::cinema::model::*;
 use cinematic_desktop_lib::cinema::repository;
@@ -23,8 +24,8 @@ fn open_db(root: &PathBuf) -> Connection {
     conn
 }
 
-/// Seeds minimal, FK-valid asset version rows so relationship pins satisfy
-/// the schema's foreign keys.
+/// Seeds minimal, FK-valid asset version rows so keyframe pins satisfy the
+/// schema's foreign keys.
 fn seed_versions(conn: &Connection, version_ids: &[&str]) {
     let project_id: String = conn
         .query_row("SELECT id FROM projects", [], |row| row.get(0))
@@ -42,18 +43,6 @@ fn seed_versions(conn: &Connection, version_ids: &[&str]) {
     }
 }
 
-fn scene_record(project_id: &str, id: &str) -> SceneRecord {
-    SceneRecord {
-        id: id.into(),
-        project_id: project_id.into(),
-        title: "Scene 001 - Ops Room".into(),
-        world_asset_version_id: None,
-        canon_notes: Some("Tight station interior.".into()),
-        created_at: "now".into(),
-        updated_at: "now".into(),
-    }
-}
-
 fn shot_record(scene_id: &str, id: &str, ordering: i64) -> ShotRecord {
     ShotRecord {
         id: id.into(),
@@ -64,7 +53,6 @@ fn shot_record(scene_id: &str, id: &str, ordering: i64) -> ShotRecord {
         intent: "Establish".into(),
         action: None,
         camera: None,
-        generated_video_asset_version_id: None,
         created_at: "now".into(),
         updated_at: "now".into(),
     }
@@ -74,126 +62,13 @@ fn seed_scene(conn: &Connection) -> (String, String) {
     let project_id: String = conn
         .query_row("SELECT id FROM projects", [], |row| row.get(0))
         .unwrap();
-    let scene = scene_record(&project_id, "scene-1");
-    repository::create_scene(conn, &scene).unwrap();
-    (project_id, scene.id)
-}
-
-#[test]
-fn rename_scene_updates_title_within_project_scope() {
-    let (_temp, root) = project("rename-scene");
-    let conn = open_db(&root);
-    let (project_id, scene_id) = seed_scene(&conn);
-
-    let renamed = repository::rename_scene(&conn, &project_id, &scene_id, "Renamed Scene").unwrap();
-    assert_eq!(renamed.title, "Renamed Scene");
-
-    // Foreign scene id is rejected as not found.
-    let foreign = repository::rename_scene(&conn, &project_id, "scene-other", "Nope");
-    assert!(foreign.is_err());
-}
-
-#[test]
-fn set_scene_world_pins_and_clears_the_exact_version() {
-    let (_temp, root) = project("set-world");
-    let conn = open_db(&root);
-    let (project_id, scene_id) = seed_scene(&conn);
-
-    seed_versions(&conn, &["world-v1"]);
-    repository::set_scene_world(&conn, &project_id, &scene_id, Some("world-v1")).unwrap();
-    let scene = repository::get_scene(&conn, &project_id, &scene_id).unwrap();
-    assert_eq!(scene.world_asset_version_id.as_deref(), Some("world-v1"));
-
-    repository::set_scene_world(&conn, &project_id, &scene_id, None).unwrap();
-    let scene = repository::get_scene(&conn, &project_id, &scene_id).unwrap();
-    assert_eq!(scene.world_asset_version_id, None);
-}
-
-#[test]
-fn cast_relationships_can_be_updated_and_removed_without_deleting_canon() {
-    let (_temp, root) = project("cast-crud");
-    let conn = open_db(&root);
-    let (project_id, scene_id) = seed_scene(&conn);
     conn.execute(
-        "INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) VALUES ('mara', ?1, 'character', 'Mara', 'mara', 'now', 'now')",
+        "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) \
+         VALUES ('scene-1', ?1, 0, 'Scene 001 - Ops Room', 'Tight station interior.', 'now', 'now')",
         params![project_id],
-    ).unwrap();
-    seed_versions(&conn, &["look-v1", "look-v2", "sheet-v1"]);
-    repository::add_scene_character(
-        &conn,
-        &SceneCharacterRecord {
-            scene_id: scene_id.clone(),
-            character_entity_id: "mara".into(),
-            look_asset_version_id: "look-v1".into(),
-            sheet_asset_version_id: None,
-            display_order: 0,
-        },
     )
     .unwrap();
-
-    // Update look and add a sheet pin.
-    repository::update_scene_character(
-        &conn,
-        &project_id,
-        &scene_id,
-        "mara",
-        Some("look-v2"),
-        Some("sheet-v1"),
-    )
-    .unwrap();
-    let cast = repository::list_scene_characters(&conn, &scene_id).unwrap();
-    assert_eq!(cast.len(), 1);
-    assert_eq!(cast[0].look_asset_version_id, "look-v2");
-    assert_eq!(cast[0].sheet_asset_version_id.as_deref(), Some("sheet-v1"));
-
-    // Removing the cast record keeps the canon entity and the scene.
-    repository::remove_scene_character(&conn, &project_id, &scene_id, "mara").unwrap();
-    assert!(repository::list_scene_characters(&conn, &scene_id)
-        .unwrap()
-        .is_empty());
-    let entity_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM canon_entities WHERE id = 'mara'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    let scene_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'",
-            [],
-            |r| r.get(0),
-        )
-        .unwrap();
-    assert_eq!(entity_count, 1);
-    assert_eq!(scene_count, 1);
-}
-
-#[test]
-fn props_can_be_removed_by_version_without_touching_assets() {
-    let (_temp, root) = project("prop-crud");
-    let conn = open_db(&root);
-    let (project_id, scene_id) = seed_scene(&conn);
-    seed_versions(&conn, &["prop-v1"]);
-    repository::add_scene_prop(
-        &conn,
-        &ScenePropRecord {
-            scene_id: scene_id.clone(),
-            prop_asset_version_id: "prop-v1".into(),
-            display_order: 0,
-        },
-    )
-    .unwrap();
-
-    repository::remove_scene_prop(&conn, &project_id, &scene_id, "prop-v1").unwrap();
-    assert!(repository::list_scene_props(&conn, &scene_id)
-        .unwrap()
-        .is_empty());
-    // The seeded source asset itself survives the relationship deletion.
-    let asset_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
-        .unwrap();
-    assert!(asset_count >= 1);
+    (project_id, "scene-1".to_string())
 }
 
 #[test]
@@ -240,7 +115,7 @@ fn delete_shot_removes_only_the_shot_row() {
     // Scene survives.
     let scene_count: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM scenes WHERE id = 'scene-1'",
+            "SELECT COUNT(*) FROM world_scenes WHERE id = 'scene-1'",
             [],
             |r| r.get(0),
         )
@@ -315,4 +190,47 @@ fn shot_ordering_is_stable_after_reopen() {
         vec!["shot-1", "shot-2"]
     );
     let _ = project_id;
+}
+
+#[test]
+fn deleting_the_middle_shot_leaves_unique_contiguous_reorderable_ordering() {
+    let (_temp, root) = project("shot-delete-middle");
+    let mut conn = open_db(&root);
+    let (project_id, scene_id) = seed_scene(&conn);
+    for (id, ordering) in [("shot-1", 0), ("shot-2", 1), ("shot-3", 2)] {
+        repository::create_shot(&conn, &shot_record(&scene_id, id, ordering)).unwrap();
+    }
+
+    // Delete the middle shot.
+    repository::delete_shot(&conn, &project_id, &scene_id, "shot-2").unwrap();
+
+    // Ordering remains valid and unique (0 and 2 — no duplicates).
+    let shots = repository::list_shots(&conn, &scene_id).unwrap();
+    let orderings: Vec<i64> = shots.iter().map(|s| s.ordering).collect();
+    assert_eq!(orderings, vec![0, 2]);
+    let distinct: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT ordering) FROM scene_shots WHERE scene_id = ?1",
+            rusqlite::params![scene_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct, 2);
+
+    // The scene remains reorderable into a contiguous order afterwards.
+    let reordered = repository::reorder_shots(
+        &mut conn,
+        &project_id,
+        &scene_id,
+        &["shot-3".to_string(), "shot-1".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        reordered.iter().map(|s| s.ordering).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        reordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["shot-3", "shot-1"]
+    );
 }

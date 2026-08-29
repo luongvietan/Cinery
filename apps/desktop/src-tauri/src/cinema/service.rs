@@ -1,12 +1,11 @@
-use crate::canon::repository as canon_repository;
 use crate::canon::service::CanonService;
 use crate::canon::service::VisualLockDto;
 use crate::cinema::compiler;
 use crate::cinema::export;
 use crate::cinema::model;
 use crate::cinema::model::{
-    validate_shot_duration, BehavioralLocks, CinemaCompilation, CinemaCompileInput,
-    SceneCharacterRecord, SceneRecord, ShotRecord, ShotUpdate, WorldContinuity,
+    validate_shot_duration, BehavioralLocks, CinemaCompilation, CinemaCompileInput, SceneRef,
+    ShotRecord, ShotUpdate, WorldContinuity,
 };
 use crate::cinema::repository;
 use crate::cinema::tbd_guard;
@@ -32,209 +31,8 @@ pub struct CanonicalVersion {
 pub struct CinemaService;
 
 impl CinemaService {
-    /// Stages a complete scene atomically from exact canonical references.
-    /// Any validation or persistence failure rolls back the scene, cast, and
-    /// initial shot together so retry cannot leave duplicate partial scenes.
-    pub fn stage_scene(
-        project_root: &Path,
-        title: &str,
-        world_asset_version_id: &str,
-        character_entity_id: &str,
-        look_asset_version_id: &str,
-        sheet_asset_version_id: &str,
-    ) -> Result<SceneRecord, AppError> {
-        let title = validate_title(title)?;
-        let intent = validate_intent("Establish the scene")?;
-        let project = ProjectService::open(project_root)?;
-        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let tx = conn
-            .transaction()
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        ensure_canonical_version(&tx, &project.id, world_asset_version_id, &["world_plate"])?;
-        let entity = canon_repository::get_entity(&tx, character_entity_id)?;
-        if entity.project_id != project.id || entity.entity_type != "character" {
-            return Err(AppError::CanonEntityNotFound);
-        }
-        ensure_canonical_version(
-            &tx,
-            &project.id,
-            look_asset_version_id,
-            &["outfit", "character_sheet"],
-        )?;
-        ensure_canonical_version(
-            &tx,
-            &project.id,
-            sheet_asset_version_id,
-            &["character_sheet"],
-        )?;
-
-        let now = Utc::now().to_rfc3339();
-        let scene = SceneRecord {
-            id: Ulid::new().to_string(),
-            project_id: project.id,
-            title,
-            world_asset_version_id: Some(world_asset_version_id.to_string()),
-            canon_notes: None,
-            created_at: now.clone(),
-            updated_at: now.clone(),
-        };
-        repository::create_scene(&tx, &scene)?;
-        repository::add_scene_character(
-            &tx,
-            &SceneCharacterRecord {
-                scene_id: scene.id.clone(),
-                character_entity_id: character_entity_id.to_string(),
-                look_asset_version_id: look_asset_version_id.to_string(),
-                sheet_asset_version_id: Some(sheet_asset_version_id.to_string()),
-                display_order: 0,
-            },
-        )?;
-        repository::create_shot(
-            &tx,
-            &ShotRecord {
-                id: Ulid::new().to_string(),
-                scene_id: scene.id.clone(),
-                ordering: 0,
-                duration_seconds: 4.0,
-                keyframe_asset_version_id: None,
-                intent,
-                action: None,
-                camera: None,
-                generated_video_asset_version_id: None,
-                created_at: now.clone(),
-                updated_at: now,
-            },
-        )?;
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(scene)
-    }
-
-    /// Creates a scene with a validated title (1-160 chars after trimming).
-    pub fn create_scene(
-        project_root: &Path,
-        title: &str,
-        world_asset_version_id: Option<String>,
-        canon_notes: Option<String>,
-    ) -> Result<SceneRecord, AppError> {
-        let title = validate_title(title)?;
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-
-        if let Some(version) = &world_asset_version_id {
-            ensure_canonical_version(&conn, &project.id, version, &["world_plate"])?;
-        }
-
-        let now = Utc::now().to_rfc3339();
-        let record = SceneRecord {
-            id: Ulid::new().to_string(),
-            project_id: project.id,
-            title,
-            world_asset_version_id,
-            canon_notes: canon_notes
-                .map(|notes| notes.trim().to_string())
-                .filter(|notes| !notes.is_empty()),
-            created_at: now.clone(),
-            updated_at: now,
-        };
-        repository::create_scene(&conn, &record)?;
-        Ok(record)
-    }
-
-    /// Lists the project's scenes, newest first.
-    pub fn list_scenes(project_root: &Path) -> Result<Vec<SceneRecord>, AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::list_scenes(&conn, &project.id)
-    }
-
-    /// Reads a single scene belonging to the opened project.
-    pub fn get_scene(project_root: &Path, scene_id: &str) -> Result<SceneRecord, AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)
-    }
-}
-
-impl CinemaService {
-    /// Casts a character entity into a scene. The look (and optional sheet)
-    /// versions must be the current canonical versions of outfit /
-    /// character-sheet assets in the same project.
-    pub fn add_character_to_scene(
-        project_root: &Path,
-        scene_id: &str,
-        character_entity_id: &str,
-        look_asset_version_id: &str,
-        sheet_asset_version_id: Option<String>,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-
-        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
-        let entity = canon_repository::get_entity(&conn, character_entity_id)?;
-        if entity.project_id != project.id || entity.entity_type != "character" {
-            return Err(AppError::CanonEntityNotFound);
-        }
-        ensure_canonical_version(
-            &conn,
-            &project.id,
-            look_asset_version_id,
-            &["outfit", "character_sheet"],
-        )?;
-        if let Some(sheet) = &sheet_asset_version_id {
-            ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"])?;
-        }
-
-        let display_order: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM scene_characters WHERE scene_id = ?1",
-                params![scene.id],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
-        repository::add_scene_character(
-            &conn,
-            &SceneCharacterRecord {
-                scene_id: scene.id,
-                character_entity_id: entity.id,
-                look_asset_version_id: look_asset_version_id.to_string(),
-                sheet_asset_version_id,
-                display_order,
-            },
-        )?;
-        Ok(())
-    }
-
-    /// Pins a canonical prop plate version into a scene.
-    pub fn add_prop_to_scene(
-        project_root: &Path,
-        scene_id: &str,
-        prop_asset_version_id: &str,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
-        ensure_canonical_version(&conn, &project.id, prop_asset_version_id, &["prop_plate"])?;
-        let display_order: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM scene_props WHERE scene_id = ?1",
-                params![scene.id],
-                |row| row.get(0),
-            )
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        repository::add_scene_prop(
-            &conn,
-            &crate::cinema::model::ScenePropRecord {
-                scene_id: scene.id,
-                prop_asset_version_id: prop_asset_version_id.to_string(),
-                display_order,
-            },
-        )?;
-        Ok(())
-    }
-
-    /// Creates a shot; when `ordering` is omitted the shot is appended after
-    /// the scene's existing shots.
+    /// Creates a shot on the authoritative Scene (`world_scenes`); when
+    /// `ordering` is omitted the shot is appended after the existing shots.
     pub fn create_shot(
         project_root: &Path,
         scene_id: &str,
@@ -248,7 +46,7 @@ impl CinemaService {
         let intent = validate_intent(intent)?;
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::ensure_scene_in_project(&conn, &project.id, scene_id)?;
 
         let ordering = match ordering {
             Some(ordering) if ordering >= 0 => ordering,
@@ -259,8 +57,8 @@ impl CinemaService {
             }
             None => conn
                 .query_row(
-                    "SELECT COALESCE(MAX(ordering) + 1, 0) FROM shots WHERE scene_id = ?1",
-                    params![scene.id],
+                    "SELECT COALESCE(MAX(ordering) + 1, 0) FROM scene_shots WHERE scene_id = ?1",
+                    params![scene_id],
                     |row| row.get(0),
                 )
                 .map_err(|e| AppError::Database(e.to_string()))?,
@@ -269,7 +67,7 @@ impl CinemaService {
         let now = Utc::now().to_rfc3339();
         let record = ShotRecord {
             id: Ulid::new().to_string(),
-            scene_id: scene.id,
+            scene_id: scene_id.to_string(),
             ordering,
             duration_seconds,
             keyframe_asset_version_id: None,
@@ -280,7 +78,6 @@ impl CinemaService {
             camera: camera
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty()),
-            generated_video_asset_version_id: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -292,7 +89,7 @@ impl CinemaService {
     pub fn list_shots(project_root: &Path, scene_id: &str) -> Result<Vec<ShotRecord>, AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::ensure_scene_in_project(&conn, &project.id, scene_id)?;
         repository::list_shots(&conn, scene_id)
     }
 }
@@ -356,14 +153,14 @@ impl CinemaService {
     }
 
     /// Merged behavioral locks across every character cast into the scene
-    /// (display order wins for duplicate keys).
+    /// (cast order wins for duplicate keys).
     pub fn resolve_scene_behavioral_locks(
         conn: &Connection,
         scene_id: &str,
     ) -> Result<BehavioralLocks, AppError> {
-        let characters = repository::list_scene_characters(conn, scene_id)?;
+        let characters = repository::list_scene_cast(conn, scene_id)?;
         let mut merged = BehavioralLocks::default();
-        for character in characters {
+        for character in &characters {
             let locks = Self::resolve_behavioral_locks(conn, &character.character_entity_id)?;
             if merged.speech.is_none() {
                 merged.speech = locks.speech;
@@ -377,42 +174,22 @@ impl CinemaService {
         }
         Ok(merged)
     }
-
-    /// Resolves world continuity from the scene's canonical world plate
-    /// version. `None` yields empty continuity (the plate is optional); a
-    /// version that exists but is not the canonical version of a
-    /// `world_plate` asset in this project fails compilation prerequisites.
-    pub fn resolve_world_continuity(
-        project_root: &Path,
-        world_asset_version_id: &Option<String>,
-    ) -> Result<WorldContinuity, AppError> {
-        let Some(version_id) = world_asset_version_id.as_deref() else {
-            return Ok(WorldContinuity::default());
-        };
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let version = ensure_canonical_version(&conn, &project.id, version_id, &["world_plate"])?;
-        Ok(WorldContinuity {
-            plate_id: Some(version.asset_id),
-            plate_asset_version_id: Some(version.version_id),
-            description: Some(version.label),
-        })
-    }
 }
 
 impl CinemaService {
-    /// Validates a scene is compilable: it exists in this project, has at
-    /// least one character with canonical look versions, an optional but
-    /// canonical world plate, and at least one shot. The TBD firewall is
-    /// invoked separately by the compilation workflow (see `tbd_guard`).
-    pub fn validate_scene_for_compilation(
+    /// Validates the authoritative scene is compilable: it exists in this
+    /// project, has at least one character with canonical look versions, an
+    /// optional but canonical world plate, and at least one shot. The TBD
+    /// firewall is invoked separately (see `tbd_guard`).
+    fn validate_scene_for_compilation(
         conn: &Connection,
+        project_root: &Path,
         project_id: &str,
         scene_id: &str,
-    ) -> Result<SceneRecord, AppError> {
-        let scene = repository::get_scene(conn, project_id, scene_id)?;
+    ) -> Result<(crate::scenes::model::Scene, Vec<crate::scenes::model::SceneCharacterAssignment>), AppError> {
+        let scene = load_scene(conn, project_id, scene_id)?;
 
-        let characters = repository::list_scene_characters(conn, &scene.id)?;
+        let characters = repository::list_scene_cast(conn, &scene.id)?;
         if characters.is_empty() {
             return Err(AppError::WorkflowPrerequisiteFailed(
                 "scene has no characters cast".into(),
@@ -431,7 +208,8 @@ impl CinemaService {
         }
 
         if let Some(world) = &scene.world_asset_version_id {
-            ensure_canonical_version(conn, project_id, world, &["world_plate"])?;
+            let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+            ensure_canonical_version(&conn, project_id, world, &["world_plate"])?;
         }
 
         let shots = repository::list_shots(conn, &scene.id)?;
@@ -441,14 +219,13 @@ impl CinemaService {
             ));
         }
 
-        Ok(scene)
+        Ok((scene, characters))
     }
 
     /// Full compilation workflow: validates the scene, applies the TBD
     /// firewall, resolves behavioral locks / world continuity / visual
     /// locks, compiles the provider-neutral prompt, exports it atomically
-    /// under `prompts/cinema/`, and persists the compilation record — all
-    /// before the DB insert commits.
+    /// under `prompts/cinema/`, and persists the compilation record.
     pub fn compile_scene(
         project_root: &Path,
         input: CinemaCompileInput,
@@ -457,7 +234,8 @@ impl CinemaService {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
 
-        let scene = Self::validate_scene_for_compilation(&conn, &project.id, &input.scene_id)?;
+        let (scene, characters) =
+            Self::validate_scene_for_compilation(&conn, project_root, &project.id, &input.scene_id)?;
         tbd_guard::check_tbd_firewall(&conn, &project.id, &scene.id)?;
 
         // Collect the topics of every open TBD so their text is scrubbed
@@ -491,7 +269,6 @@ impl CinemaService {
             None => WorldContinuity::default(),
         };
 
-        let characters = repository::list_scene_characters(&conn, &scene.id)?;
         let shots = repository::list_shots(&conn, &scene.id)?;
 
         // Aggregate visual locks across every cast character (deterministic
@@ -506,11 +283,15 @@ impl CinemaService {
 
         let compilation_id = Ulid::new().to_string();
         let prompt = compiler::compile(
-            &scene,
+            &SceneRef {
+                id: scene.id.clone(),
+                project_id: scene.project_id.clone(),
+                title: scene.title.clone(),
+                summary: scene.summary.clone(),
+            },
             &compilation_id,
             input.total_duration_seconds,
             input.shot_count,
-            &characters,
             &behavioral_locks,
             &world_continuity,
             &visual_locks,
@@ -558,101 +339,8 @@ impl CinemaService {
     ) -> Result<Vec<CinemaCompilation>, AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
+        repository::ensure_scene_in_project(&conn, &project.id, scene_id)?;
         repository::list_compilations(&conn, scene_id)
-    }
-
-    /// Renames a scene with title validation.
-    pub fn rename_scene(
-        project_root: &Path,
-        scene_id: &str,
-        title: &str,
-    ) -> Result<SceneRecord, AppError> {
-        let title = validate_title(title)?;
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::rename_scene(&conn, &project.id, scene_id, &title)
-    }
-
-    /// Pins or clears the scene's canonical World Plate version.
-    pub fn set_scene_world(
-        project_root: &Path,
-        scene_id: &str,
-        version_id: Option<&str>,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
-        if let Some(version) = version_id {
-            ensure_canonical_version(&conn, &project.id, version, &["world_plate"])?;
-        }
-        repository::set_scene_world(&conn, &project.id, scene_id, version_id)
-    }
-
-    /// Updates one cast member's exact look/sheet pins. Both versions must
-    /// be canonical versions of the expected asset types.
-    pub fn update_scene_character(
-        project_root: &Path,
-        scene_id: &str,
-        character_id: &str,
-        look_asset_version_id: Option<&str>,
-        sheet_asset_version_id: Option<&str>,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
-        let cast = repository::list_scene_characters(&conn, scene_id)?;
-        if !cast
-            .iter()
-            .any(|member| member.character_entity_id == character_id)
-        {
-            return Err(AppError::CanonEntityNotFound);
-        }
-        let look = look_asset_version_id.or_else(|| {
-            cast.iter()
-                .find(|m| m.character_entity_id == character_id)
-                .map(|m| m.look_asset_version_id.as_str())
-        });
-        let look = look.ok_or_else(|| {
-            AppError::WorkflowPrerequisiteFailed("cast member has no look version to keep".into())
-        })?;
-        ensure_canonical_version(&conn, &project.id, look, &["outfit", "character_sheet"])?;
-        if let Some(sheet) = sheet_asset_version_id {
-            ensure_canonical_version(&conn, &project.id, sheet, &["character_sheet"])?;
-        }
-        repository::update_scene_character(
-            &conn,
-            &project.id,
-            scene_id,
-            character_id,
-            Some(look),
-            sheet_asset_version_id,
-        )
-    }
-
-    /// Removes one cast relationship. Canon entities and assets are never
-    /// deleted.
-    pub fn remove_scene_character(
-        project_root: &Path,
-        scene_id: &str,
-        character_id: &str,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
-        repository::remove_scene_character(&conn, &project.id, scene_id, character_id)
-    }
-
-    /// Removes one prop relationship by exact version id.
-    pub fn remove_scene_prop(
-        project_root: &Path,
-        scene_id: &str,
-        prop_asset_version_id: &str,
-    ) -> Result<(), AppError> {
-        let project = ProjectService::open(project_root)?;
-        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        repository::get_scene(&conn, &project.id, scene_id)?;
-        repository::remove_scene_prop(&conn, &project.id, scene_id, prop_asset_version_id)
     }
 
     /// Applies a field update to one shot with validation.
@@ -702,15 +390,14 @@ impl CinemaService {
         repository::set_shot_keyframe(&conn, &project.id, shot_id, version_id)
     }
 
-    /// Computes structured readiness for one scene without exceptions as
-    /// the normal control flow.
+    /// Computes structured compile readiness for the authoritative scene.
     pub fn scene_readiness(
         project_root: &Path,
         scene_id: &str,
     ) -> Result<CinemaReadiness, AppError> {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        let scene = repository::get_scene(&conn, &project.id, scene_id)?;
+        let scene = load_scene(&conn, &project.id, scene_id)?;
         let mut blockers: Vec<CinemaReadinessBlocker> = Vec::new();
 
         if scene.world_asset_version_id.is_none() {
@@ -719,12 +406,12 @@ impl CinemaService {
                 scene_id: scene.id.clone(),
                 entity_id: None,
                 shot_id: None,
-                message: "No World Plate is pinned to this scene.".into(),
+                message: "No World is assigned to this scene.".into(),
                 action_target: "world".into(),
             });
         }
 
-        let cast = repository::list_scene_characters(&conn, &scene.id)?;
+        let cast = repository::list_scene_cast(&conn, &scene.id)?;
         if cast.is_empty() {
             blockers.push(CinemaReadinessBlocker {
                 code: "missing_cast_look".into(),
@@ -772,7 +459,7 @@ impl CinemaService {
         let shots = repository::list_shots(&conn, &scene.id)?;
         if shots.is_empty() {
             blockers.push(CinemaReadinessBlocker {
-                code: "missing_shot_keyframe".into(),
+                code: "missing_shot".into(),
                 scene_id: scene.id.clone(),
                 entity_id: None,
                 shot_id: None,
@@ -804,6 +491,37 @@ impl CinemaService {
             blockers,
         })
     }
+}
+
+/// Loads the authoritative scene row, scoped to the project.
+fn load_scene(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+) -> Result<crate::scenes::model::Scene, AppError> {
+    conn.query_row(
+        "SELECT id, project_id, ordinal, title, summary, world_id, world_asset_version_id, \
+         keyframe_asset_id, created_at, updated_at \
+         FROM world_scenes WHERE id = ?1 AND project_id = ?2",
+        params![scene_id, project_id],
+        |row| {
+            Ok(crate::scenes::model::Scene {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                ordinal: row.get(2)?,
+                title: row.get(3)?,
+                summary: row.get(4)?,
+                world_id: row.get(5)?,
+                world_asset_version_id: row.get(6)?,
+                keyframe_asset_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| AppError::Database(e.to_string()))?
+    .ok_or(AppError::SceneNotFound)
 }
 
 /// Verifies `version_id` is the current canonical version of an asset of one
@@ -857,14 +575,6 @@ pub fn ensure_canonical_version(
         asset_type,
         label,
     })
-}
-
-fn validate_title(title: &str) -> Result<String, AppError> {
-    let trimmed = title.trim();
-    if trimmed.is_empty() || trimmed.chars().count() > 160 {
-        return Err(AppError::InvalidSceneTitle);
-    }
-    Ok(trimmed.to_string())
 }
 
 fn validate_intent(intent: &str) -> Result<String, AppError> {

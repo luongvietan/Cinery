@@ -9,6 +9,39 @@ import { OperationCatalog } from "./OperationCatalog";
 import { WorkflowRunView } from "./WorkflowRunView";
 import { humanizeWorkflowStatus } from "./format";
 
+/** Maps an operation id to the skill that owns it (registry key + version). */
+function resolveSkillRef(operationId: string): [string, string] {
+  if (operationId.startsWith("character.")) return ["character-builder", "1.1.0"];
+  if (operationId.startsWith("world.")) return ["world-builder", "1.0.0"];
+  if (operationId.startsWith("scene.")) return ["scene-builder", "1.0.0"];
+  if (operationId.startsWith("asset.")) return ["visual-qa", "1.0.0"];
+  throw new Error(`No skill is registered for operation ${operationId}`);
+}
+
+/**
+ * Operations whose input forms are not offered in this workspace. They have
+ * real context entry points elsewhere (Asset Inspector, Worlds, Scenes) and
+ * must never fall through to a character form.
+ */
+const OPERATIONS_WITH_EXTERNAL_ENTRY = ["asset.", "world.", "scene."];
+
+function operationEntryHint(operationId: string): string {
+  if (operationId.startsWith("asset.")) {
+    return "Run Visual QA and Repair from an asset version in the Assets panel.";
+  }
+  if (operationId.startsWith("world.")) {
+    return "Generate a world plate from the World detail in the Worlds panel.";
+  }
+  if (operationId.startsWith("scene.")) {
+    return "Generate a shot keyframe from its shot in the Scenes panel.";
+  }
+  return "This operation is started from its production context.";
+}
+
+function isCharacterOperation(operationId: string): boolean {
+  return operationId.startsWith("character.");
+}
+
 export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string }) {
   const [operations, setOperations] = useState<SkillOperation[]>([]);
   const [characters, setCharacters] = useState<WorkflowCharacterOption[]>([]);
@@ -48,8 +81,7 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
     try {
       const created = await createWorkflowRun(
         projectRootPath,
-        "character-builder",
-        "1.1.0",
+        ...resolveSkillRef(selectedOperation.id),
         selectedOperation.id,
         input,
       );
@@ -87,12 +119,26 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
         </section>
       </div>
       {selectedOperation ? (
-        selectedOperation.id === "character.create_outfit" ? (
-          <CreateOutfitForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
-        ) : selectedOperation.id === "character.create_character_sheet" ? (
-          <CreateCharacterSheetForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+        isCharacterOperation(selectedOperation.id) ? (
+          selectedOperation.id === "character.create_outfit" ? (
+            <CreateOutfitForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+          ) : selectedOperation.id === "character.create_character_sheet" ? (
+            <CreateCharacterSheetForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+          ) : selectedOperation.id === "character.create_face_lock" ? (
+            <CreateFaceLockForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+          ) : (
+            <section aria-label="Unsupported operation" className="workflow-panel-header">
+              <p role="status">
+                {`"${selectedOperation.id}" has no form in this workspace. ${operationEntryHint(selectedOperation.id)}`}
+              </p>
+            </section>
+          )
         ) : (
-          <CreateFaceLockForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+          <section aria-label="Unsupported operation" className="workflow-panel-header">
+            <p role="status">
+              {`"${selectedOperation.id}" is started from its production context. ${operationEntryHint(selectedOperation.id)}`}
+            </p>
+          </section>
         )
       ) : null}
       {selectedRun ? <WorkflowRunView projectRootPath={projectRootPath} detail={selectedRun} onChange={handleRunChange} /> : null}

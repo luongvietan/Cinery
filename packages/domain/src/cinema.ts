@@ -99,7 +99,6 @@ export interface ShotRecord {
   intent: string;
   action: string | null;
   camera: string | null;
-  generatedVideoAssetVersionId: string | null;
   createdAt: string;
   updatedAt: string;
 }

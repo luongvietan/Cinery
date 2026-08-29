@@ -3,6 +3,9 @@ use cinematic_desktop_lib::canon::model::CanonEntityType;
 use cinematic_desktop_lib::canon::service::CanonService;
 use cinematic_desktop_lib::cinema::model::CinemaCompileInput;
 use cinematic_desktop_lib::cinema::service::CinemaService;
+use cinematic_desktop_lib::canon::model::CanonEntityType as EntityType;
+use cinematic_desktop_lib::scenes::service::SceneService;
+use cinematic_desktop_lib::worlds::service::WorldService;
 use cinematic_desktop_lib::integration::health::scan_project;
 use cinematic_desktop_lib::integration::provenance::get_provenance_graph;
 use cinematic_desktop_lib::integration::readiness::get_project_overview;
@@ -70,27 +73,39 @@ fn complete_mara_cinematic_journey() {
         [7, 8, 9, 255],
     );
 
-    // ── Step 4: World Plate ──
-    let (_world_asset_id, world_version_id) = canonical_asset(
+    // ── Step 4: World (production entity over a Canon Location) ──
+    let (_world_asset_id, _world_version_id) = canonical_asset(
         &root,
         "world_plate",
         "Station World",
         None,
         [10, 11, 12, 255],
     );
+    let location = CanonService::create_entity(&root, EntityType::Location, "The Station").unwrap();
+    let world = WorldService::create_world(&root, &location.id).unwrap();
+    {
+        let plate_source = image(&root, "world-plate.png", [13, 14, 15, 255]);
+        let plate_version =
+            AssetService::import_asset_version(&root, &world.world_plate_asset_id, &plate_source, None)
+                .unwrap();
+        AssetService::promote_asset_version(&root, &plate_version.id).unwrap();
+    }
 
     // ── Step 5: Assemble Scene with pinned exact versions ──
-    let scene =
-        CinemaService::create_scene(&root, "Scene 001", Some(world_version_id.clone()), None)
-            .unwrap();
-    CinemaService::add_character_to_scene(
+    let scene = SceneService::create_scene(&root, "Scene 001", "Mara returns to the station")
+        .unwrap();
+    SceneService::assign_scene_world(&root, &scene.id, &world.id).unwrap();
+    SceneService::add_scene_character(
         &root,
         &scene.id,
         &mara.id,
         &look_version_id,
-        Some(sheet_version_id),
+        Some(sheet_version_id.as_str()),
+        None,
     )
     .unwrap();
+    let scene = SceneService::get_scene(&root, &scene.id).unwrap();
+    let world_version_id = scene.world_asset_version_id.clone().unwrap();
 
     // ── Step 6: Add Shot (4s, inside the 8s runtime budget) ──
     let shot =
@@ -152,7 +167,7 @@ fn complete_mara_cinematic_journey() {
         None,
         [20, 21, 22, 255],
     );
-    let scene_after = CinemaService::get_scene(&root, &scene.id).unwrap();
+    let scene_after = SceneService::get_scene(&root, &scene.id).unwrap();
     assert_eq!(
         scene_after.world_asset_version_id.as_deref(),
         Some(world_version_id.as_str()),
@@ -200,7 +215,7 @@ fn complete_mara_cinematic_journey() {
         Some(face_version_id.as_str())
     );
 
-    let reloaded_scene = CinemaService::get_scene(&root, &scene.id).unwrap();
+    let reloaded_scene = SceneService::get_scene(&root, &scene.id).unwrap();
     assert_eq!(reloaded_scene.title, "Scene 001");
     assert_eq!(
         reloaded_scene.world_asset_version_id.as_deref(),

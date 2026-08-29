@@ -76,6 +76,14 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 16,
         sql: include_str!("../../migrations/0016_world_scene_pipeline.sql"),
     },
+    Migration {
+        version: 17,
+        sql: include_str!("../../migrations/0017_unified_scene_shots.sql"),
+    },
+    Migration {
+        version: 18,
+        sql: include_str!("../../migrations/0018_artifact_promotion_idempotency.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -761,3 +769,181 @@ mod tests {
         );
     }
 }
+
+    // -------------------------------------------------------------------
+    // Migration 0017 regression: deterministic, unambiguous legacy mapping
+    // -------------------------------------------------------------------
+
+    /// Applies migrations 1..=16 (recorded), seeds legacy P8 rows via
+    /// `seed`, then runs the pending migration 17.
+    fn migrate_legacy_project(seed: &dyn Fn(&mut Connection)) -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations \
+             (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        for migration in MIGRATIONS.iter().filter(|m| m.version <= 16) {
+            conn.execute_batch(migration.sql).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'now')",
+                rusqlite::params![migration.version],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+             VALUES ('p1', 'P', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        seed(&mut conn);
+        run_migrations(&mut conn).unwrap();
+        conn
+    }
+
+    fn insert_legacy_scene(conn: &Connection, id: &str, title: &str) {
+        conn.execute(
+            "INSERT INTO scenes (id, project_id, title, created_at, updated_at) \
+             VALUES (?1, 'p1', ?2, 'now', 'now')",
+            rusqlite::params![id, title],
+        )
+        .unwrap();
+    }
+
+    fn insert_legacy_shot(conn: &Connection, id: &str, scene_id: &str, ordering: i64) {
+        conn.execute(
+            "INSERT INTO shots (id, scene_id, ordering, duration_seconds, intent, \
+             created_at, updated_at) \
+             VALUES (?1, ?2, ?3, 4, 'Establish', 'now', 'now')",
+            rusqlite::params![id, scene_id, ordering],
+        )
+        .unwrap();
+    }
+
+    fn insert_authoritative_scene(conn: &Connection, id: &str, ordinal: i64, title: &str) {
+        conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) \
+             VALUES (?1, 'p1', ?2, ?3, '', 'now', 'now')",
+            rusqlite::params![id, ordinal, title],
+        )
+        .unwrap();
+    }
+
+    fn shot_scene(conn: &Connection, shot_id: &str) -> String {
+        conn.query_row(
+            "SELECT scene_id FROM scene_shots WHERE id = ?1",
+            [shot_id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn migration_0017_duplicate_legacy_titles_never_merge() {
+        let conn = migrate_legacy_project(&|conn| {
+            insert_legacy_scene(conn, "L1", "Same Title");
+            insert_legacy_scene(conn, "L2", "Same Title");
+            insert_legacy_shot(conn, "s1", "L1", 0);
+            insert_legacy_shot(conn, "s2", "L2", 0);
+        });
+
+        // Each legacy scene must get its own derived authoritative scene.
+        let derived: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM world_scenes WHERE id IN ('wsc-L1','wsc-L2')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(derived, 2, "duplicate titles must map to separate scenes");
+
+        // Shots must stay with their own legacy scene, never merged.
+        assert_eq!(shot_scene(&conn, "s1"), "wsc-L1");
+        assert_eq!(shot_scene(&conn, "s2"), "wsc-L2");
+
+        // Ordinals remain unique per project despite the shared statement.
+        let distinct_ordinals: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT ordinal) FROM world_scenes WHERE project_id = 'p1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let total_scenes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM world_scenes WHERE project_id = 'p1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(distinct_ordinals, total_scenes);
+    }
+
+    #[test]
+    fn migration_0017_unique_title_match_attaches() {
+        let conn = migrate_legacy_project(&|conn| {
+            insert_authoritative_scene(&conn, "ws-1", 0, "Alpha");
+            insert_legacy_scene(&conn, "L1", "Alpha");
+            insert_legacy_shot(&conn, "s1", "L1", 0);
+        });
+
+        // Unambiguous: exactly one authoritative scene with that title.
+        assert_eq!(shot_scene(&conn, "s1"), "ws-1");
+        let derived: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM world_scenes WHERE id LIKE 'wsc-%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(derived, 0, "no derived row is needed for a unique match");
+    }
+
+    #[test]
+    fn migration_0017_ambiguous_titles_fail_closed_to_derived_rows() {
+        let conn = migrate_legacy_project(&|conn| {
+            // Two authoritative scenes already share the legacy title.
+            insert_authoritative_scene(&conn, "ws-1", 0, "Beta");
+            insert_authoritative_scene(&conn, "ws-2", 1, "Beta");
+            insert_legacy_scene(&conn, "L1", "Beta");
+            insert_legacy_shot(&conn, "s1", "L1", 0);
+        });
+
+        // The migration must not guess between the two same-titled scenes:
+        // the legacy scene gets its own derived row instead.
+        assert_eq!(shot_scene(&conn, "s1"), "wsc-L1");
+
+        // Pre-existing authoritative scenes remain untouched.
+        let beta_shots: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM scene_shots WHERE scene_id IN ('ws-1','ws-2')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(beta_shots, 0);
+    }
+
+    #[test]
+    fn migration_0017_moves_compilations_with_their_scene() {
+        let conn = migrate_legacy_project(&|conn| {
+            insert_legacy_scene(&conn, "L1", "Solo");
+            conn.execute(
+                "INSERT INTO cinema_compilations (id, project_id, scene_id, input_json, \
+                 compilation_json, export_path, export_sha256, created_at) \
+                 VALUES ('c-1', 'p1', 'L1', '{}', '{}', 'prompts/cinema/c-1.json', ?, 'now')",
+                rusqlite::params!["a".repeat(64)],
+            )
+            .unwrap();
+        });
+
+        let mapped: String = conn
+            .query_row(
+                "SELECT scene_id FROM scene_compilations WHERE id = 'c-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(mapped, "wsc-L1");
+    }

@@ -17,7 +17,7 @@ describe("WorkflowWorkspace", () => {
         inputSchemaId: "create_face_lock",
         prerequisites: [],
         tbdGuards: [],
-        workflow: [{ id: "validate-input", type: "validate_input" }],
+        workflow: [{ id: "validate-input", type: "validate_input" } as never],
         expectedOutput: null,
       },
     ]);
@@ -57,5 +57,50 @@ describe("WorkflowWorkspace", () => {
     expect(screen.getByRole("combobox", { name: "Character" })).toHaveFocus();
     await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(launchButton).toHaveFocus());
+  });
+});
+
+describe("WorkflowWorkspace operation routing (regression)", () => {
+  const qaOperation = {
+    id: "asset.run_visual_qa",
+    name: "Run Visual QA",
+    description: "Evaluate one exact image asset version.",
+    intentExamples: [],
+    inputSchemaId: "run_visual_qa",
+    prerequisites: [],
+    tbdGuards: [],
+    workflow: [{ id: "validate-input", type: "validate_input" } as never],
+    expectedOutput: null,
+  };
+
+  it("does not open a character form for QA operations and never submits the wrong skill", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listSkillOperations).mockResolvedValue([qaOperation]);
+    render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
+
+    const opButton = await screen.findByRole("button", { name: /Run Visual QA/ });
+    await user.click(opButton);
+
+    // No character form fields may appear; the user is pointed at the
+    // operation's real entry point instead.
+    expect(screen.queryByRole("combobox", { name: "Character" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("status")).toHaveTextContent(/Assets panel/);
+    expect(screen.queryByRole("button", { name: "Execute" })).not.toBeInTheDocument();
+  });
+
+  it("keeps unknown operations from submitting any skill", async () => {
+    const user = userEvent.setup();
+    vi.mocked(listSkillOperations).mockResolvedValue([
+      {
+        ...qaOperation,
+        id: "mystery.some_operation",
+        name: "Mystery Operation",
+      },
+    ]);
+    render(<WorkflowWorkspace projectRootPath="C:/projects/red-door" />);
+
+    await user.click(await screen.findByRole("button", { name: /Mystery Operation/ }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/production context/);
+    expect(screen.queryByRole("combobox", { name: "Character" })).not.toBeInTheDocument();
   });
 });

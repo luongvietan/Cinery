@@ -10,6 +10,7 @@ import { describeError } from "../../lib/errors";
 import { getAssetWithVersions, promoteAssetVersion } from "./api";
 import { getGeneratedArtifact } from "../production/api";
 import { QaPanel } from "../qa/QaPanel";
+import { ProvenancePanel } from "../provenance/ProvenancePanel";
 import {
   formatByteSize,
   formatImageDimensions,
@@ -67,6 +68,7 @@ export function AssetInspector({
   const [generationDetails, setGenerationDetails] = useState<GeneratedArtifactDetail | null>(null);
   const [generationDetailsError, setGenerationDetailsError] = useState<string | null>(null);
   const [qaVersionId, setQaVersionId] = useState<string | null>(null);
+  const [provenanceVersionId, setProvenanceVersionId] = useState<string | null>(null);
   const selectionKey = `${projectRootPath}\u0000${assetId}`;
   const currentSelectionKey = useRef(selectionKey);
   currentSelectionKey.current = selectionKey;
@@ -86,6 +88,7 @@ export function AssetInspector({
     setPromotionError(null);
     setPromotingVersionId(null);
     setQaVersionId(null);
+    setProvenanceVersionId(null);
 
     getAssetWithVersions(projectRootPath, assetId)
       .then((result) => {
@@ -368,6 +371,18 @@ export function AssetInspector({
                     >
                       View QA
                     </button>
+                    <button
+                      type="button"
+                      className="asset-secondary-button"
+                      aria-pressed={provenanceVersionId === version.id}
+                      onClick={() =>
+                        setProvenanceVersionId((current) =>
+                          current === version.id ? null : version.id,
+                        )
+                      }
+                    >
+                      View provenance
+                    </button>
                   </div>
                 </li>
               );
@@ -380,6 +395,13 @@ export function AssetInspector({
           projectRootPath={projectRootPath}
           assetVersionId={qaVersion.id}
           versionLabel={formatVersionNumber(qaVersion.versionNumber)}
+        />
+      ) : null}
+      {provenanceVersionId ? (
+        <ProvenancePanel
+          projectRootPath={projectRootPath}
+          targetKind="asset_version"
+          targetId={provenanceVersionId}
         />
       ) : null}
       {generationDetailsError ? <p role="alert">{generationDetailsError}</p> : null}

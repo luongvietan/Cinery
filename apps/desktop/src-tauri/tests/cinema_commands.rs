@@ -4,36 +4,28 @@ use support::compilable_scene;
 
 use cinematic_desktop_lib::cinema::commands;
 use cinematic_desktop_lib::error::AppError;
+use cinematic_desktop_lib::scenes::commands as scene_commands;
 
 fn path_string(setup: &support::CompiledScene) -> String {
     setup.root.to_string_lossy().to_string()
 }
 
 #[test]
-fn tauri_create_scene_and_compile_via_commands() {
+fn tauri_shot_and_compile_via_commands() {
     let setup = compilable_scene();
     let root = path_string(&setup);
 
-    // create_scene + list + get detail
-    let scene = commands::create_scene(root.clone(), "Scene 002".to_string(), None, None).unwrap();
-    assert!(!scene.id.is_empty());
-    assert_eq!(commands::list_scenes(root.clone()).unwrap().len(), 2);
-
-    let existing = commands::get_scene(root.clone(), setup.scene.id.clone()).unwrap();
-    assert_eq!(existing.scene.id, setup.scene.id);
-    assert_eq!(existing.characters.len(), 1);
-    assert_eq!(existing.shots.len(), 2);
-
-    // add character/prop + create shot via commands
-    let detail = commands::add_scene_character(
+    // A second authoritative scene via the scenes command boundary.
+    let scene = scene_commands::create_world_scene(
         root.clone(),
-        scene.id.clone(),
-        setup.character_id.clone(),
-        setup.characters[0].look_asset_version_id.clone(),
-        None,
+        "Scene 002".to_string(),
+        "Another scene".to_string(),
     )
     .unwrap();
-    assert_eq!(detail.characters.len(), 1);
+    assert!(!scene.id.is_empty());
+    assert_eq!(scene_commands::list_world_scenes(root.clone()).unwrap().len(), 2);
+
+    // Shot lifecycle via commands on the authoritative scene.
     commands::create_shot(
         root.clone(),
         scene.id.clone(),
@@ -47,15 +39,21 @@ fn tauri_create_scene_and_compile_via_commands() {
     let shots = commands::list_shots(root.clone(), scene.id.clone()).unwrap();
     assert_eq!(shots.len(), 1);
 
-    // compile via command
-    let compilation = commands::compile_cinema(root.clone(), scene.id.clone(), 8.0, None).unwrap();
+    // Compile via command on the fixture scene (already has cast + shots).
+    let compilation =
+        commands::compile_cinema(root.clone(), setup.scene.id.clone(), 8.0, None).unwrap();
     assert!(setup.root.join(&compilation.export_path).exists());
     assert!(!compilation.compilation_json.is_empty());
 
     let fetched = commands::get_cinema_compilation(root.clone(), compilation.id.clone()).unwrap();
     assert_eq!(fetched.id, compilation.id);
-    let listed = commands::list_cinema_compilations(root.clone(), scene.id.clone()).unwrap();
+    let listed =
+        commands::list_cinema_compilations(root.clone(), setup.scene.id.clone()).unwrap();
     assert_eq!(listed.len(), 1);
+
+    // Readiness reflects the compiled scene.
+    let readiness = commands::get_scene_readiness(root.clone(), setup.scene.id.clone()).unwrap();
+    assert!(readiness.ready);
 }
 
 #[test]
@@ -63,14 +61,20 @@ fn command_errors_map_to_app_command_error_codes() {
     let setup = compilable_scene();
     let root = path_string(&setup);
 
-    let error = commands::get_scene(root.clone(), "missing-scene".to_string()).unwrap_err();
+    let error =
+        commands::list_shots(root.clone(), "missing-scene".to_string()).unwrap_err();
     assert_eq!(error.code, "SCENE_NOT_FOUND");
 
     let error = commands::get_cinema_compilation(root.clone(), "missing-compilation".to_string())
         .unwrap_err();
     assert_eq!(error.code, "CINEMA_COMPILATION_NOT_FOUND");
 
-    let error = commands::create_scene(root.clone(), "   ".to_string(), None, None).unwrap_err();
+    let error = scene_commands::create_world_scene(
+        root.clone(),
+        "   ".to_string(),
+        "summary".to_string(),
+    )
+    .unwrap_err();
     assert_eq!(error.code, "INVALID_SCENE_TITLE");
 
     // A blocked compilation surfaces the TBD firewall code.
@@ -90,7 +94,7 @@ fn command_errors_map_to_app_command_error_codes() {
 
 #[test]
 fn commands_reject_invalid_project_paths() {
-    let error = commands::list_scenes("".to_string()).unwrap_err();
+    let error = commands::list_shots("".to_string(), "scene".to_string()).unwrap_err();
     assert_eq!(error.code, "INVALID_PROJECT_PATH");
     assert!(matches!(
         AppError::InvalidProjectPath.code().as_str(),

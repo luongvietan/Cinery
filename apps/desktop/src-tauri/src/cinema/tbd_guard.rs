@@ -37,7 +37,7 @@ pub fn check_tbd_firewall(
             Some(entity_id) => {
                 let cast: bool = conn
                     .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM scene_characters \
+                        "SELECT EXISTS(SELECT 1 FROM world_scene_characters \
                          WHERE scene_id = ?1 AND character_entity_id = ?2)",
                         params![scene_id, entity_id],
                         |row| row.get(0),

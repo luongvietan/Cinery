@@ -231,7 +231,7 @@ fn build_node(conn: &Connection, kind_str: &str, id: &str) -> Result<ProvenanceN
         }
         "scene" => {
             let mut stmt = conn
-                .prepare("SELECT title, created_at FROM scenes WHERE id = ?1")
+                .prepare("SELECT title, created_at FROM world_scenes WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             stmt.query_row([id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -240,7 +240,7 @@ fn build_node(conn: &Connection, kind_str: &str, id: &str) -> Result<ProvenanceN
         }
         "shot" => {
             let mut stmt = conn
-                .prepare("SELECT intent, created_at FROM shots WHERE id = ?1")
+                .prepare("SELECT intent, created_at FROM scene_shots WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             stmt.query_row([id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -249,7 +249,7 @@ fn build_node(conn: &Connection, kind_str: &str, id: &str) -> Result<ProvenanceN
         }
         "cinema_compile" => {
             let mut stmt = conn
-                .prepare("SELECT scene_id, created_at FROM cinema_compilations WHERE id = ?1")
+                .prepare("SELECT scene_id, created_at FROM scene_compilations WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             let (scene_id, ts) = stmt
                 .query_row([id], |row| {
@@ -479,7 +479,7 @@ fn traverse_backwards(
         "scene" => {
             // Scene -> Character Look Version
             let mut stmt = conn
-                .prepare("SELECT look_asset_version_id FROM scene_characters WHERE scene_id = ?1")
+                .prepare("SELECT look_asset_version_id FROM world_scene_characters WHERE scene_id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))
@@ -496,7 +496,7 @@ fn traverse_backwards(
 
             // Scene -> World Version
             let mut stmt = conn
-                .prepare("SELECT world_asset_version_id FROM scenes WHERE id = ?1")
+                .prepare("SELECT world_asset_version_id FROM world_scenes WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(world_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
@@ -513,7 +513,7 @@ fn traverse_backwards(
 
             // Scene -> Props
             let mut stmt = conn
-                .prepare("SELECT prop_asset_version_id FROM scene_props WHERE scene_id = ?1")
+                .prepare("SELECT prop_asset_version_id FROM world_scene_props WHERE scene_id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))
@@ -531,7 +531,7 @@ fn traverse_backwards(
         "shot" => {
             // Shot -> Scene
             let mut stmt = conn
-                .prepare("SELECT scene_id FROM shots WHERE id = ?1")
+                .prepare("SELECT scene_id FROM scene_shots WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(scene_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
@@ -549,7 +549,7 @@ fn traverse_backwards(
         "cinema_compile" => {
             // Cinema Compile -> Scene
             let mut stmt = conn
-                .prepare("SELECT scene_id FROM cinema_compilations WHERE id = ?1")
+                .prepare("SELECT scene_id FROM scene_compilations WHERE id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             if let Some(scene_id) = stmt
                 .query_row([id], |r| r.get::<_, String>(0))
@@ -589,7 +589,7 @@ fn traverse_forwards(
         "scene" => {
             // Scene -> Shots
             let mut stmt = conn
-                .prepare("SELECT id FROM shots WHERE scene_id = ?1")
+                .prepare("SELECT id FROM scene_shots WHERE scene_id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))
@@ -606,7 +606,7 @@ fn traverse_forwards(
 
             // Scene -> Cinema Compilations
             let mut stmt = conn
-                .prepare("SELECT id FROM cinema_compilations WHERE scene_id = ?1")
+                .prepare("SELECT id FROM scene_compilations WHERE scene_id = ?1")
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))

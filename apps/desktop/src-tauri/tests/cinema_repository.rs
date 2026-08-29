@@ -17,20 +17,20 @@ fn open_db(root: &PathBuf) -> Connection {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     // Integration tests open the same file the service just bootstrapped;
     // FK enforcement is session-scoped, so re-assert it here.
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap()
+    ;
     conn
 }
 
-fn scene_record(project_id: &str, id: &str) -> SceneRecord {
-    SceneRecord {
-        id: id.into(),
-        project_id: project_id.into(),
-        title: "Scene 001 - Ops Room".into(),
-        world_asset_version_id: None,
-        canon_notes: Some("Tight station interior.".into()),
-        created_at: "now".into(),
-        updated_at: "now".into(),
-    }
+/// Inserts an authoritative `world_scenes` row directly (repository-level
+/// test; the service-level path is covered by the service/command suites).
+fn insert_world_scene(conn: &Connection, project_id: &str, id: &str) {
+    conn.execute(
+        "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) \
+         VALUES (?1, ?2, 0, 'Scene 001 - Ops Room', 'Tight station interior.', 'now', 'now')",
+        params![id, project_id],
+    )
+    .unwrap();
 }
 
 fn shot_record(scene_id: &str, id: &str, ordering: i64) -> ShotRecord {
@@ -43,54 +43,24 @@ fn shot_record(scene_id: &str, id: &str, ordering: i64) -> ShotRecord {
         intent: "Establish the ops room".into(),
         action: Some("Mara scans the console".into()),
         camera: Some("wide".into()),
-        generated_video_asset_version_id: None,
         created_at: "now".into(),
         updated_at: "now".into(),
     }
 }
 
-fn insert_canon_character(conn: &Connection, project_id: &str, id: &str) {
-    conn.execute(
-        "INSERT INTO canon_entities (id, project_id, type, name, slug, created_at, updated_at) \
-         VALUES (?1, ?2, 'character', 'Mara Keene', 'mara-keene', 'now', 'now')",
-        params![id, project_id],
-    )
-    .unwrap();
-}
-
-fn insert_canonical_asset_version(conn: &Connection, project_id: &str, id: &str) {
-    conn.execute(
-        "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) \
-         VALUES (?1, ?2, 'outfit', 'Look', 'now', 'now')",
-        params![id, project_id],
-    )
-    .unwrap();
-    conn.execute(
-        "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
-         thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
-         VALUES (?1, ?1, 1, 'canonical', 'v.png', 't.png', \
-         'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', \
-         'v.png', 'image/png', 1, 'now')",
-        params![id],
-    )
-    .unwrap();
-}
 #[test]
-fn creates_scene_and_shots_with_ordering_uniqueness() {
+fn creates_shots_with_ordering_uniqueness_and_project_scoping() {
     let (_temp, root) = project("Red Door");
     let conn = open_db(&root);
     let project_id: String = conn
         .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
         .unwrap();
 
-    let scene = scene_record(&project_id, "scene-1");
-    repository::create_scene(&conn, &scene).unwrap();
+    insert_world_scene(&conn, &project_id, "scene-1");
 
-    let fetched = repository::get_scene(&conn, &project_id, "scene-1").unwrap();
-    assert_eq!(fetched.title, "Scene 001 - Ops Room");
-
-    // Project mismatch must not leak another project's scene.
-    assert!(repository::get_scene(&conn, "other-project", "scene-1").is_err());
+    // Shots cannot be attached to a scene from another project.
+    assert!(repository::ensure_scene_in_project(&conn, "other-project", "scene-1").is_err());
+    assert!(repository::ensure_scene_in_project(&conn, &project_id, "scene-1").is_ok());
 
     repository::create_shot(&conn, &shot_record("scene-1", "shot-1", 0)).unwrap();
     repository::create_shot(&conn, &shot_record("scene-1", "shot-2", 1)).unwrap();
@@ -98,61 +68,14 @@ fn creates_scene_and_shots_with_ordering_uniqueness() {
     // Duplicate (scene_id, ordering) is rejected.
     assert!(repository::create_shot(&conn, &shot_record("scene-1", "shot-3", 0)).is_err());
 
+    // FK: shots must reference a real authoritative scene.
+    assert!(repository::create_shot(&conn, &shot_record("no-such-scene", "shot-4", 0)).is_err());
+
     let shots = repository::list_shots(&conn, "scene-1").unwrap();
     assert_eq!(shots.len(), 2);
     assert_eq!(shots[0].ordering, 0);
     assert_eq!(shots[1].ordering, 1);
-
-    let scenes = repository::list_scenes(&conn, &project_id).unwrap();
-    assert_eq!(scenes.len(), 1);
-    assert!(repository::list_scenes(&conn, "other-project")
-        .unwrap()
-        .is_empty());
-}
-
-#[test]
-fn scene_characters_and_props_require_existing_rows() {
-    let (_temp, root) = project("Red Door");
-    let conn = open_db(&root);
-    let project_id: String = conn
-        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
-        .unwrap();
-
-    repository::create_scene(&conn, &scene_record(&project_id, "scene-1")).unwrap();
-
-    // FK: unknown character entity is rejected.
-    let missing_character = SceneCharacterRecord {
-        scene_id: "scene-1".into(),
-        character_entity_id: "no-such-character".into(),
-        look_asset_version_id: "look-v1".into(),
-        sheet_asset_version_id: None,
-        display_order: 0,
-    };
-    assert!(repository::add_scene_character(&conn, &missing_character).is_err());
-
-    insert_canon_character(&conn, &project_id, "character-1");
-    insert_canonical_asset_version(&conn, &project_id, "look-v1");
-    insert_canonical_asset_version(&conn, &project_id, "sheet-v1");
-
-    let with_look = SceneCharacterRecord {
-        scene_id: "scene-1".into(),
-        character_entity_id: "character-1".into(),
-        look_asset_version_id: "look-v1".into(),
-        sheet_asset_version_id: Some("sheet-v1".into()),
-        display_order: 0,
-    };
-    repository::add_scene_character(&conn, &with_look).unwrap();
-
-    // FK: unknown prop plate version is rejected.
-    assert!(repository::add_scene_prop(
-        &conn,
-        &ScenePropRecord {
-            scene_id: "scene-1".into(),
-            prop_asset_version_id: "no-such-prop".into(),
-            display_order: 0,
-        }
-    )
-    .is_err());
+    assert_eq!(shots[0].scene_id, "scene-1");
 }
 
 #[test]
@@ -163,7 +86,7 @@ fn compilations_round_trip_with_scene_foreign_key() {
         .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
         .unwrap();
 
-    // FK: compilation must reference a real scene.
+    // FK: compilation must reference a real authoritative scene.
     let orphan = CinemaCompilation {
         id: "c-1".into(),
         project_id: project_id.clone(),
@@ -176,7 +99,7 @@ fn compilations_round_trip_with_scene_foreign_key() {
     };
     assert!(repository::insert_compilation(&conn, &orphan).is_err());
 
-    repository::create_scene(&conn, &scene_record(&project_id, "scene-1")).unwrap();
+    insert_world_scene(&conn, &project_id, "scene-1");
     let record = CinemaCompilation {
         scene_id: "scene-1".into(),
         ..orphan
@@ -191,4 +114,46 @@ fn compilations_round_trip_with_scene_foreign_key() {
 
     let listed = repository::list_compilations(&conn, "scene-1").unwrap();
     assert_eq!(listed.len(), 1);
+}
+
+#[test]
+fn reorder_shots_is_validated_and_contiguous() {
+    let (_temp, root) = project("Red Door");
+    let mut conn = open_db(&root);
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+
+    insert_world_scene(&conn, &project_id, "scene-1");
+    repository::create_shot(&conn, &shot_record("scene-1", "shot-1", 0)).unwrap();
+    repository::create_shot(&conn, &shot_record("scene-1", "shot-2", 1)).unwrap();
+    repository::create_shot(&conn, &shot_record("scene-1", "shot-3", 2)).unwrap();
+
+    // Incomplete set is rejected without side effects.
+    assert!(repository::reorder_shots(
+        &mut conn,
+        &project_id,
+        "scene-1",
+        &["shot-2".into(), "shot-1".into()]
+    )
+    .is_err());
+    // Foreign/duplicate ids are rejected.
+    assert!(repository::reorder_shots(
+        &mut conn,
+        &project_id,
+        "scene-1",
+        &["shot-1".into(), "shot-1".into(), "shot-2".into()]
+    )
+    .is_err());
+
+    let reordered = repository::reorder_shots(
+        &mut conn,
+        &project_id,
+        "scene-1",
+        &["shot-3".into(), "shot-1".into(), "shot-2".into()],
+    )
+    .unwrap();
+    let orderings: Vec<i64> = reordered.iter().map(|shot| shot.ordering).collect();
+    assert_eq!(orderings, vec![0, 1, 2]);
+    assert_eq!(reordered[0].id, "shot-3");
 }

@@ -122,9 +122,9 @@ fn entity_counts(conn: &Connection, project_id: &str) -> Result<Value, AppError>
             "SELECT COUNT(*) FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE a.project_id = ?1")?,
         "workflowRuns": count("SELECT COUNT(*) FROM workflow_runs WHERE project_id = ?1")?,
         "qaRuns": count("SELECT COUNT(*) FROM qa_runs WHERE project_id = ?1")?,
-        "scenes": count("SELECT COUNT(*) FROM scenes WHERE project_id = ?1")?,
-        "shots": count("SELECT COUNT(*) FROM shots s JOIN scenes sc ON sc.id = s.scene_id WHERE sc.project_id = ?1")?,
-        "cinemaCompilations": count("SELECT COUNT(*) FROM cinema_compilations WHERE project_id = ?1")?,
+        "scenes": count("SELECT COUNT(*) FROM world_scenes WHERE project_id = ?1")?,
+        "shots": count("SELECT COUNT(*) FROM scene_shots s JOIN world_scenes sc ON sc.id = s.scene_id WHERE sc.project_id = ?1")?,
+        "cinemaCompilations": count("SELECT COUNT(*) FROM scene_compilations WHERE project_id = ?1")?,
     }))
 }
 

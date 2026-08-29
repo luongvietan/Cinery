@@ -1,43 +1,22 @@
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 
-/// A persisted scene: one narrative unit inside a project, optionally
-/// anchored to a canonical world plate version and free-form canon notes.
+/// Minimal scene projection consumed by the cinema compiler. It is loaded
+/// from the authoritative `world_scenes` aggregate — the cinema layer owns
+/// shots and compilations only, never scene identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct SceneRecord {
+pub struct SceneRef {
     pub id: String,
     pub project_id: String,
     pub title: String,
-    pub world_asset_version_id: Option<String>,
-    pub canon_notes: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    /// Scene summary; also feeds the compiled audio instructions.
+    pub summary: String,
 }
 
-/// One character cast into a scene, pinned to a canonical look version
-/// (outfit / character sheet) and optionally a canonical sheet version.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SceneCharacterRecord {
-    pub scene_id: String,
-    pub character_entity_id: String,
-    pub look_asset_version_id: String,
-    pub sheet_asset_version_id: Option<String>,
-    pub display_order: i64,
-}
-
-/// One prop pinned into a scene via a canonical prop plate version.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ScenePropRecord {
-    pub scene_id: String,
-    pub prop_asset_version_id: String,
-    pub display_order: i64,
-}
-
-/// A persisted shot belonging to a scene. Ordering is unique per scene and
-/// durations are bounded by the schema (0 < duration <= 30s).
+/// A persisted shot belonging to the authoritative scene. Ordering is unique
+/// per scene and durations are bounded by the schema (0 < duration <= 30s).
+/// A video version field is deliberately absent until video generation ships.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShotRecord {
@@ -49,7 +28,6 @@ pub struct ShotRecord {
     pub intent: String,
     pub action: Option<String>,
     pub camera: Option<String>,
-    pub generated_video_asset_version_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }

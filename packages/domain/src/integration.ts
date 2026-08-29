@@ -5,7 +5,7 @@ export type ReadinessStatus = (typeof READINESS_STATUSES)[number];
 export interface OverviewAction {
   id: string;
   title: string;
-  destination: "canon" | "assets" | "production" | "cinema";
+  destination: "canon" | "assets" | "production" | "scenes";
   characterEntityId: string | null;
   sceneId: string | null;
 }
