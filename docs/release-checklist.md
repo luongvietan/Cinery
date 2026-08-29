@@ -1,6 +1,6 @@
 # Release Checklist
 
-**MVP IMPLEMENTED** process. Every release must pass all steps below from a
+**MVP RELEASE CANDIDATE** process (automated gates + production bundle). Promotion to MVP IMPLEMENTED requires the manual clean-install evidence pass below. Every release must pass all steps from a
 clean checkout. POST-MVP features must not be advertised as available.
 
 ## 1. Clean environment

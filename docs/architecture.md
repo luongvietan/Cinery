@@ -1,6 +1,6 @@
 # Architecture
 
-**MVP IMPLEMENTED** — this document describes the architecture as shipped in
+**MVP RELEASE CANDIDATE** — this document describes the architecture as shipped in
 the current release. Anything that is planned but not present is marked
 POST-MVP.
 
@@ -21,8 +21,39 @@ apps/desktop/           Tauri desktop app (frontend + Rust backend)
 apps/desktop/src/       React/TypeScript frontend (features/, components/, lib/)
 apps/desktop/src-tauri/ Rust backend (src/ modules, migrations/, tests/)
 packages/domain/        @cinematic/domain shared TypeScript types
+services/ai-worker/     Python sidecar placeholder (JSON-RPC 2.0 over stdio)
 docs/                   Architecture, format, recovery, privacy, release docs
 ```
+
+### Master plan §6 package mapping
+
+The master plan (§6) *recommends* eleven separate TypeScript packages
+(`domain`, `database`, `project-kernel`, `canon`, `assets`, `workflows`,
+`skills`, `prompt-compiler`, `providers`, `qa`, `shared`). The shipped
+architecture concentrates the same responsibilities as Rust modules inside
+`apps/desktop/src-tauri/src/` plus one shared TypeScript domain package,
+because the production engine is implemented in Rust, not TypeScript.
+The §6 package boundaries map onto the shipped modules as follows:
+
+| §6 package (recommended) | Shipped module(s) |
+|---|---|
+| `domain` (pure types/entities/state) | `packages/domain/src/*.ts` (IPC contract types) + `apps/desktop/src-tauri/src/*/model.rs` |
+| `database` (schema, migrations, repositories) | `apps/desktop/src-tauri/src/db/` + `migrations/` + each feature's `repository.rs` |
+| `project-kernel` | `apps/desktop/src-tauri/src/project/` |
+| `canon` | `apps/desktop/src-tauri/src/canon/` |
+| `assets` | `apps/desktop/src-tauri/src/assets/` |
+| `workflows` (state-machine orchestration) | `apps/desktop/src-tauri/src/workflow/` |
+| `skills` (definition format, registry, runtime) | `apps/desktop/src-tauri/src/skills/` + `workflow/runtime.rs` |
+| `prompt-compiler` | `apps/desktop/src-tauri/src/workflow/compiler.rs` + `cinema/compiler.rs` |
+| `providers` (adapters, routing) | `apps/desktop/src-tauri/src/providers/` |
+| `qa` (checks, comparison, repair) | `apps/desktop/src-tauri/src/qa/` |
+| `shared` | `packages/domain` (single shared package covers this) |
+
+This deviation follows the master plan's own engineering rules (§57.12
+"prefer boring technology"): the boundaries exist as Rust module
+boundaries with the same layering invariants (`commands.rs` → `service.rs` →
+`repository.rs`), without the overhead of publishing eleven packages whose
+only consumer is one desktop app.
 
 ## Layering
 
@@ -37,6 +68,41 @@ thin and the rules live in one place.
 3. **React frontend** (`apps/desktop/src/features/<feature>/`) — thin
    `api.ts` wrappers over `invokeCommand`, presentation components, and
    co-located tests.
+
+## Production router (master plan §13)
+
+`router/` routes a free-text production intent to a versioned skill
+operation:
+
+- **Deterministic scorer** matches intent text against each operation's
+  `intentExamples` (stop-word filtered, ≥50% word overlap threshold) and
+  runs `evaluate_feasibility`, which mirrors the workflow prerequisite
+  checks against current project state.
+- **LLM classifier (optional)** — when `OPENAI_API_KEY` is present, a chat
+  completion *proposes* an operation id. Code always re-validates the
+  proposal against the registry and prerequisites (§13, §53: the LLM may
+  suggest, code must validate). Any LLM failure or missing key degrades to
+  the deterministic matcher.
+- Exposed as `route_production_intent`; the AI Director bar in the
+  Production workspace renders the top suggestion and its blockers.
+
+## Providers (master plan §14)
+
+`providers/` registers a `GenerationProvider` per adapter behind one
+interface (`submit` / `poll` / `cancel` / `fetch_result`):
+
+- `dry_run` — writes the compiled request as an artifact.
+- `mock` / `mock-video` — deterministic in-process image/video generators.
+- `comfyui_local` — local ComfyUI HTTP stub; unreachable endpoints fail
+  with a clear, endpoint-specific error (§14.2, §15).
+- `openai` — real image generation adapter (credential from keychain/env).
+
+## Python AI worker (master plan §5.5)
+
+`services/ai-worker/` is a placeholder Python 3.12 sidecar speaking
+JSON-RPC 2.0 over stdio (`ping`, `health`). Post-MVP responsibilities
+(local VLM, embeddings, ComfyUI plumbing) extend it as new methods; the
+protocol boundary stays stable and business rules remain in Rust.
 
 ## Data authority (the invariants that hold the product together)
 

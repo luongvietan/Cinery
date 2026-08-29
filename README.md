@@ -61,7 +61,7 @@ The manual walkthrough is documented at
 The automated acceptance test lives at
 [`apps/desktop/src-tauri/tests/canon_engine_acceptance.rs`](apps/desktop/src-tauri/tests/canon_engine_acceptance.rs).
 
-## MVP IMPLEMENTED (P0–P9)
+## MVP RELEASE CANDIDATE (P0–P9)
 
 The current release covers the full MVP chain described in
 [`docs/specs/ai-cinematic-production-os-master-plan.md`](docs/specs/ai-cinematic-production-os-master-plan.md):
@@ -75,6 +75,10 @@ The current release covers the full MVP chain described in
   idempotent attempts, artifact lineage.
 - **Provider integrations (P5):** mock + OpenAI adapters, capability
   disclosure, keychain-only credentials, cancel/retry UX.
+- **Character pipeline (P5, §21):** the full Face Lock → Outfit → Character
+  Sheet chain with enforced prerequisites (no outfit without a canonical
+  face; no sheet without a canonical outfit) and three-panel sheet
+  compilation (§24).
 - **Visual QA & repair (P6–P7):** check planner, per-check review,
   repair-to-child-version workflow, exact-version scene pinning.
 - **Cinema compiler (P8):** provider-neutral scene compilation, runtime
@@ -83,6 +87,18 @@ The current release covers the full MVP chain described in
   scanning, provenance traversal, unified job lifecycle/recovery,
   privacy hardening, diagnostics export, UX/accessibility polish,
   golden-path acceptance fixture.
+- **Production router (§13):** deterministic intent → operation routing
+  with code-validated prerequisites, optional LLM classification behind a
+  hard code-validation boundary, and an AI Director bar in the Production
+  workspace.
+- **ComfyUI stub (§14.2):** local ComfyUI HTTP adapter that fails clearly
+  when the endpoint is unreachable.
+- **Direct video generation slice (Post-MVP V1.3 stub):** a persisted
+  cinema compilation can drive a `cinema.generate_video` workflow through
+  the `mock-video` provider into a candidate `video/mp4` asset version.
+- **Python AI worker (§5.5 placeholder):** `services/ai-worker/` speaks
+  JSON-RPC 2.0 over stdio (`ping`, `health`); AI responsibilities are
+  post-MVP.
 
 Documentation:
 
@@ -95,8 +111,8 @@ Documentation:
 ## POST-MVP (not implemented)
 
 The following are explicitly **not** in the current release and must not be
-advertised as available: multi-user collaboration, cloud sync, video
-generation providers beyond the MVP set, six-panel layouts, and any feature
+advertised as available: multi-user collaboration, cloud sync, real
+(non-mock) video generation providers, six-panel layouts, and any feature
 listed in the master plan's Post-MVP roadmap (section 60).
 
 ## Sprint 1 non-goals (historical)
@@ -108,3 +124,24 @@ The following are explicitly out of scope for Sprint 1:
 - no Skill Runtime
 - no QA
 - no scene/video workflow
+
+## Provider credential configuration
+
+Provider API keys are stored in the **operating system credential vault**
+(Windows Credential Manager, macOS Keychain, or the Linux Secret Service) —
+never in project files or environment variables:
+
+1. Open **Providers** in the desktop app.
+2. Choose the provider (for example `openai`, default model `gpt-image-2`).
+3. Paste the API key into the password field and click **Save credential**.
+4. The key is written to the OS vault and the input is cleared immediately;
+   the app only ever shows *configured* / *not configured*.
+
+Notes:
+
+- A one-time migration moves legacy `env://` environment-variable
+  references into the vault the first time the variable is present.
+- On Linux, a Secret Service implementation (for example `gnome-keyring`)
+  must be available.
+- Removing a credential clears the database reference first and then deletes
+  the vault entry; credentials are never returned to the UI.
