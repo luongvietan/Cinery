@@ -20,7 +20,19 @@ fn fixture() -> (tempfile::TempDir, std::path::PathBuf) {
         conn.execute("INSERT INTO canon_sections (id, canon_entity_id, section_key, value_json, status, revision, created_at, updated_at, locked_at) VALUES (?1, 'mara', ?2, ?3, 'locked', ?4, 'now', 'now', 'now')", params![id, key, value.to_string(), revision]).unwrap();
     }
     conn.execute("INSERT INTO assets (id, project_id, type, label, created_at, updated_at) VALUES ('face-asset', ?1, 'face_lock', 'MARA-FACE', 'now', 'now')", [&project_id]).unwrap();
-    conn.execute("INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) VALUES ('face-v002', 'face-asset', 2, 'canonical', 'assets/face-asset/v002/face.png', 'thumbnails/face-asset/face-v002.webp', 'd', 'face.png', 'image/png', 1, 'now')", []).unwrap();
+    // Materialize the referenced source file with matching hash metadata so
+    // reference-attachment resolution can verify it before submission.
+    let face_path = root.join("assets/face-asset/v002");
+    std::fs::create_dir_all(&face_path).unwrap();
+    let face_file = face_path.join("face.png");
+    let face_image: image::RgbaImage = image::ImageBuffer::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
+    face_image.save(&face_file).unwrap();
+    use sha2::{Digest, Sha256};
+    let face_bytes = std::fs::read(&face_file).unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(&face_bytes);
+    let face_hash = format!("{:x}", hasher.finalize());
+    conn.execute("INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) VALUES ('face-v002', 'face-asset', 2, 'canonical', 'assets/face-asset/v002/face.png', 'thumbnails/face-asset/face-v002.webp', ?1, 'face.png', 'image/png', ?2, 'now')", params![face_hash, face_bytes.len() as i64]).unwrap();
     conn.execute("UPDATE assets SET canonical_version_id = 'face-v002' WHERE id = 'face-asset'", []).unwrap();
     (temp, root)
 }
@@ -31,7 +43,7 @@ fn golden_face_lock_generation_persists_candidates_and_defers_asset_promotion() 
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         json!({
             "projectRootPath": root.to_string_lossy(),

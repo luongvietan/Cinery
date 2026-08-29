@@ -3,8 +3,13 @@ use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::skills::registry::SkillRegistry;
 use crate::workflow::artifacts::{workflow_artifact_dir, write_run_artifacts};
-use crate::workflow::compiler::{CharacterFaceLockCompiler, RequestCompiler};
-use crate::workflow::context::resolve_character_face_lock_context;
+use crate::workflow::compiler::{
+    CharacterFaceLockCompiler, CharacterOutfitCompiler, CharacterSheetCompiler, RequestCompiler,
+};
+use crate::workflow::context::{
+    resolve_character_face_lock_context, resolve_character_outfit_context,
+    resolve_character_sheet_context,
+};
 use crate::workflow::executor::{DryRunExecutor, ExecutionExecutor};
 use crate::workflow::model::{
     WorkflowCharacterOption, WorkflowContextSnapshot, WorkflowRunDetail, WorkflowRunRecord,
@@ -51,6 +56,8 @@ impl WorkflowRuntime {
     ) -> Result<WorkflowRunDetail, AppError> {
         match operation.input_schema_id.as_str() {
             "create_face_lock" => validate_face_lock_input(&input)?,
+            "create_outfit" => validate_outfit_input(&input)?,
+            "create_character_sheet" => validate_character_sheet_input(&input)?,
             "run_visual_qa" => validate_visual_qa_input(&input)?,
             "repair_failed_qa" => validate_visual_repair_input(&input)?,
             schema_id => {
@@ -165,6 +172,62 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "character_outfit_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail
+                                        .run
+                                        .prerequisite_report_json
+                                        .as_deref()
+                                        .ok_or_else(|| {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        })?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context = resolve_character_outfit_context(
+                                &conn,
+                                &project.id,
+                                &detail.run.skill_id,
+                                &detail.run.skill_version,
+                                &detail.run.operation_id,
+                                &input,
+                                report,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "character_sheet_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail
+                                        .run
+                                        .prerequisite_report_json
+                                        .as_deref()
+                                        .ok_or_else(|| {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        })?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context = resolve_character_sheet_context(
+                                &conn,
+                                &project.id,
+                                &detail.run.skill_id,
+                                &detail.run.skill_version,
+                                &detail.run.operation_id,
+                                &input,
+                                report,
+                            )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         "visual_qa_context" => {
                             let context = crate::qa::workflow::resolve_and_persist(
                                 &conn,
@@ -207,6 +270,46 @@ impl WorkflowRuntime {
                                     AppError::WorkflowRunInconsistent(error.to_string())
                                 })?;
                             let request = CharacterFaceLockCompiler.compile(
+                                workflow_run_id,
+                                skill,
+                                operation,
+                                &context,
+                            )?;
+                            write_run_artifacts(
+                                project_root,
+                                workflow_run_id,
+                                &context,
+                                &request,
+                            )?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "character_outfit_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = CharacterOutfitCompiler.compile(
+                                workflow_run_id,
+                                skill,
+                                operation,
+                                &context,
+                            )?;
+                            write_run_artifacts(
+                                project_root,
+                                workflow_run_id,
+                                &context,
+                                &request,
+                            )?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "character_sheet_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = CharacterSheetCompiler.compile(
                                 workflow_run_id,
                                 skill,
                                 operation,
@@ -681,8 +784,11 @@ fn execute_visual_repair_ready(
             "task": "visual_repair",
         })),
     )?;
-    let submission = match ProviderService::submit_compiled_request(
+    let reference_attachments = crate::workflow::execution::resolve_reference_attachments(project_root, &request)?;
+    let submission = match ProviderService::submit_provider_request(
         &request,
+        reference_attachments,
+        None,
         execute_step_id,
         &compiled_hash,
         provider_id,
@@ -1000,8 +1106,19 @@ fn execute_ready(
             &idempotency_key,
         )?;
         append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.queued", Some(&serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number})))?;
-        let submission = match ProviderService::submit_compiled_request(
+        let reference_attachments = match crate::workflow::execution::resolve_reference_attachments(project_root, &request) {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                let _ = append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.failed", Some(&serde_json::json!({"error": error.to_string()})));
+                return Err(error);
+            }
+        };
+        let submission = match ProviderService::submit_provider_request(
             &request,
+            reference_attachments,
+            None,
             execute_step_id,
             &compiled_hash,
             &provider_id,
@@ -1047,68 +1164,44 @@ fn execute_ready(
             .as_deref()
             .ok_or_else(|| AppError::WorkflowRunInconsistent("context snapshot is missing".into()))
             .and_then(|json| serde_json::from_str(json).map_err(|error| AppError::WorkflowRunInconsistent(error.to_string())))?;
-        if !snapshot.assets.is_empty() {
-            let compiled_request_hash = compiled_request_id(&request_json);
-            let captured = crate::generation::service::GenerationService::capture_provider_result(
-                project_root,
-                &crate::generation::service::GenerationCaptureInput {
-                    project_id: project_id.into(),
-                    workflow_run_id: detail.run.id.clone(),
-                    workflow_step_key: execute_step_id.into(),
-                    workflow_definition_id: operation.id.clone(),
-                    workflow_version: detail.run.skill_version.clone(),
-                    skill_id: detail.run.skill_id.clone(),
-                    skill_version: detail.run.skill_version.clone(),
-                    compiled_execution_artifact_id: compiled_request_hash.clone(),
-                    compiled_request_sha256: compiled_request_hash,
-                    canon_snapshot_id: (!snapshot.canon.is_empty()).then(|| format!("canon:{}", detail.run.id)),
-                    canon_snapshot_sha256: (!snapshot.canon.is_empty()).then(|| sha256_json(&snapshot.canon)),
-                    provider_attempt_id: attempt.id.clone(),
-                    provider_id: provider_id.clone(),
-                    model_id: model_id.clone(),
-                    source_asset_version_ids: snapshot.assets.iter().map(|asset| asset.asset_version_id.clone()).collect(),
-                    requested_output_count: 4,
-                },
-                &outcome.result,
-            )?;
-            let artifact_ids = captured
-                .artifacts
-                .iter()
-                .map(|artifact| artifact.id.clone())
-                .collect::<Vec<_>>();
-            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
-            append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()})))?;
-            crate::workflow::execution::ExecutionResult {
-                kind: provider_id,
-                artifact_path: project_root.join(&captured.artifacts[0].storage_path),
-                result_set_id: Some(captured.result_set.id),
-                artifact_ids,
-                request,
-            }
-        } else {
-            let asset_type = request.expected_output.asset_type.as_str();
-            let owner_entity_id = request
-                .expected_output
-                .owner_entity_input_ref
-                .as_deref()
-                .and_then(|reference| input.get(reference))
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            let version = crate::workflow::ingestion::persist_provider_result(
-                project_root,
-                &detail.run.id,
-                &outcome.result,
-                asset_type,
-                owner_entity_id,
-            )?;
-            append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"artifactPath": version.file_path})))?;
-            crate::workflow::execution::ExecutionResult {
-                kind: provider_id,
-                artifact_path: project_root.join(version.file_path),
-                result_set_id: None,
-                artifact_ids: Vec::new(),
-                request,
-            }
+        // Every character-builder operation captures a durable result set;
+        // first-Face runs legitimately carry an empty source-reference list.
+        let compiled_request_hash = compiled_request_id(&request_json);
+        let captured = crate::generation::service::GenerationService::capture_provider_result(
+            project_root,
+            &crate::generation::service::GenerationCaptureInput {
+                project_id: project_id.into(),
+                workflow_run_id: detail.run.id.clone(),
+                workflow_step_key: execute_step_id.into(),
+                workflow_definition_id: operation.id.clone(),
+                workflow_version: detail.run.skill_version.clone(),
+                skill_id: detail.run.skill_id.clone(),
+                skill_version: detail.run.skill_version.clone(),
+                compiled_execution_artifact_id: compiled_request_hash.clone(),
+                compiled_request_sha256: compiled_request_hash,
+                canon_snapshot_id: (!snapshot.canon.is_empty()).then(|| format!("canon:{}", detail.run.id)),
+                canon_snapshot_sha256: (!snapshot.canon.is_empty()).then(|| sha256_json(&snapshot.canon)),
+                provider_attempt_id: attempt.id.clone(),
+                provider_id: provider_id.clone(),
+                model_id: model_id.clone(),
+                source_asset_version_ids: snapshot.assets.iter().map(|asset| asset.asset_version_id.clone()).collect(),
+                requested_output_count: 4,
+            },
+            &outcome.result,
+        )?;
+        let artifact_ids = captured
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.id.clone())
+            .collect::<Vec<_>>();
+        update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+        append_audit_event(conn, Some(&attempt.id), &detail.run.id, "provider.execution.completed", Some(&serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()})))?;
+        crate::workflow::execution::ExecutionResult {
+            kind: provider_id,
+            artifact_path: project_root.join(&captured.artifacts[0].storage_path),
+            result_set_id: Some(captured.result_set.id),
+            artifact_ids,
+            request,
         }
     };
     let result_json =
@@ -1408,6 +1501,52 @@ fn validate_face_lock_input(input: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_outfit_input(input: &Value) -> Result<(), AppError> {
+    for key in ["projectRootPath", "characterEntityId"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    let proposal = input
+        .get("wardrobeProposal")
+        .and_then(Value::as_object)
+        .ok_or_else(|| AppError::WorkflowInputInvalid("wardrobeProposal is required".into()))?;
+    if proposal
+        .get("description")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+    {
+        return Err(AppError::WorkflowInputInvalid(
+            "wardrobeProposal.description must be a non-empty string".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_character_sheet_input(input: &Value) -> Result<(), AppError> {
+    for key in ["projectRootPath", "characterEntityId"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_visual_qa_input(input: &Value) -> Result<(), AppError> {
     for key in ["projectRootPath", "assetVersionId", "adapterId"] {
         if input
@@ -1495,7 +1634,7 @@ mod tests {
 
         let registry = SkillRegistry::builtin().unwrap();
         let (_, builtin) = registry
-            .find_operation("character-builder", "1.0.0", "character.create_face_lock")
+            .find_operation("character-builder", "1.1.0", "character.create_face_lock")
             .unwrap();
         let mut guarded = builtin.clone();
         guarded.tbd_guards = vec![TbdGuard::ProjectScope];
@@ -1509,7 +1648,7 @@ mod tests {
         let error = WorkflowRuntime::create_run_for_operation(
             &root,
             "character-builder",
-            "1.0.0",
+            "1.1.0",
             "character.create_face_lock",
             input,
             &guarded,

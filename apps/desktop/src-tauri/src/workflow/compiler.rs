@@ -136,6 +136,188 @@ impl RequestCompiler for CharacterFaceLockCompiler {
     }
 }
 
+pub struct CharacterOutfitCompiler;
+
+impl RequestCompiler for CharacterOutfitCompiler {
+    fn id(&self) -> &'static str {
+        "character_outfit_v1"
+    }
+
+    fn compile(
+        &self,
+        workflow_run_id: &str,
+        skill: &SkillDefinition,
+        operation: &SkillOperation,
+        context: &WorkflowContextSnapshot,
+    ) -> Result<ExecutionRequest, AppError> {
+        let character = required_context(&context.resolved_context, "character")?;
+        let wardrobe = required_context(&context.resolved_context, "wardrobeProposal")?;
+        let locks = character
+            .get("permanentVisualLocks")
+            .cloned()
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "permanentVisualLocks is missing from context".into(),
+                )
+            })?;
+        let canonical_face = context
+            .resolved_context
+            .get("canonicalFaceAssetVersionId")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "canonical face asset is missing from context".into(),
+                )
+            })?;
+        let mut prompt = String::new();
+        prompt.push_str("TASK\nCreate a direct-on-character outfit reference.\n\n");
+        prompt.push_str("CHARACTER IDENTITY\n");
+        prompt.push_str(&serde_json::to_string_pretty(&json_without_story_name(&character)).map_err(db_error)?);
+        prompt.push_str("\n\nPERMANENT VISUAL LOCKS\n");
+        prompt.push_str(&serde_json::to_string_pretty(&locks).map_err(db_error)?);
+        prompt.push_str("\n\nWARDROBE PROPOSAL\n");
+        prompt.push_str(&serde_json::to_string_pretty(&wardrobe).map_err(db_error)?);
+        prompt.push_str("\n\nCANONICAL FACE REFERENCE\nUse the canonical face asset version: ");
+        prompt.push_str(canonical_face);
+        prompt.push_str("\n\nOUTPUT INTENT\noutfit image candidate on the canonical character.\n");
+
+        let mut references = context
+            .canon
+            .iter()
+            .map(|reference| ExecutionReference {
+                reference_type: ExecutionReferenceType::CanonSnapshot,
+                reference: reference.section_id.clone(),
+                description: format!(
+                    "Locked Canon section {} at revision {}",
+                    reference.section_key, reference.revision
+                ),
+            })
+            .collect::<Vec<_>>();
+        references.extend(context.assets.iter().map(|reference| ExecutionReference {
+            reference_type: ExecutionReferenceType::AssetVersion,
+            reference: reference.asset_version_id.clone(),
+            description: format!(
+                "Canonical {} asset version {}",
+                reference.asset_type.as_str(),
+                reference.version_number
+            ),
+        }));
+        let mut constraints = vec![
+            ExecutionConstraint::FlatReferenceBackground {
+                value: ReferenceBackground::NeutralGray,
+            },
+            ExecutionConstraint::ShadowlessLighting { value: true },
+            ExecutionConstraint::NoCastShadow { value: true },
+            ExecutionConstraint::NoContactShadow { value: true },
+            ExecutionConstraint::NoCinematicDof { value: true },
+        ];
+        if let Some(lock_values) = locks.as_array() {
+            constraints.extend(lock_values.iter().filter_map(|lock| {
+                Some(ExecutionConstraint::PreserveVisualLock {
+                    key: lock.get("key")?.as_str()?.to_string(),
+                    description: lock.get("description")?.as_str()?.to_string(),
+                })
+            }));
+        }
+
+        Ok(ExecutionRequest {
+            request_version: 1,
+            task: ExecutionTask::CharacterOutfit,
+            media_type: ExecutionMediaType::Image,
+            prompt,
+            references,
+            constraints,
+            expected_output: operation.expected_output.clone().ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "outfit operation has no expected output".into(),
+                )
+            })?,
+            provenance: ExecutionProvenance {
+                workflow_run_id: workflow_run_id.into(),
+                skill_id: skill.id.clone(),
+                skill_version: skill.version.clone(),
+                operation_id: operation.id.clone(),
+            },
+        })
+    }
+}
+
+pub struct CharacterSheetCompiler;
+
+impl RequestCompiler for CharacterSheetCompiler {
+    fn id(&self) -> &'static str {
+        "character_sheet_v1"
+    }
+
+    fn compile(
+        &self,
+        workflow_run_id: &str,
+        skill: &SkillDefinition,
+        operation: &SkillOperation,
+        context: &WorkflowContextSnapshot,
+    ) -> Result<ExecutionRequest, AppError> {
+        let character = required_context(&context.resolved_context, "character")?;
+        let canonical_look = context
+            .resolved_context
+            .get("canonicalOutfitAssetVersionId")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "canonical outfit asset is missing from context".into(),
+                )
+            })?;
+        let mut prompt = String::new();
+        prompt.push_str("TASK\nCreate a three-panel character sheet.\n\n");
+        prompt.push_str("CHARACTER IDENTITY\n");
+        prompt.push_str(&serde_json::to_string_pretty(&json_without_story_name(&character)).map_err(db_error)?);
+        prompt.push_str("\n\nCANONICAL LOOK REFERENCE\nUse the canonical outfit asset version: ");
+        prompt.push_str(canonical_look);
+        prompt.push_str("\n\nSHEET PANELS (from §24)\n1. full-body front, headless;\n2. full-body rear;\n3. tight chest-up face.\n\nOUTPUT INTENT\ncharacter_sheet image candidate.\n");
+
+        let mut references = context
+            .canon
+            .iter()
+            .map(|reference| ExecutionReference {
+                reference_type: ExecutionReferenceType::CanonSnapshot,
+                reference: reference.section_id.clone(),
+                description: format!(
+                    "Locked Canon section {} at revision {}",
+                    reference.section_key, reference.revision
+                ),
+            })
+            .collect::<Vec<_>>();
+        references.extend(context.assets.iter().map(|reference| ExecutionReference {
+            reference_type: ExecutionReferenceType::AssetVersion,
+            reference: reference.asset_version_id.clone(),
+            description: format!(
+                "Canonical {} asset version {}",
+                reference.asset_type.as_str(),
+                reference.version_number
+            ),
+        }));
+
+        Ok(ExecutionRequest {
+            request_version: 1,
+            task: ExecutionTask::CharacterSheet,
+            media_type: ExecutionMediaType::Image,
+            prompt,
+            references,
+            constraints: vec![],
+            expected_output: operation.expected_output.clone().ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "character sheet operation has no expected output".into(),
+                )
+            })?,
+            provenance: ExecutionProvenance {
+                workflow_run_id: workflow_run_id.into(),
+                skill_id: skill.id.clone(),
+                skill_version: skill.version.clone(),
+                operation_id: operation.id.clone(),
+            },
+        })
+    }
+}
+
 fn json_without_story_name(character: &serde_json::Value) -> serde_json::Value {
     let mut value = character.clone();
     if let Some(object) = value.as_object_mut() {
@@ -164,12 +346,12 @@ mod tests {
     fn face_lock_compilation_is_deterministic_and_omits_story_name() {
         let registry = SkillRegistry::builtin().unwrap();
         let (skill, operation) = registry
-            .find_operation("character-builder", "1.0.0", "character.create_face_lock")
+            .find_operation("character-builder", "1.1.0", "character.create_face_lock")
             .unwrap();
         let context: WorkflowContextSnapshot = serde_json::from_value(serde_json::json!({
             "snapshotVersion": 1,
             "project": { "projectId": "project-1" },
-            "skill": { "skillId": "character-builder", "skillVersion": "1.0.0", "operationId": "character.create_face_lock" },
+            "skill": { "skillId": "character-builder", "skillVersion": "1.1.0", "operationId": "character.create_face_lock" },
             "input": {},
             "prerequisiteReport": { "passed": true, "checks": [] },
             "canon": [],

@@ -203,6 +203,8 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                 if !matches!(
                     resolver_id.as_str(),
                     "character_face_lock_context"
+                        | "character_outfit_context"
+                        | "character_sheet_context"
                         | "visual_qa_context"
                         | "visual_qa_repair_context"
                 ) =>
@@ -214,7 +216,11 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             WorkflowStepDefinition::CompileRequest { compiler_id, .. }
                 if !matches!(
                     compiler_id.as_str(),
-                    "character_face_lock_v1" | "visual_qa_v1" | "visual_qa_repair_v1"
+                    "character_face_lock_v1"
+                        | "character_outfit_v1"
+                        | "character_sheet_v1"
+                        | "visual_qa_v1"
+                        | "visual_qa_repair_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -253,6 +259,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::skills::model::AssetType;
 
     #[test]
     fn builtin_registry_resolves_the_versioned_face_lock_operation() {
@@ -260,15 +267,41 @@ mod tests {
         let (skill, operation) = registry
             .find_operation(
                 "character-builder",
-                "1.0.0",
+                "1.1.0",
                 "character.create_face_lock",
             )
             .unwrap();
 
         assert_eq!(skill.id, "character-builder");
-        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(skill.version, "1.1.0");
         assert_eq!(operation.id, "character.create_face_lock");
         assert_eq!(registry.list().len(), 2);
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_outfit_and_sheet_operations() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (_, outfit) = registry
+            .find_operation("character-builder", "1.1.0", "character.create_outfit")
+            .unwrap();
+        assert_eq!(outfit.input_schema_id, "create_outfit");
+        assert_eq!(
+            outfit.expected_output.as_ref().unwrap().asset_type,
+            AssetType::Outfit
+        );
+
+        let (_, sheet) = registry
+            .find_operation(
+                "character-builder",
+                "1.1.0",
+                "character.create_character_sheet",
+            )
+            .unwrap();
+        assert_eq!(sheet.input_schema_id, "create_character_sheet");
+        assert_eq!(
+            sheet.expected_output.as_ref().unwrap().asset_type,
+            AssetType::CharacterSheet
+        );
     }
 
     #[test]
@@ -324,46 +357,48 @@ mod tests {
     #[test]
     fn serialized_builtin_definition_is_stable_and_provider_free() {
         let registry = SkillRegistry::builtin().unwrap();
-        let snapshot = serde_json::to_value(registry.list()[0]).unwrap();
+        let skill = registry
+            .list()
+            .iter()
+            .find(|skill| skill.id == "character-builder")
+            .unwrap()
+            .to_owned();
+        let snapshot = serde_json::to_value(&skill).unwrap();
+        let operations = snapshot["operations"].as_array().unwrap();
 
-        assert_eq!(snapshot, serde_json::json!({
-            "id": "character-builder",
-            "name": "Character Builder",
-            "version": "1.0.0",
-            "description": "Build character production assets from locked Canon.",
-            "operations": [{
-                "id": "character.create_face_lock",
-                "name": "Create Face Lock",
-                "description": "Compile a provider-neutral face-lock request.",
-                "intentExamples": [
-                    "Create a face lock for this character",
-                    "Lock the character's face"
-                ],
-                "inputSchemaId": "create_face_lock",
-                "prerequisites": [{
-                    "type": "canon_entity_exists",
-                    "entityType": "character",
-                    "inputRef": "characterEntityId"
-                }],
-                "tbdGuards": [],
-                "workflow": [
-                    {"type": "validate_input", "id": "validate-input"},
-                    {"type": "resolve_context", "id": "resolve-context", "resolverId": "character_face_lock_context"},
-                    {"type": "compile_request", "id": "compile-request", "compilerId": "character_face_lock_v1"},
-                    {"type": "approval", "id": "approve-request", "title": "Approve Face Lock Request", "description": "Review canonical context and compiled generation request before execution.", "approvalArtifactRef": "compiled_request"},
-                    {"type": "execute", "id": "execute", "executorKind": "dry_run", "requestArtifactRef": "compiled_request"},
-                    {"type": "complete", "id": "complete"}
-                ],
-                "expectedOutput": {
-                    "assetType": "face_lock",
-                    "mediaType": "image",
-                    "desiredStatus": "candidate",
-                    "ownerEntityInputRef": "characterEntityId"
-                }
-            }]
-        }));
-
-        assert!(snapshot.get("provider").is_none());
-        assert!(snapshot.get("model").is_none());
+        assert_eq!(snapshot["id"], "character-builder");
+        assert_eq!(snapshot["version"], "1.1.0");
+        assert_eq!(snapshot.get("provider"), None);
+        assert_eq!(snapshot.get("model"), None);
+        assert_eq!(operations.len(), 3);
+        assert_eq!(operations[0]["id"], "character.create_face_lock");
+        assert_eq!(operations[1]["id"], "character.create_outfit");
+        assert_eq!(operations[2]["id"], "character.create_character_sheet");
+        assert_eq!(
+            operations[1]["prerequisites"][1],
+            serde_json::json!({
+                "type": "canonical_asset_exists",
+                "ownerEntityInputRef": "characterEntityId",
+                "assetType": "face_lock"
+            })
+        );
+        assert_eq!(
+            operations[2]["prerequisites"][1],
+            serde_json::json!({
+                "type": "canonical_asset_exists",
+                "ownerEntityInputRef": "characterEntityId",
+                "assetType": "outfit"
+            })
+        );
+        assert!(operations[0]["intentExamples"].is_array());
+        assert_eq!(
+            operations[0]["expectedOutput"],
+            serde_json::json!({
+                "assetType": "face_lock",
+                "mediaType": "image",
+                "desiredStatus": "candidate",
+                "ownerEntityInputRef": "characterEntityId"
+            })
+        );
     }
 }

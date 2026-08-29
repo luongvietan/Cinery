@@ -18,13 +18,16 @@ export function listWorkflowCharacters(projectRootPath: string): Promise<Workflo
 
 export function createWorkflowRun(
   projectRootPath: string,
+  skillId: string,
+  skillVersion: string,
+  operationId: string,
   input: Record<string, unknown>,
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("create_workflow_run", {
     projectRootPath,
-    skillId: "character-builder",
-    skillVersion: "1.0.0",
-    operationId: "character.create_face_lock",
+    skillId,
+    skillVersion,
+    operationId,
     input,
   });
 }
@@ -85,12 +88,13 @@ export function configureProvider(projectRootPath: string, config: Record<string
 export function saveProviderCredential(projectRootPath: string, providerId: string, secret: string, defaultModel: string | null): Promise<ProviderConfigurationStatus> {
   return invokeCommand("save_provider_credential", { projectRootPath, providerId, secret, defaultModel });
 }
+
 export function removeProviderCredentials(projectRootPath: string, providerId: string): Promise<void> {
   return invokeCommand("remove_provider_credentials", { projectRootPath, providerId });
 }
 
-export function validateProviderConfiguration(providerId: string): Promise<void> {
-  return invokeCommand("validate_provider_configuration", { providerId });
+export function validateProviderConfiguration(projectRootPath: string, providerId: string): Promise<void> {
+  return invokeCommand("validate_provider_configuration", { projectRootPath, providerId });
 }
 
 export function listProviderModels(providerId: string): Promise<string[]> {
