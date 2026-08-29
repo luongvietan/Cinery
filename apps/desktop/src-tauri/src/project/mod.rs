@@ -1,4 +1,4 @@
-pub(crate) mod commands;
+pub mod commands;
 pub mod model;
 pub(crate) mod paths;
 pub(crate) mod recent;

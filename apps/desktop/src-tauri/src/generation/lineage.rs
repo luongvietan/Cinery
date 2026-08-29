@@ -36,8 +36,11 @@ pub fn build_lineage(input: LineageInput) -> Result<ArtifactLineage, AppError> {
         &input.model_id,
         &input.created_at,
     ];
+    // Note: `source_asset_version_ids` may legitimately be empty — a
+    // character's first Face Lock has no pinned source reference (the
+    // provider runs reference-free). Every other provenance field remains
+    // mandatory so lineage stays inspectable end-to-end.
     if required.iter().any(|value| value.trim().is_empty())
-        || input.source_asset_version_ids.is_empty()
         || input
             .source_asset_version_ids
             .iter()

@@ -85,3 +85,20 @@ fn app_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppCommandError> {
         .app_config_dir()
         .map_err(|e| AppError::FileSystem(e.to_string()).into())
 }
+
+/// Creates a project without Tauri app-handle side effects (recent registry
+/// and asset-protocol scope). Used by tests that exercise the public
+/// command boundary; production always uses `create_project`.
+#[tauri::command]
+pub fn create_project_standalone(root_path: String, name: String) -> Result<ProjectSummary, AppCommandError> {
+    service::validate_root_path(&root_path)?;
+    ProjectService::create(&PathBuf::from(root_path), &name).map_err(Into::into)
+}
+
+/// Opens a project without Tauri app-handle side effects. See
+/// [`create_project_standalone`].
+#[tauri::command]
+pub fn open_project_standalone(root_path: String) -> Result<ProjectSummary, AppCommandError> {
+    service::validate_root_path(&root_path)?;
+    ProjectService::open(&PathBuf::from(root_path)).map_err(Into::into)
+}

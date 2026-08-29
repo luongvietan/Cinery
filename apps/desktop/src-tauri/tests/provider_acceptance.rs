@@ -50,12 +50,17 @@ fn approved_mock_execution_persists_attempt_job_and_candidate_artifact() {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     let attempt_count: i64 = conn.query_row("SELECT COUNT(*) FROM workflow_step_executions WHERE workflow_run_id = ?1 AND status = 'succeeded'", [&created.run.id], |row| row.get(0)).unwrap();
     let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM provider_jobs", [], |row| row.get(0)).unwrap();
+    // Result-set capture defers asset-version creation to explicit
+    // promotion, so no version exists until the user saves a candidate.
     let asset_version_count: i64 = conn.query_row("SELECT COUNT(*) FROM asset_versions", [], |row| row.get(0)).unwrap();
+    assert_eq!(asset_version_count, 0);
+    let result_sets: i64 = conn.query_row("SELECT COUNT(*) FROM generation_result_sets", [], |row| row.get(0)).unwrap();
+    assert_eq!(result_sets, 1);
     let audit_event_count: i64 = conn.query_row("SELECT COUNT(*) FROM provider_audit_events WHERE workflow_run_id = ?1", [&created.run.id], |row| row.get(0)).unwrap();
     assert_eq!(attempt_count, 1);
     assert_eq!(job_count, 1);
-    assert_eq!(asset_version_count, 1);
-    assert_eq!(audit_event_count, 3);
+    // queued + submitted + result_set.created + 4x artifact.materialized
+    assert_eq!(audit_event_count, 8);
 }
 
 #[test]

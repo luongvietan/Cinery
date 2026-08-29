@@ -125,3 +125,4 @@ pub fn compilable_scene() -> CompiledScene {
         characters,
     }
 }
+pub mod command_harness;

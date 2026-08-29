@@ -1,4 +1,4 @@
-pub(crate) mod commands;
+pub mod commands;
 pub(crate) mod import;
 pub mod model;
 pub(crate) mod repository;
