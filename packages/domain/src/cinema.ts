@@ -78,11 +78,37 @@ export interface SceneRecord {
   updatedAt: string;
 }
 
+export interface SceneCharacterRecord {
+  characterEntityId: string;
+  lookAssetVersionId: string;
+  sheetAssetVersionId: string | null;
+  displayOrder: number;
+}
+
+export interface ScenePropRecord {
+  propAssetVersionId: string;
+  displayOrder: number;
+}
+
+export interface ShotRecord {
+  id: string;
+  sceneId: string;
+  ordering: number;
+  durationSeconds: number;
+  keyframeAssetVersionId: string | null;
+  intent: string;
+  action: string | null;
+  camera: string | null;
+  generatedVideoAssetVersionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SceneDetail {
   scene: SceneRecord;
-  characters: Array<{ characterEntityId: string; lookAssetVersionId: string; sheetAssetVersionId: string | null }>;
-  props: Array<{ propAssetVersionId: string }>;
-  shots: Array<{ id: string; durationSeconds: number }>;
+  characters: SceneCharacterRecord[];
+  props: ScenePropRecord[];
+  shots: ShotRecord[];
 }
 
 export interface CinemaCompilationRecord {

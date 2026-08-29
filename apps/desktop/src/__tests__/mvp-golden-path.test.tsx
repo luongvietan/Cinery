@@ -50,7 +50,7 @@ const project: ProjectSummary = {
 };
 
 describe("MVP golden path (deterministic UI portions)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.mocked(listAssets).mockReset().mockResolvedValue([
       {
         id: "face-asset",
@@ -114,6 +114,19 @@ describe("MVP golden path (deterministic UI portions)", () => {
         updatedAt: "2026-08-28T06:00:00Z",
       },
     ]);
+    // The cinema workspace auto-selects the action's scene and loads its
+    // detail/readiness through the same mocked command facade.
+    const { getScene, getSceneReadiness } = await import("../features/cinema/api");
+    vi.mocked(getScene).mockReset().mockResolvedValue({
+      scene: {
+        id: "scene-001", projectId: "mara-project", title: "Scene 001", worldAssetVersionId: "world-v1",
+        canonNotes: null, createdAt: "2026-08-28T06:00:00Z", updatedAt: "2026-08-28T06:00:00Z",
+      },
+      characters: [],
+      props: [],
+      shots: [{ id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, generatedVideoAssetVersionId: null, createdAt: "now", updatedAt: "now" }],
+    });
+    vi.mocked(getSceneReadiness).mockReset().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] });
     vi.mocked(getProjectOverview).mockReset().mockResolvedValue({
       readiness: {
         status: "pending",
