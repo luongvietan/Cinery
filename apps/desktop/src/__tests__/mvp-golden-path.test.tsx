@@ -87,6 +87,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
       supportsSeed: false,
       supportsNegativePrompt: false,
       supportsReferenceImage: true,
+      supportsImageEdit: true,
       supportsMultipleReferenceImages: false,
       supportsImageToVideo: false,
       supportsCancel: false,
@@ -99,7 +100,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
       providerId: "mock",
       enabled: true,
       credentialConfigured: false,
-      credentialReference: null,
+      models: ["mock-image-v1"],
       defaultModel: "mock-image-v1",
     });
     vi.mocked(listScenes).mockReset().mockResolvedValue([

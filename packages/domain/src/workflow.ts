@@ -231,6 +231,7 @@ export interface ProviderCapabilities {
   supportsSeed: boolean;
   supportsNegativePrompt: boolean;
   supportsReferenceImage: boolean;
+  supportsImageEdit: boolean;
   supportsMultipleReferenceImages: boolean;
   supportsImageToVideo: boolean;
   supportsCancel: boolean;
@@ -242,8 +243,10 @@ export interface ProviderCapabilities {
 export interface ProviderConfigurationStatus {
   providerId: string;
   enabled: boolean;
+  /** True only when the backend verified both the vault entry and the DB reference. */
   credentialConfigured: boolean;
-  credentialReference: string | null;
+  /** Stable model list for the provider (e.g. ["gpt-image-2"]). */
+  models: string[];
   defaultModel: string | null;
 }
 

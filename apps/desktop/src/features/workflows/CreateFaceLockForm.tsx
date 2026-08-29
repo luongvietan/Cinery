@@ -1,5 +1,6 @@
 import { type FormEvent, useState } from "react";
 import type { WorkflowCharacterOption } from "@cinematic/domain";
+import { ProviderModelFields } from "../providers/ProviderModelFields";
 
 interface CreateFaceLockFormProps {
   projectRootPath: string;
@@ -14,13 +15,14 @@ const VISUAL_FIELDS = ["head", "eyes", "brows", "nose", "lips", "skin", "hair", 
 export function CreateFaceLockForm({ projectRootPath, characters, pending, onCancel, onSubmit }: CreateFaceLockFormProps) {
   const [characterEntityId, setCharacterEntityId] = useState(characters[0]?.id ?? "");
   const [baselineWardrobe, setBaselineWardrobe] = useState("");
+  const [providerSelection, setProviderSelection] = useState({ providerId: "mock", modelId: "mock-image-v1" });
   const [visualSpec, setVisualSpec] = useState<Record<(typeof VISUAL_FIELDS)[number], string>>(
     Object.fromEntries(VISUAL_FIELDS.map((field) => [field, ""])) as Record<(typeof VISUAL_FIELDS)[number], string>,
   );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onSubmit({ projectRootPath, characterEntityId, visualSpec, baselineWardrobe });
+    await onSubmit({ projectRootPath, characterEntityId, visualSpec, baselineWardrobe, providerId: providerSelection.providerId, modelId: providerSelection.modelId });
   }
 
   return (
@@ -47,6 +49,7 @@ export function CreateFaceLockForm({ projectRootPath, characters, pending, onCan
         </div>
         <label htmlFor="workflow-wardrobe">Baseline wardrobe</label>
         <input id="workflow-wardrobe" value={baselineWardrobe} onChange={(event) => setBaselineWardrobe(event.target.value)} required />
+        <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
         <div className="workflow-form-actions">
           <button type="submit" disabled={pending}>Create workflow run</button>
           <button type="button" onClick={onCancel} disabled={pending}>Cancel</button>

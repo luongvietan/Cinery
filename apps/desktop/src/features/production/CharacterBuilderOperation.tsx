@@ -1,15 +1,18 @@
 import { type FormEvent, useState } from "react";
 import type { AssetSummary, WorkflowCharacterOption } from "@cinematic/domain";
+import { ProviderModelFields } from "../providers/ProviderModelFields";
 
 const VISUAL_FIELDS = ["head", "eyes", "brows", "nose", "lips", "skin", "hair", "build", "expression"] as const;
 
 export function CharacterBuilderOperation({
+  projectRootPath,
   characters,
   sourceAssets,
   pending,
   onCancel,
   onSubmit,
 }: {
+  projectRootPath: string;
   characters: WorkflowCharacterOption[];
   sourceAssets: AssetSummary[];
   pending: boolean;
@@ -19,6 +22,7 @@ export function CharacterBuilderOperation({
   const [characterEntityId, setCharacterEntityId] = useState(characters[0]?.id ?? "");
   const [sourceAssetVersionId, setSourceAssetVersionId] = useState(sourceAssets[0]?.canonicalVersionId ?? "");
   const [baselineWardrobe, setBaselineWardrobe] = useState("");
+  const [providerSelection, setProviderSelection] = useState({ providerId: "mock", modelId: "mock-image-v1" });
   const [visualSpec, setVisualSpec] = useState<Record<(typeof VISUAL_FIELDS)[number], string>>(
     Object.fromEntries(VISUAL_FIELDS.map((field) => [field, ""])) as Record<(typeof VISUAL_FIELDS)[number], string>,
   );
@@ -30,8 +34,8 @@ export function CharacterBuilderOperation({
       sourceAssetVersionId,
       visualSpec,
       baselineWardrobe,
-      providerId: "mock",
-      modelId: "mock-image-v1",
+      providerId: providerSelection.providerId,
+      modelId: providerSelection.modelId,
     });
   }
 
@@ -52,6 +56,7 @@ export function CharacterBuilderOperation({
         )}
         <div className="production-form-grid">{VISUAL_FIELDS.map((field) => <label key={field}>{field[0].toUpperCase() + field.slice(1)}<input value={visualSpec[field]} onChange={(event) => setVisualSpec((current) => ({ ...current, [field]: event.target.value }))} required /></label>)}</div>
         <label>Baseline wardrobe<input value={baselineWardrobe} onChange={(event) => setBaselineWardrobe(event.target.value)} required /></label>
+        <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
         <div className="production-form-actions"><button type="submit" disabled={pending || !sourceAssetVersionId}>{pending ? "Preparing…" : "Review Request"}</button><button className="production-secondary" type="button" onClick={onCancel} disabled={pending}>Cancel</button></div>
       </form>
     </section>
