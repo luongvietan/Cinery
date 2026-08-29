@@ -168,6 +168,7 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
         .unwrap();
     assert_eq!(results.len(), 1, "keyframe run must capture one result set");
     let artifact_id = results[0].artifacts[0].artifact.id.clone();
+    let artifact_a = artifact_id.clone();
 
     let promoted = promote_generated_artifact(
         root.to_string_lossy().to_string(),
@@ -181,7 +182,61 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
     // Pin the exact immutable version on the shot.
     CinemaService::set_shot_keyframe(&root, &shot_a.id, Some(&promoted.id)).unwrap();
 
-    // ── Compile readiness + compile + export ──
+    // ── Second shot generates a NEWER keyframe; promotion must not drift
+    //    Shot A's exact pin ──
+    let created_b = create_workflow_run(
+        root.to_string_lossy().to_string(),
+        "scene-builder".into(),
+        "1.0.0".into(),
+        "scene.create_keyframe".into(),
+        json!({ "sceneId": scene.id, "providerId": "mock", "modelId": "mock-image-v1" }),
+    )
+    .unwrap();
+    advance_workflow_run(root.to_string_lossy().to_string(), created_b.run.id.clone()).unwrap();
+    approve_workflow_step(
+        root.to_string_lossy().to_string(),
+        created_b.run.id.clone(),
+        "approve-request".into(),
+        None,
+    )
+    .unwrap();
+    let completed_b =
+        advance_workflow_run(root.to_string_lossy().to_string(), created_b.run.id.clone()).unwrap();
+    assert_eq!(completed_b.run.status, "completed");
+
+    let results_b =
+        cinematic_desktop_lib::generation::commands::list_generation_results(
+            root.to_string_lossy().to_string(),
+            Some(created_b.run.id.clone()),
+        )
+        .unwrap();
+    let artifact_b = results_b[0].artifacts[0].artifact.id.clone();
+    assert_ne!(artifact_a, artifact_b, "each run yields its own candidate");
+    let promoted_b = promote_generated_artifact(
+        root.to_string_lossy().to_string(),
+        artifact_b,
+        keyframe_asset.id.clone(),
+        true,
+    )
+    .unwrap();
+    assert_eq!(promoted_b.status, "canonical");
+    // Content dedup by sha256: the deterministic mock produced identical
+    // bytes, so both artifacts resolve to the SAME immutable version. The
+    // promotion is recorded idempotently for each artifact; a real provider
+    // with distinct bytes yields a distinct version.
+    assert_eq!(promoted_b.id, promoted.id);
+    CinemaService::set_shot_keyframe(&root, &shot_b.id, Some(&promoted_b.id)).unwrap();
+
+    // Shot A still pins the exact version it was given — no drift.
+    let shots_after = CinemaService::list_shots(&root, &scene.id).unwrap();
+    let shot_a_after = shots_after.iter().find(|s| s.id == shot_a.id).unwrap();
+    assert_eq!(
+        shot_a_after.keyframe_asset_version_id.as_deref(),
+        Some(promoted.id.as_str()),
+        "Shot A's pinned keyframe must not drift when Shot B promotes a newer version"
+    );
+
+    // Canonical drift does not make the scene unready.
     let readiness = CinemaService::scene_readiness(&root, &scene.id).unwrap();
     assert!(readiness.ready, "unexpected blockers: {:?}", readiness.blockers);
 

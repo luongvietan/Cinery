@@ -1,6 +1,6 @@
 # P9 integration contracts — frozen P0–P8 baseline
 
-**Baseline inspected:** P8 cinema compiler, schema migrations through 17 (`0017_unified_scene_shots.sql`).
+**Baseline inspected:** P8 cinema compiler, schema migrations through 18 (`0018_artifact_promotion_idempotency.sql`).
 This document records existing contracts; it does not introduce a second service,
 state store, compiler, or mutable authority. P9 code consumes these boundaries.
 
@@ -35,7 +35,7 @@ shared type/schema deliberately, rather than creating a competing shape.
 ## Durable schema and statuses
 
 Migrations are append-only entries in `db::migrations::MIGRATIONS`; migration
-**17** is the current latest (migration 17 consolidates the Scene domain: `scene_shots` and `scene_compilations` hang off the authoritative `world_scenes` aggregate; legacy P8 tables remain read-only). Do not edit a shipped migration. The ordered P0–P8
+**18** is the current latest. Migration 17 consolidates the Scene domain: `scene_shots` and `scene_compilations` hang off the authoritative `world_scenes` aggregate; legacy P8 tables remain read-only. Migration 18 relaxes `artifact_promotions` uniqueness so content-deduped promotions (identical sha256 → one immutable version) record idempotently per artifact. Do not edit a shipped migration. The ordered P0–P8
 schema is `0001_project_kernel` through `0012_cinema_compiler`.
 
 | Domain | Values / storage invariant |
@@ -111,6 +111,6 @@ to the shared type and its consumers with a contract test.
 - Treat IDs in workflow snapshots, QA, scene records, and lineage as immutable
   refs; use the snapshot only in the workflow that captured it, and let cinema
   resolve its live scene/canon inputs through `CinemaService`.
-- Add migrations only after version 17 and register them in `MIGRATIONS`.
+- Add migrations only after version 18 and register them in `MIGRATIONS`.
 - Keep provider-specific request shaping outside the provider-neutral workflow,
   generation, repair, and cinema contracts.

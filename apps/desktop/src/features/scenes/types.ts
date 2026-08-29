@@ -90,7 +90,7 @@ export type SceneReadinessBlockerKind =
   | "tbd_decision_required"
   | "no_cast"
   | "no_shots"
-  | "shot_keyframe_not_canonical";
+  | "shot_keyframe_broken";
 
 export type SceneReadinessWarningKind =
   | "upgrade_available"

@@ -2015,15 +2015,21 @@ impl SceneService {
                 context: None,
             });
         } else {
-            let non_canonical_keyframes: Vec<String> = {
+            // Invariant: a Shot pins an exact immutable Keyframe AssetVersion.
+            // That pin stays valid even when another Shot generates or
+            // promotes a newer canonical version of the (scene-level)
+            // keyframe asset — upgrading a pin is always an explicit action.
+            // Only a broken/missing pin blocks compilation; missing versions
+            // are also reported by the project health scan.
+            let broken_keyframes: Vec<String> = {
                 let mut stmt = conn
                     .prepare(
                         "SELECT ss.id FROM scene_shots ss \
-                         JOIN asset_versions av ON av.id = ss.keyframe_asset_version_id \
-                         JOIN assets a ON a.id = av.asset_id \
                          WHERE ss.scene_id = ?1 AND ss.keyframe_asset_version_id IS NOT NULL \
-                         AND (a.type != 'shot_keyframe' OR a.canonical_version_id IS NULL \
-                              OR a.canonical_version_id != ss.keyframe_asset_version_id)",
+                         AND NOT EXISTS (SELECT 1 FROM asset_versions av \
+                                         JOIN assets a ON a.id = av.asset_id \
+                                         WHERE av.id = ss.keyframe_asset_version_id \
+                                           AND a.type = 'shot_keyframe')",
                     )
                     .map_err(|e| AppError::Database(e.to_string()))?;
                 let rows = stmt
@@ -2032,10 +2038,10 @@ impl SceneService {
                 rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
                     .collect::<Result<Vec<String>, AppError>>()?
             };
-            for shot_id in non_canonical_keyframes {
+            for shot_id in broken_keyframes {
                 compile_blockers.push(SceneReadinessBlocker {
-                    kind: SceneReadinessBlockerKind::ShotKeyframeNotCanonical,
-                    message: "A shot keyframe is not the current canonical version".into(),
+                    kind: SceneReadinessBlockerKind::ShotKeyframeBroken,
+                    message: "A shot pins a missing or invalid keyframe version".into(),
                     context: Some(shot_id),
                 });
             }

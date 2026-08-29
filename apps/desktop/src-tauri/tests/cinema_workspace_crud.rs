@@ -191,3 +191,46 @@ fn shot_ordering_is_stable_after_reopen() {
     );
     let _ = project_id;
 }
+
+#[test]
+fn deleting_the_middle_shot_leaves_unique_contiguous_reorderable_ordering() {
+    let (_temp, root) = project("shot-delete-middle");
+    let mut conn = open_db(&root);
+    let (project_id, scene_id) = seed_scene(&conn);
+    for (id, ordering) in [("shot-1", 0), ("shot-2", 1), ("shot-3", 2)] {
+        repository::create_shot(&conn, &shot_record(&scene_id, id, ordering)).unwrap();
+    }
+
+    // Delete the middle shot.
+    repository::delete_shot(&conn, &project_id, &scene_id, "shot-2").unwrap();
+
+    // Ordering remains valid and unique (0 and 2 — no duplicates).
+    let shots = repository::list_shots(&conn, &scene_id).unwrap();
+    let orderings: Vec<i64> = shots.iter().map(|s| s.ordering).collect();
+    assert_eq!(orderings, vec![0, 2]);
+    let distinct: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT ordering) FROM scene_shots WHERE scene_id = ?1",
+            rusqlite::params![scene_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct, 2);
+
+    // The scene remains reorderable into a contiguous order afterwards.
+    let reordered = repository::reorder_shots(
+        &mut conn,
+        &project_id,
+        &scene_id,
+        &["shot-3".to_string(), "shot-1".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        reordered.iter().map(|s| s.ordering).collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    assert_eq!(
+        reordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+        vec!["shot-3", "shot-1"]
+    );
+}

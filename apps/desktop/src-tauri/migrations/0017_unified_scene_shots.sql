@@ -42,21 +42,31 @@ CREATE INDEX idx_scene_compilations_scene ON scene_compilations(scene_id, create
 -- Deterministic legacy migration (P8 `scenes` -> `world_scenes`)
 -- ---------------------------------------------------------------------------
 --
--- 1. Every legacy scene with no title match in `world_scenes` becomes a new
---    authoritative scene (next free ordinal, empty summary). Its world
---    binding is preserved only when the pinned world plate version is still
---    the canonical version of a World's plate asset; the owning World then
---    provides the world_id.
--- 2. Legacy shots keep their ids and are re-parented onto the mapped scene.
--- 3. Legacy compilations keep their ids and are re-parented likewise.
--- Legacy tables keep their original rows (read-only archive); matching by
--- title is deterministic and order-stable (earliest ordinal wins).
+-- Mapping rule for each legacy scene row S (evaluated once, in legacy
+-- created_at/id order):
+--
+--   1. If a derived row `'wsc-' || S.id` already exists, that is the target
+--      (rerun safety).
+--   2. Else, if exactly ONE pre-existing (non-derived) authoritative scene in
+--      the same project has the same title, that scene is the target
+--      (unambiguous attach; covers projects that authored the same scene on
+--      both subsystems).
+--   3. Else (no match, or AMBIGUOUS: two or more same-titled authoritative
+--      scenes, or two legacy scenes sharing a title), a fresh derived row
+--      `'wsc-' || S.id` is created for this legacy scene alone. Legacy rows
+--      are never merged into an ambiguous target and never silently attached
+--      to a guessed scene; nothing is discarded (the legacy tables remain).
+--
+-- Derived ordinals use `(max ordinal + 1) + S.rowid` so two rows inserted in
+-- the same statement can never collide on UNIQUE(project_id, ordinal);
+-- later scenes continue from MAX+1.
 
 INSERT INTO world_scenes (id, project_id, ordinal, title, summary, world_id, world_asset_version_id, created_at, updated_at)
 SELECT
     'wsc-' || s.id,
     s.project_id,
-    (SELECT COALESCE(MAX(ws.ordinal) + 1, 0) FROM world_scenes ws WHERE ws.project_id = s.project_id),
+    (SELECT COALESCE(MAX(ws.ordinal), -1) + 1 FROM world_scenes ws WHERE ws.project_id = s.project_id)
+      + s.rowid,
     s.title,
     '',
     NULL,
@@ -65,16 +75,14 @@ SELECT
     s.updated_at
 FROM scenes s
 WHERE NOT EXISTS (
-    SELECT 1 FROM world_scenes ws
-    WHERE ws.project_id = s.project_id AND ws.title = s.title
-)
-AND NOT EXISTS (
-    -- id collision guard: mapping ids are derived, so this cannot repeat
     SELECT 1 FROM world_scenes ws WHERE ws.id = 'wsc-' || s.id
-);
+)
+AND (SELECT COUNT(*) FROM world_scenes ws2
+     WHERE ws2.project_id = s.project_id AND ws2.title = s.title
+       AND ws2.id NOT LIKE 'wsc-%') <> 1;
 
--- Resolve world_id for the freshly created rows: the legacy world version
--- must currently be the canonical version of that World's plate asset.
+-- Resolve world_id for the derived rows: the legacy world version must
+-- currently be the canonical version of that World's plate asset.
 UPDATE world_scenes
 SET world_id = (
     SELECT w.id FROM worlds w
@@ -84,19 +92,44 @@ SET world_id = (
 )
 WHERE id LIKE 'wsc-%' AND world_id IS NULL AND world_asset_version_id IS NOT NULL;
 
--- Move shots onto the authoritative scene that carries the legacy scene's
--- title (existing match or the one created above).
+-- Target of one legacy scene: the unique non-derived same-title authoritative
+-- scene when there is exactly one; otherwise the derived row.
+-- `legacy_target(s.project_id, s.id)` expressed inline (twice below).
+--
+-- Move shots onto the mapped target. Shot ids are preserved.
 INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, keyframe_asset_version_id, intent, action, camera, created_at, updated_at)
-SELECT sh.id, ws.id, sh.ordering, sh.duration_seconds, sh.keyframe_asset_version_id, sh.intent, sh.action, sh.camera, sh.created_at, sh.updated_at
+SELECT
+    sh.id,
+    CASE
+        WHEN (SELECT COUNT(*) FROM world_scenes ws2
+              WHERE ws2.project_id = s.project_id AND ws2.title = s.title
+                AND ws2.id NOT LIKE 'wsc-%') = 1
+        THEN (SELECT ws3.id FROM world_scenes ws3
+              WHERE ws3.project_id = s.project_id AND ws3.title = s.title
+                AND ws3.id NOT LIKE 'wsc-%')
+        ELSE 'wsc-' || s.id
+    END,
+    sh.ordering, sh.duration_seconds, sh.keyframe_asset_version_id,
+    sh.intent, sh.action, sh.camera, sh.created_at, sh.updated_at
 FROM shots sh
 JOIN scenes s ON s.id = sh.scene_id
-JOIN world_scenes ws ON ws.project_id = s.project_id AND ws.title = s.title
 WHERE NOT EXISTS (SELECT 1 FROM scene_shots ss WHERE ss.id = sh.id);
 
--- Move compilations likewise.
+-- Move compilations likewise. Compilation ids are preserved.
 INSERT INTO scene_compilations (id, project_id, scene_id, input_json, compilation_json, export_path, export_sha256, created_at)
-SELECT cc.id, cc.project_id, ws.id, cc.input_json, cc.compilation_json, cc.export_path, cc.export_sha256, cc.created_at
+SELECT
+    cc.id,
+    cc.project_id,
+    CASE
+        WHEN (SELECT COUNT(*) FROM world_scenes ws2
+              WHERE ws2.project_id = s.project_id AND ws2.title = s.title
+                AND ws2.id NOT LIKE 'wsc-%') = 1
+        THEN (SELECT ws3.id FROM world_scenes ws3
+              WHERE ws3.project_id = s.project_id AND ws3.title = s.title
+                AND ws3.id NOT LIKE 'wsc-%')
+        ELSE 'wsc-' || s.id
+    END,
+    cc.input_json, cc.compilation_json, cc.export_path, cc.export_sha256, cc.created_at
 FROM cinema_compilations cc
 JOIN scenes s ON s.id = cc.scene_id
-JOIN world_scenes ws ON ws.project_id = s.project_id AND ws.title = s.title
 WHERE NOT EXISTS (SELECT 1 FROM scene_compilations sc WHERE sc.id = cc.id);

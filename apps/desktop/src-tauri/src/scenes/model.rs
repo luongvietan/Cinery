@@ -165,7 +165,7 @@ string_enum!(SceneReadinessBlockerKind {
     TbdDecisionRequired => "tbd_decision_required",
     NoCast => "no_cast",
     NoShots => "no_shots",
-    ShotKeyframeNotCanonical => "shot_keyframe_not_canonical",
+    ShotKeyframeBroken => "shot_keyframe_broken",
 });
 
 string_enum!(SceneReadinessWarningKind {
