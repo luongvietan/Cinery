@@ -120,7 +120,7 @@ fn check_asset_version_owners(
             "SELECT av.id, a.owner_entity_id FROM asset_versions av \
               JOIN assets a ON a.id = av.asset_id \
               WHERE a.project_id = ?1 AND a.owner_entity_id IS NOT NULL \
-              AND NOT EXISTS (SELECT 1 FROM canon_entities WHERE id = a.owner_entity_id)",
+              AND NOT EXISTS (SELECT 1 FROM canon_entities WHERE id = a.owner_entity_id) \n              AND NOT EXISTS (SELECT 1 FROM worlds WHERE id = a.owner_entity_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -187,7 +187,7 @@ fn check_scene_world_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.id, s.world_asset_version_id FROM scenes s \
+            "SELECT s.id, s.world_asset_version_id FROM world_scenes s \
              WHERE s.project_id = ?1 AND s.world_asset_version_id IS NOT NULL \
              AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = s.world_asset_version_id)",
         )
@@ -220,8 +220,8 @@ fn check_scene_look_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT sc.scene_id, sc.look_asset_version_id FROM scene_characters sc \
-             JOIN scenes s ON s.id = sc.scene_id \
+            "SELECT sc.scene_id, sc.look_asset_version_id FROM world_scene_characters sc \
+             JOIN world_scenes s ON s.id = sc.scene_id \
              WHERE s.project_id = ?1 \
              AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = sc.look_asset_version_id)",
         )
@@ -254,8 +254,8 @@ fn check_scene_prop_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT sp.scene_id, sp.prop_asset_version_id FROM scene_props sp \
-             JOIN scenes s ON s.id = sp.scene_id \
+            "SELECT sp.scene_id, sp.prop_asset_version_id FROM world_scene_props sp \
+             JOIN world_scenes s ON s.id = sp.scene_id \
              WHERE s.project_id = ?1 \
              AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = sp.prop_asset_version_id)",
         )
@@ -288,10 +288,10 @@ fn check_shot_scene_mismatches(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT shot.id, shot.scene_id FROM shots shot \
-             JOIN scenes sc ON sc.id = shot.scene_id \
+            "SELECT shot.id, shot.scene_id FROM scene_shots shot \
+             JOIN world_scenes sc ON sc.id = shot.scene_id \
              WHERE sc.project_id = ?1 \
-             AND NOT EXISTS (SELECT 1 FROM scenes s WHERE s.id = shot.scene_id)",
+             AND NOT EXISTS (SELECT 1 FROM world_scenes s WHERE s.id = shot.scene_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
@@ -322,8 +322,8 @@ fn check_keyframe_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT s.id, s.keyframe_asset_version_id FROM shots s \
-             JOIN scenes sc ON sc.id = s.scene_id \
+            "SELECT s.id, s.keyframe_asset_version_id FROM scene_shots s \
+             JOIN world_scenes sc ON sc.id = s.scene_id \
              WHERE sc.project_id = ?1 \
              AND s.keyframe_asset_version_id IS NOT NULL \
              AND NOT EXISTS (SELECT 1 FROM asset_versions av WHERE av.id = s.keyframe_asset_version_id)",
@@ -496,9 +496,9 @@ fn check_cinema_input_references(
 ) -> Result<(), AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT cc.id, cc.scene_id FROM cinema_compilations cc \
+            "SELECT cc.id, cc.scene_id FROM scene_compilations cc \
              WHERE cc.project_id = ?1 \
-             AND NOT EXISTS (SELECT 1 FROM scenes s WHERE s.id = cc.scene_id)",
+             AND NOT EXISTS (SELECT 1 FROM world_scenes s WHERE s.id = cc.scene_id)",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt

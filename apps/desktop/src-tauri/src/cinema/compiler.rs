@@ -1,7 +1,7 @@
 use crate::canon::service::VisualLockDto;
 use crate::cinema::model::{
-    compute_time_budget, BehavioralLocks, ProviderNeutralCinemaPrompt, SceneCharacterRecord,
-    SceneRecord, ShotInstruction, ShotRecord, SubjectLock, WorldContinuity,
+    compute_time_budget, BehavioralLocks, ProviderNeutralCinemaPrompt, SceneRef, ShotInstruction,
+    ShotRecord, SubjectLock, WorldContinuity,
 };
 use crate::error::AppError;
 
@@ -15,11 +15,10 @@ use crate::error::AppError;
 /// story questions never leak into generation prompts (master plan #11).
 #[allow(clippy::too_many_arguments)]
 pub fn compile(
-    scene: &SceneRecord,
+    scene: &SceneRef,
     compilation_id: &str,
     total_duration_seconds: f64,
     _shot_count: Option<usize>,
-    characters: &[SceneCharacterRecord],
     behavioral_locks: &BehavioralLocks,
     world_continuity: &WorldContinuity,
     visual_locks: &[VisualLockDto],
@@ -46,10 +45,7 @@ pub fn compile(
     subject_locks.sort_by(|a, b| a.key.cmp(&b.key).then(a.id.cmp(&b.id)));
     subject_locks.dedup_by(|a, b| a.id == b.id && a.key == b.key);
 
-    let look_ref = characters
-        .first()
-        .map(|character| character.look_asset_version_id.clone())
-        .unwrap_or_else(|| "canonical look".to_string());
+    let look_ref = "canonical look".to_string();
     let world_ref = world_continuity
         .plate_asset_version_id
         .clone()
@@ -127,7 +123,7 @@ fn scrub(text: &str, forbidden_topics: &[String]) -> String {
 /// Assembles the deterministic prompt text and the structured prompt value.
 #[allow(clippy::too_many_arguments)]
 fn build_prompt(
-    scene: &SceneRecord,
+    scene: &SceneRef,
     compilation_id: &str,
     total_duration_seconds: f64,
     behavioral_locks: &BehavioralLocks,
@@ -148,10 +144,11 @@ fn build_prompt(
         .description
         .clone()
         .unwrap_or_else(|| "unspecified world baseline".to_string());
-    let audio_instructions = scene
-        .canon_notes
-        .as_deref()
-        .map(|notes| scrub(notes, forbidden_topics));
+    let audio_instructions = if scene.summary.trim().is_empty() {
+        None
+    } else {
+        Some(scrub(&scene.summary, forbidden_topics))
+    };
 
     let last_frame = shot_instructions
         .last()

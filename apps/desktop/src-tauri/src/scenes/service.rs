@@ -1933,8 +1933,8 @@ impl SceneService {
             }
         }
         let char_assignments = scenes_repository::list_scene_characters(&conn, scene_id)?;
-        for ca in char_assignments {
-            entity_ids.push(ca.character_entity_id);
+        for ca in &char_assignments {
+            entity_ids.push(ca.character_entity_id.clone());
         }
         // Use TBD policy to load applicable
         let applicable =
@@ -1990,10 +1990,63 @@ impl SceneService {
         }
 
         let ready_for_keyframe = blockers.is_empty();
+
+        // Compile readiness adds shot-domain requirements on top of the
+        // shared reference/TBD blockers (cinema compilation semantics).
+        let mut compile_blockers = blockers.clone();
+        if char_assignments.is_empty() {
+            compile_blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::NoCast,
+                message: "No character is cast in this scene".into(),
+                context: None,
+            });
+        }
+        let shot_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM scene_shots WHERE scene_id = ?1",
+                rusqlite::params![scene_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if shot_count == 0 {
+            compile_blockers.push(SceneReadinessBlocker {
+                kind: SceneReadinessBlockerKind::NoShots,
+                message: "This scene has no shots".into(),
+                context: None,
+            });
+        } else {
+            let non_canonical_keyframes: Vec<String> = {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT ss.id FROM scene_shots ss \
+                         JOIN asset_versions av ON av.id = ss.keyframe_asset_version_id \
+                         JOIN assets a ON a.id = av.asset_id \
+                         WHERE ss.scene_id = ?1 AND ss.keyframe_asset_version_id IS NOT NULL \
+                         AND (a.type != 'shot_keyframe' OR a.canonical_version_id IS NULL \
+                              OR a.canonical_version_id != ss.keyframe_asset_version_id)",
+                    )
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                let rows = stmt
+                    .query_map(rusqlite::params![scene_id], |row| row.get::<_, String>(0))
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
+                    .collect::<Result<Vec<String>, AppError>>()?
+            };
+            for shot_id in non_canonical_keyframes {
+                compile_blockers.push(SceneReadinessBlocker {
+                    kind: SceneReadinessBlockerKind::ShotKeyframeNotCanonical,
+                    message: "A shot keyframe is not the current canonical version".into(),
+                    context: Some(shot_id),
+                });
+            }
+        }
+
         Ok(SceneReadiness {
             ready_for_keyframe,
             blockers,
             warnings,
+            ready_for_compile: compile_blockers.is_empty(),
+            compile_blockers,
         })
     }
 

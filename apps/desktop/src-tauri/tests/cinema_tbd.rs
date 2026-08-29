@@ -49,9 +49,22 @@ fn scene_with_character(keys: &[&str]) -> (TempDir, PathBuf, String, String) {
         .unwrap();
         CanonService::lock_section(&root, &section.id, None).unwrap();
     }
-    let look = canonical_version(&root, "outfit");
-    let scene = CinemaService::create_scene(&root, "Scene 001", None, None).unwrap();
-    CinemaService::add_character_to_scene(&root, &scene.id, &character.id, &look, None).unwrap();
+    // Look asset must be owned by the character (P7 reference checks).
+    let look_asset =
+        AssetService::create_asset(&root, "outfit", "Mara Look", Some(character.id.clone()))
+            .unwrap();
+    let look_source = test_image(&root, "look.png", [4, 5, 6, 255]);
+    let look_version =
+        AssetService::import_asset_version(&root, &look_asset.id, &look_source, None).unwrap();
+    AssetService::promote_asset_version(&root, &look_version.id).unwrap();
+    let look = look_version.id;
+    let scene =
+        cinematic_desktop_lib::scenes::service::SceneService::create_scene(&root, "Scene 001", "A test scene")
+            .unwrap();
+    cinematic_desktop_lib::scenes::service::SceneService::add_scene_character(
+        &root, &scene.id, &character.id, &look, None, None,
+    )
+    .unwrap();
     CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None).unwrap();
     (temp, root, scene.id, character.id)
 }

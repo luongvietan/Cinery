@@ -4,6 +4,8 @@ use cinematic_desktop_lib::canon::service::CanonService;
 use cinematic_desktop_lib::canon::tbd;
 use cinematic_desktop_lib::cinema::model::CinemaCompileInput;
 use cinematic_desktop_lib::cinema::service::CinemaService;
+use cinematic_desktop_lib::scenes::service::SceneService;
+use cinematic_desktop_lib::worlds::service::WorldService;
 use cinematic_desktop_lib::integration::readiness::{get_project_overview, ReadinessStatus};
 use cinematic_desktop_lib::project::service::ProjectService;
 use std::path::{Path, PathBuf};
@@ -72,8 +74,21 @@ impl ProjectFixture {
             Some(character_id.clone()),
             [7, 8, 9, 255],
         );
-        let (_, world_version_id) =
-            self.canonical_asset("world_plate", "Station World", None, [10, 11, 12, 255]);
+        let location =
+            CanonService::create_entity(&self.root, CanonEntityType::Location, "The Station")
+                .unwrap();
+        let world = WorldService::create_world(&self.root, &location.id).unwrap();
+        {
+            let plate_source = self.image("world-plate.png", [10, 11, 12, 255]);
+            let plate_version = AssetService::import_asset_version(
+                &self.root,
+                &world.world_plate_asset_id,
+                &plate_source,
+                None,
+            )
+            .unwrap();
+            AssetService::promote_asset_version(&self.root, &plate_version.id).unwrap();
+        }
 
         for key in ["speech", "movement", "stillness"] {
             let section = CanonService::upsert_section(
@@ -97,14 +112,16 @@ impl ProjectFixture {
         CanonService::lock_section(&self.root, &visual_locks.id, None).unwrap();
 
         let scene =
-            CinemaService::create_scene(&self.root, "Scene 001", Some(world_version_id), None)
+            SceneService::create_scene(&self.root, "Scene 001", "Mara returns to the station")
                 .unwrap();
-        CinemaService::add_character_to_scene(
+        SceneService::assign_scene_world(&self.root, &scene.id, &world.id).unwrap();
+        SceneService::add_scene_character(
             &self.root,
             &scene.id,
             &character_id,
             &look_version_id,
-            Some(sheet_version_id),
+            Some(sheet_version_id.as_str()),
+            None,
         )
         .unwrap();
         CinemaService::create_shot(&self.root, &scene.id, None, 4.0, "Mara enters", None, None)
@@ -418,15 +435,24 @@ fn later_uncompiled_scene_remains_the_next_production_action_after_an_older_comp
         .unwrap()
         .canonical_version_id
         .unwrap();
-    let later = CinemaService::create_scene(&fixture.root, "Scene 002", Some(world), None).unwrap();
-    CinemaService::add_character_to_scene(
-        &fixture.root,
-        &later.id,
-        &character_id,
-        &look,
-        Some(sheet),
-    )
-    .unwrap();
+    let _ = world;
+    let location = CanonService::create_entity(&fixture.root, CanonEntityType::Location, "Later Station").unwrap();
+    let later_world = WorldService::create_world(&fixture.root, &location.id).unwrap();
+    {
+        let plate_source = fixture.image("later-world-plate.png", [40, 41, 42, 255]);
+        let plate_version = AssetService::import_asset_version(
+            &fixture.root,
+            &later_world.world_plate_asset_id,
+            &plate_source,
+            None,
+        )
+        .unwrap();
+        AssetService::promote_asset_version(&fixture.root, &plate_version.id).unwrap();
+    }
+    let later = SceneService::create_scene(&fixture.root, "Scene 002", "Mara returns again").unwrap();
+    SceneService::assign_scene_world(&fixture.root, &later.id, &later_world.id).unwrap();
+    SceneService::add_scene_character(&fixture.root, &later.id, &character_id, &look, Some(sheet.as_str()), None)
+        .unwrap();
     CinemaService::create_shot(
         &fixture.root,
         &later.id,

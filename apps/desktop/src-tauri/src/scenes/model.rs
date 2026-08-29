@@ -163,6 +163,9 @@ string_enum!(SceneReadinessBlockerKind {
     CharacterReferenceBroken => "character_reference_broken",
     PropReferenceBroken => "prop_reference_broken",
     TbdDecisionRequired => "tbd_decision_required",
+    NoCast => "no_cast",
+    NoShots => "no_shots",
+    ShotKeyframeNotCanonical => "shot_keyframe_not_canonical",
 });
 
 string_enum!(SceneReadinessWarningKind {
@@ -187,13 +190,17 @@ pub struct SceneReadinessWarning {
     pub context: Option<String>,
 }
 
-/// Derived readiness for keyframe generation — never persisted as a boolean.
+/// Derived readiness for the unified Scene — never persisted as a boolean.
+/// `ready_for_keyframe` gates keyframe generation; `ready_for_compile` gates
+/// cinema compilation (which additionally requires cast and shots).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SceneReadiness {
     pub ready_for_keyframe: bool,
     pub blockers: Vec<SceneReadinessBlocker>,
     pub warnings: Vec<SceneReadinessWarning>,
+    pub ready_for_compile: bool,
+    pub compile_blockers: Vec<SceneReadinessBlocker>,
 }
 
 // ---------------------------------------------------------------------------

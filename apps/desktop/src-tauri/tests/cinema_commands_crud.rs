@@ -1,9 +1,15 @@
-//! Command-boundary tests for the cinema workspace CRUD commands. Every
-//! mutation goes through the public Tauri command functions and DTOs.
+//! Command-boundary tests for the unified scene + cinema commands. Scene
+//! identity is created through the `scenes` command boundary (authoritative
+//! `world_scenes` aggregate); shots and compilations go through the `cinema`
+//! commands. Every mutation goes through public Tauri command functions.
 
 use cinematic_desktop_lib::assets::service::AssetService;
+use cinematic_desktop_lib::canon::model::CanonEntityType;
+use cinematic_desktop_lib::canon::service::CanonService;
 use cinematic_desktop_lib::cinema::commands::*;
 use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::scenes::commands as scene_commands;
+use cinematic_desktop_lib::worlds::service::WorldService;
 use tempfile::tempdir;
 
 fn image_file(root: &std::path::Path, name: &str, pixel: [u8; 4]) -> std::path::PathBuf {
@@ -41,32 +47,66 @@ fn fixture() -> Fixture {
     }
 }
 
+fn scene_with_world(f: &Fixture) -> (String, String) {
+    let location =
+        CanonService::create_entity(std::path::Path::new(&f.root), CanonEntityType::Location, "The Station")
+            .unwrap();
+    let world = WorldService::create_world(std::path::Path::new(&f.root), &location.id).unwrap();
+    {
+        // Canonicalize the World's plate asset so the scene can pin it.
+        let source = image_file(std::path::Path::new(&f.root), "world-plate.png", [10, 20, 30, 255]);
+        let version = AssetService::import_asset_version(
+            std::path::Path::new(&f.root),
+            &world.world_plate_asset_id,
+            &source,
+            None,
+        )
+        .unwrap();
+        AssetService::promote_asset_version(std::path::Path::new(&f.root), &version.id).unwrap();
+    }
+    let scene = scene_commands::create_world_scene(
+        f.root.clone(),
+        "Scene 001".into(),
+        "Ops room stand-off".into(),
+    )
+    .unwrap();
+    scene_commands::assign_scene_world(f.root.clone(), scene.id.clone(), world.id.clone())
+        .unwrap();
+    (scene.id, world.id)
+}
+
 #[test]
-fn scene_crud_commands_round_trip_with_stable_error_codes() {
+fn scene_commands_round_trip_with_stable_error_codes() {
     let f = fixture();
 
-    let scene = create_scene(f.root.clone(), "Scene 001".into(), None, None).unwrap();
-    let renamed = rename_scene(f.root.clone(), scene.id.clone(), "Scene 001 - Ops".into()).unwrap();
+    let scene = scene_commands::create_world_scene(
+        f.root.clone(),
+        "Scene 001".into(),
+        "Summary".into(),
+    )
+    .unwrap();
+    let renamed = scene_commands::update_scene_details(
+        f.root.clone(),
+        scene.id.clone(),
+        "Scene 001 - Ops".into(),
+        "Summary".into(),
+    )
+    .unwrap();
     assert_eq!(renamed.title, "Scene 001 - Ops");
 
-    let detail = get_scene(f.root.clone(), scene.id.clone()).unwrap();
-    assert_eq!(detail.scene.id, scene.id);
-    assert!(detail.shots.is_empty());
+    let fetched = scene_commands::get_world_scene(f.root.clone(), scene.id.clone()).unwrap();
+    assert_eq!(fetched.id, scene.id);
 
     // Stable error code for a missing scene.
-    let error = get_scene(f.root.clone(), "01ARZ3NDEKTSV4RRFFQ69G5FAV".into()).unwrap_err();
+    let error =
+        scene_commands::get_world_scene(f.root.clone(), "01ARZ3NDEKTSV4RRFFQ69G5FAV".into())
+            .unwrap_err();
     assert_eq!(error.code, "SCENE_NOT_FOUND");
 }
 
 #[test]
-fn world_pin_and_shot_lifecycle_flow_through_commands() {
+fn world_assignment_and_shot_lifecycle_flow_through_commands() {
     let f = fixture();
-    let world = canonical_version(
-        std::path::Path::new(&f.root),
-        "world_plate",
-        "World",
-        [10, 20, 30, 255],
-    );
     let keyframe = canonical_version(
         std::path::Path::new(&f.root),
         "shot_keyframe",
@@ -74,18 +114,13 @@ fn world_pin_and_shot_lifecycle_flow_through_commands() {
         [40, 50, 60, 255],
     );
 
-    let scene = create_scene(f.root.clone(), "Scene 002".into(), None, None).unwrap();
-
-    set_scene_world(f.root.clone(), scene.id.clone(), Some(world.clone())).unwrap();
-    let detail = get_scene(f.root.clone(), scene.id.clone()).unwrap();
-    assert_eq!(
-        detail.scene.world_asset_version_id.as_deref(),
-        Some(world.as_str())
-    );
+    let (scene_id, _world_id) = scene_with_world(&f);
+    let scene = scene_commands::get_world_scene(f.root.clone(), scene_id.clone()).unwrap();
+    assert!(scene.world_asset_version_id.is_some());
 
     let shot = create_shot(
         f.root.clone(),
-        scene.id.clone(),
+        scene_id.clone(),
         None,
         4.0,
         "Establish".into(),
@@ -105,9 +140,9 @@ fn world_pin_and_shot_lifecycle_flow_through_commands() {
     assert_eq!(updated.duration_seconds, 6.0);
 
     set_shot_keyframe(f.root.clone(), shot.id.clone(), Some(keyframe.clone())).unwrap();
-    let detail = get_scene(f.root.clone(), scene.id.clone()).unwrap();
+    let shots = list_shots(f.root.clone(), scene_id.clone()).unwrap();
     assert_eq!(
-        detail.shots[0].keyframe_asset_version_id.as_deref(),
+        shots[0].keyframe_asset_version_id.as_deref(),
         Some(keyframe.as_str())
     );
 
@@ -117,7 +152,7 @@ fn world_pin_and_shot_lifecycle_flow_through_commands() {
     // Second shot for reorder coverage.
     let shot2 = create_shot(
         f.root.clone(),
-        scene.id.clone(),
+        scene_id.clone(),
         None,
         4.0,
         "Second".into(),
@@ -127,7 +162,7 @@ fn world_pin_and_shot_lifecycle_flow_through_commands() {
     .unwrap();
     let reordered = reorder_shots(
         f.root.clone(),
-        scene.id.clone(),
+        scene_id.clone(),
         vec![shot2.id.clone(), shot.id.clone()],
     )
     .unwrap();
@@ -138,29 +173,31 @@ fn world_pin_and_shot_lifecycle_flow_through_commands() {
     );
 
     // Readiness: no cast -> blocker, stable action target.
-    let readiness = get_scene_readiness(f.root.clone(), scene.id.clone()).unwrap();
+    let readiness = get_scene_readiness(f.root.clone(), scene_id.clone()).unwrap();
     assert!(!readiness.ready);
     assert!(readiness
         .blockers
         .iter()
         .any(|b| b.code == "missing_cast_look" && b.action_target == "cast"));
 
-    delete_shot(f.root.clone(), scene.id.clone(), shot.id.clone()).unwrap();
-    let detail = get_scene(f.root.clone(), scene.id.clone()).unwrap();
-    assert_eq!(detail.shots.len(), 1);
+    delete_shot(f.root.clone(), scene_id.clone(), shot.id.clone()).unwrap();
+    let shots = list_shots(f.root.clone(), scene_id).unwrap();
+    assert_eq!(shots.len(), 1);
 }
 
 #[test]
 fn invalid_mutations_return_stable_error_codes_not_panics() {
     let f = fixture();
-    let scene = create_scene(f.root.clone(), "Scene 003".into(), None, None).unwrap();
+    let (scene_id, _world_id) = scene_with_world(&f);
 
-    let error = rename_scene(f.root.clone(), scene.id.clone(), String::new()).unwrap_err();
+    let error =
+        scene_commands::update_scene_details(f.root.clone(), scene_id.clone(), String::new(), String::new())
+            .unwrap_err();
     assert_eq!(error.code, "INVALID_SCENE_TITLE");
 
     let error = create_shot(
         f.root.clone(),
-        scene.id.clone(),
+        scene_id.clone(),
         None,
         99.0,
         "Too long".into(),
@@ -170,17 +207,19 @@ fn invalid_mutations_return_stable_error_codes_not_panics() {
     .unwrap_err();
     assert_eq!(error.code, "INVALID_CINEMA_DURATION");
 
-    let error = reorder_shots(f.root.clone(), scene.id.clone(), vec!["shot-x".into()]).unwrap_err();
+    let error = reorder_shots(f.root.clone(), scene_id.clone(), vec!["shot-x".into()]).unwrap_err();
     assert_eq!(error.code, "WORKFLOW_INPUT_INVALID");
 
-    // Non-canonical world version is rejected by validation.
-    let asset = AssetService::create_asset(std::path::Path::new(&f.root), "world_plate", "W", None)
-        .unwrap();
-    let source = image_file(std::path::Path::new(&f.root), "w.png", [1, 2, 3, 255]);
-    let candidate =
-        AssetService::import_asset_version(std::path::Path::new(&f.root), &asset.id, &source, None)
-            .unwrap();
-    let error =
-        set_scene_world(f.root.clone(), scene.id.clone(), Some(candidate.id.clone())).unwrap_err();
-    assert_eq!(error.code, "WORKFLOW_PREREQUISITE_FAILED");
+    // Shots cannot be attached to a scene of another project / missing scene.
+    let error = create_shot(
+        f.root.clone(),
+        "01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+        None,
+        4.0,
+        "Orphan".into(),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "SCENE_NOT_FOUND");
 }

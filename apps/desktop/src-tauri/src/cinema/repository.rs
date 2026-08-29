@@ -1,115 +1,54 @@
-use crate::cinema::model::{
-    CinemaCompilation, SceneCharacterRecord, ScenePropRecord, SceneRecord, ShotRecord, ShotUpdate,
-};
+use crate::cinema::model::{CinemaCompilation, ShotRecord, ShotUpdate};
 use crate::error::AppError;
 use rusqlite::{params, Connection, OptionalExtension};
 
-fn scene_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SceneRecord> {
-    Ok(SceneRecord {
+fn shot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShotRecord> {
+    Ok(ShotRecord {
         id: row.get(0)?,
-        project_id: row.get(1)?,
-        title: row.get(2)?,
-        world_asset_version_id: row.get(3)?,
-        canon_notes: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
+        scene_id: row.get(1)?,
+        ordering: row.get(2)?,
+        duration_seconds: row.get(3)?,
+        keyframe_asset_version_id: row.get(4)?,
+        intent: row.get(5)?,
+        action: row.get(6)?,
+        camera: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
     })
 }
 
-/// Inserts a new scene row.
-pub fn create_scene(conn: &Connection, record: &SceneRecord) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO scenes (id, project_id, title, world_asset_version_id, canon_notes, \
-         created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            record.id,
-            record.project_id,
-            record.title,
-            record.world_asset_version_id,
-            record.canon_notes,
-            record.created_at,
-            record.updated_at,
-        ],
-    )
-    .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(())
-}
+const SHOT_COLUMNS: &str = "id, scene_id, ordering, duration_seconds, keyframe_asset_version_id, \
+     intent, action, camera, created_at, updated_at";
 
-/// Reads a single scene scoped to `project_id`; scenes from other projects
-/// are reported as [`AppError::SceneNotFound`] rather than leaked.
-pub fn get_scene(
+/// Verifies the scene exists and belongs to `project_id` (authoritative
+/// `world_scenes` aggregate). Scenes from other projects are reported as
+/// [`AppError::SceneNotFound`] rather than leaked.
+pub fn ensure_scene_in_project(
     conn: &Connection,
     project_id: &str,
     scene_id: &str,
-) -> Result<SceneRecord, AppError> {
-    conn.query_row(
-        "SELECT id, project_id, title, world_asset_version_id, canon_notes, created_at, \
-         updated_at FROM scenes WHERE id = ?1 AND project_id = ?2",
-        params![scene_id, project_id],
-        scene_from_row,
-    )
-    .optional()
-    .map_err(|e| AppError::Database(e.to_string()))?
-    .ok_or(AppError::SceneNotFound)
-}
-
-/// Lists every scene of `project_id`, newest first.
-pub fn list_scenes(conn: &Connection, project_id: &str) -> Result<Vec<SceneRecord>, AppError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, title, world_asset_version_id, canon_notes, created_at, \
-             updated_at FROM scenes WHERE project_id = ?1 ORDER BY created_at DESC, id",
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let rows = stmt
-        .query_map(params![project_id], scene_from_row)
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
-        .collect()
-}
-
-/// Pins a character entity into a scene with canonical look (and optional
-/// sheet) versions.
-pub fn add_scene_character(
-    conn: &Connection,
-    record: &SceneCharacterRecord,
 ) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO scene_characters (scene_id, character_entity_id, look_asset_version_id, \
-         sheet_asset_version_id, display_order) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            record.scene_id,
-            record.character_entity_id,
-            record.look_asset_version_id,
-            record.sheet_asset_version_id,
-            record.display_order,
-        ],
-    )
-    .map_err(|e| AppError::Database(e.to_string()))?;
+    let owned: Option<String> = conn
+        .query_row(
+            "SELECT id FROM world_scenes WHERE id = ?1 AND project_id = ?2",
+            params![scene_id, project_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if owned.is_none() {
+        return Err(AppError::SceneNotFound);
+    }
     Ok(())
 }
 
-/// Pins a prop plate version into a scene.
-pub fn add_scene_prop(conn: &Connection, record: &ScenePropRecord) -> Result<(), AppError> {
-    conn.execute(
-        "INSERT INTO scene_props (scene_id, prop_asset_version_id, display_order) \
-         VALUES (?1, ?2, ?3)",
-        params![
-            record.scene_id,
-            record.prop_asset_version_id,
-            record.display_order
-        ],
-    )
-    .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(())
-}
 /// Inserts a new shot row. The schema's UNIQUE(scene_id, ordering) constraint
 /// rejects duplicate orderings and the CHECK constraints bound durations.
 pub fn create_shot(conn: &Connection, record: &ShotRecord) -> Result<(), AppError> {
     conn.execute(
-        "INSERT INTO shots (id, scene_id, ordering, duration_seconds, keyframe_asset_version_id, \
-         intent, action, camera, generated_video_asset_version_id, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        "INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, \
+         keyframe_asset_version_id, intent, action, camera, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             record.id,
             record.scene_id,
@@ -119,7 +58,6 @@ pub fn create_shot(conn: &Connection, record: &ShotRecord) -> Result<(), AppErro
             record.intent,
             record.action,
             record.camera,
-            record.generated_video_asset_version_id,
             record.created_at,
             record.updated_at,
         ],
@@ -131,38 +69,22 @@ pub fn create_shot(conn: &Connection, record: &ShotRecord) -> Result<(), AppErro
 /// Lists every shot of `scene_id` ordered by its `ordering`.
 pub fn list_shots(conn: &Connection, scene_id: &str) -> Result<Vec<ShotRecord>, AppError> {
     let mut stmt = conn
-        .prepare(
-            "SELECT id, scene_id, ordering, duration_seconds, keyframe_asset_version_id, intent, \
-             action, camera, generated_video_asset_version_id, created_at, updated_at \
-             FROM shots WHERE scene_id = ?1 ORDER BY ordering ASC",
-        )
+        .prepare(&format!(
+            "SELECT {SHOT_COLUMNS} FROM scene_shots WHERE scene_id = ?1 ORDER BY ordering ASC"
+        ))
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
-        .query_map(params![scene_id], |row| {
-            Ok(ShotRecord {
-                id: row.get(0)?,
-                scene_id: row.get(1)?,
-                ordering: row.get(2)?,
-                duration_seconds: row.get(3)?,
-                keyframe_asset_version_id: row.get(4)?,
-                intent: row.get(5)?,
-                action: row.get(6)?,
-                camera: row.get(7)?,
-                generated_video_asset_version_id: row.get(8)?,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
-            })
-        })
+        .query_map(params![scene_id], shot_from_row)
         .map_err(|e| AppError::Database(e.to_string()))?;
     rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
         .collect()
 }
 
-/// Persists one compilation record (input snapshot, compiled JSON, export
+/// Inserts a compilation record (input snapshot, compiled JSON, export
 /// artifact path and content hash).
 pub fn insert_compilation(conn: &Connection, record: &CinemaCompilation) -> Result<(), AppError> {
     conn.execute(
-        "INSERT INTO cinema_compilations (id, project_id, scene_id, input_json, \
+        "INSERT INTO scene_compilations (id, project_id, scene_id, input_json, \
          compilation_json, export_path, export_sha256, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
@@ -184,7 +106,7 @@ pub fn insert_compilation(conn: &Connection, record: &CinemaCompilation) -> Resu
 pub fn get_compilation(conn: &Connection, id: &str) -> Result<CinemaCompilation, AppError> {
     conn.query_row(
         "SELECT id, project_id, scene_id, input_json, compilation_json, export_path, \
-         export_sha256, created_at FROM cinema_compilations WHERE id = ?1",
+         export_sha256, created_at FROM scene_compilations WHERE id = ?1",
         params![id],
         compilation_from_row,
     )
@@ -201,7 +123,7 @@ pub fn list_compilations(
     let mut stmt = conn
         .prepare(
             "SELECT id, project_id, scene_id, input_json, compilation_json, export_path, \
-             export_sha256, created_at FROM cinema_compilations WHERE scene_id = ?1 \
+             export_sha256, created_at FROM scene_compilations WHERE scene_id = ?1 \
              ORDER BY created_at DESC, id",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -225,150 +147,36 @@ fn compilation_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CinemaCompi
     })
 }
 
-/// Lists the characters cast into `scene_id`, in display order.
-pub fn list_scene_characters(
+/// Loads the authoritative scene's cast (exact look/sheet versions) in cast
+/// order for compilation input.
+pub fn list_scene_cast(
     conn: &Connection,
     scene_id: &str,
-) -> Result<Vec<SceneCharacterRecord>, AppError> {
+) -> Result<Vec<crate::scenes::model::SceneCharacterAssignment>, AppError> {
     let mut stmt = conn
         .prepare(
-            "SELECT scene_id, character_entity_id, look_asset_version_id, \
-             sheet_asset_version_id, display_order FROM scene_characters \
-             WHERE scene_id = ?1 ORDER BY display_order ASC, character_entity_id",
+            "SELECT id, scene_id, character_entity_id, look_asset_version_id, \
+             sheet_asset_version_id, notes, created_at, updated_at \
+             FROM world_scene_characters WHERE scene_id = ?1 \
+             ORDER BY created_at ASC, id ASC",
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     let rows = stmt
         .query_map(params![scene_id], |row| {
-            Ok(SceneCharacterRecord {
-                scene_id: row.get(0)?,
-                character_entity_id: row.get(1)?,
-                look_asset_version_id: row.get(2)?,
-                sheet_asset_version_id: row.get(3)?,
-                display_order: row.get(4)?,
+            Ok(crate::scenes::model::SceneCharacterAssignment {
+                id: row.get(0)?,
+                scene_id: row.get(1)?,
+                character_entity_id: row.get(2)?,
+                look_asset_version_id: row.get(3)?,
+                sheet_asset_version_id: row.get(4)?,
+                notes: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
             })
         })
         .map_err(|e| AppError::Database(e.to_string()))?;
     rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
         .collect()
-}
-
-/// Lists the props pinned into `scene_id`, in display order.
-pub fn list_scene_props(
-    conn: &Connection,
-    scene_id: &str,
-) -> Result<Vec<ScenePropRecord>, AppError> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT scene_id, prop_asset_version_id, display_order FROM scene_props \
-             WHERE scene_id = ?1 ORDER BY display_order ASC, prop_asset_version_id",
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let rows = stmt
-        .query_map(params![scene_id], |row| {
-            Ok(ScenePropRecord {
-                scene_id: row.get(0)?,
-                prop_asset_version_id: row.get(1)?,
-                display_order: row.get(2)?,
-            })
-        })
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    rows.map(|row| row.map_err(|e| AppError::Database(e.to_string())))
-        .collect()
-}
-
-/// Renames a scene within `project_id`, returning the updated record.
-pub fn rename_scene(
-    conn: &Connection,
-    project_id: &str,
-    scene_id: &str,
-    title: &str,
-) -> Result<SceneRecord, AppError> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let updated = conn
-        .execute(
-            "UPDATE scenes SET title = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4",
-            params![title, now, scene_id, project_id],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    if updated == 0 {
-        return Err(AppError::SceneNotFound);
-    }
-    get_scene(conn, project_id, scene_id)
-}
-
-/// Pins or clears the scene's world plate version reference.
-pub fn set_scene_world(
-    conn: &Connection,
-    project_id: &str,
-    scene_id: &str,
-    version_id: Option<&str>,
-) -> Result<(), AppError> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let updated = conn
-        .execute(
-            "UPDATE scenes SET world_asset_version_id = ?1, updated_at = ?2 WHERE id = ?3 AND project_id = ?4",
-            params![version_id, now, scene_id, project_id],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    if updated == 0 {
-        return Err(AppError::SceneNotFound);
-    }
-    Ok(())
-}
-
-/// Updates the exact look/sheet pins of one cast record.
-pub fn update_scene_character(
-    conn: &Connection,
-    project_id: &str,
-    scene_id: &str,
-    character_id: &str,
-    look_id: Option<&str>,
-    sheet_id: Option<&str>,
-) -> Result<(), AppError> {
-    get_scene(conn, project_id, scene_id)?;
-    let updated = conn
-        .execute(
-            "UPDATE scene_characters SET look_asset_version_id = ?1, sheet_asset_version_id = ?2 \
-             WHERE scene_id = ?3 AND character_entity_id = ?4",
-            params![look_id, sheet_id, scene_id, character_id],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    if updated == 0 {
-        return Err(AppError::SceneNotFound);
-    }
-    Ok(())
-}
-
-/// Removes one cast record. Only the relationship row is deleted.
-pub fn remove_scene_character(
-    conn: &Connection,
-    project_id: &str,
-    scene_id: &str,
-    character_id: &str,
-) -> Result<(), AppError> {
-    get_scene(conn, project_id, scene_id)?;
-    conn.execute(
-        "DELETE FROM scene_characters WHERE scene_id = ?1 AND character_entity_id = ?2",
-        params![scene_id, character_id],
-    )
-    .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(())
-}
-
-/// Removes one prop relationship identified by its exact version id.
-pub fn remove_scene_prop(
-    conn: &Connection,
-    project_id: &str,
-    scene_id: &str,
-    prop_version_id: &str,
-) -> Result<(), AppError> {
-    get_scene(conn, project_id, scene_id)?;
-    conn.execute(
-        "DELETE FROM scene_props WHERE scene_id = ?1 AND prop_asset_version_id = ?2",
-        params![scene_id, prop_version_id],
-    )
-    .map_err(|e| AppError::Database(e.to_string()))?;
-    Ok(())
 }
 
 /// Applies a field update to one shot within `project_id`.
@@ -377,21 +185,21 @@ pub fn update_shot(
     project_id: &str,
     update: &ShotUpdate,
 ) -> Result<ShotRecord, AppError> {
-    let existing = conn
+    let scene_id: String = conn
         .query_row(
-            "SELECT s.id FROM shots s JOIN scenes sc ON sc.id = s.scene_id \
-             WHERE s.id = ?1 AND sc.project_id = ?2",
+            "SELECT ss.scene_id FROM scene_shots ss \
+             JOIN world_scenes ws ON ws.id = ss.scene_id \
+             WHERE ss.id = ?1 AND ws.project_id = ?2",
             params![update.shot_id, project_id],
-            |row| row.get::<_, String>(0),
+            |row| row.get(0),
         )
         .optional()
         .map_err(|e| AppError::Database(e.to_string()))?
         .ok_or(AppError::ShotNotFound)?;
-    let _ = existing;
     let now = chrono::Utc::now().to_rfc3339();
     let updated = conn
         .execute(
-            "UPDATE shots SET \
+            "UPDATE scene_shots SET \
                duration_seconds = COALESCE(?1, duration_seconds), \
                intent = COALESCE(?2, intent), \
                action = ?3, \
@@ -411,15 +219,7 @@ pub fn update_shot(
     if updated == 0 {
         return Err(AppError::ShotNotFound);
     }
-    let scene_id: String = conn
-        .query_row(
-            "SELECT scene_id FROM shots WHERE id = ?1",
-            params![update.shot_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
-    let shots = list_shots(conn, &scene_id)?;
-    shots
+    list_shots(conn, &scene_id)?
         .into_iter()
         .find(|shot| shot.id == update.shot_id)
         .ok_or(AppError::ShotNotFound)
@@ -433,9 +233,9 @@ pub fn delete_shot(
     scene_id: &str,
     shot_id: &str,
 ) -> Result<(), AppError> {
-    get_scene(conn, project_id, scene_id)?;
+    ensure_scene_in_project(conn, project_id, scene_id)?;
     conn.execute(
-        "DELETE FROM shots WHERE id = ?1 AND scene_id = ?2",
+        "DELETE FROM scene_shots WHERE id = ?1 AND scene_id = ?2",
         params![shot_id, scene_id],
     )
     .map_err(|e| AppError::Database(e.to_string()))?;
@@ -452,7 +252,7 @@ pub fn reorder_shots(
     ordered_ids: &[String],
 ) -> Result<Vec<ShotRecord>, AppError> {
     use std::collections::HashSet;
-    get_scene(conn, project_id, scene_id)?;
+    ensure_scene_in_project(conn, project_id, scene_id)?;
     let existing = list_shots(conn, scene_id)?;
     let existing_ids: HashSet<&str> = existing.iter().map(|shot| shot.id.as_str()).collect();
     if ordered_ids.len() != existing.len() {
@@ -478,14 +278,14 @@ pub fn reorder_shots(
     let offset = existing.len() as i64 + 10_000;
     for (position, shot_id) in ordered_ids.iter().enumerate() {
         tx.execute(
-            "UPDATE shots SET ordering = ?1 WHERE id = ?2 AND scene_id = ?3",
+            "UPDATE scene_shots SET ordering = ?1 WHERE id = ?2 AND scene_id = ?3",
             params![offset + position as i64, shot_id, scene_id],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
     }
     for (position, shot_id) in ordered_ids.iter().enumerate() {
         tx.execute(
-            "UPDATE shots SET ordering = ?1, updated_at = ?2 WHERE id = ?3 AND scene_id = ?4",
+            "UPDATE scene_shots SET ordering = ?1, updated_at = ?2 WHERE id = ?3 AND scene_id = ?4",
             params![
                 position as i64,
                 chrono::Utc::now().to_rfc3339(),
@@ -508,8 +308,8 @@ pub fn set_shot_keyframe(
 ) -> Result<(), AppError> {
     let updated = conn
         .execute(
-            "UPDATE shots SET keyframe_asset_version_id = ?1, updated_at = ?2 \
-             WHERE id = ?3 AND scene_id IN (SELECT id FROM scenes WHERE project_id = ?4)",
+            "UPDATE scene_shots SET keyframe_asset_version_id = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND scene_id IN (SELECT id FROM world_scenes WHERE project_id = ?4)",
             params![
                 version_id,
                 chrono::Utc::now().to_rfc3339(),

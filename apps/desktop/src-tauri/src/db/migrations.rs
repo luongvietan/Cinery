@@ -76,6 +76,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 16,
         sql: include_str!("../../migrations/0016_world_scene_pipeline.sql"),
     },
+    Migration {
+        version: 17,
+        sql: include_str!("../../migrations/0017_unified_scene_shots.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in

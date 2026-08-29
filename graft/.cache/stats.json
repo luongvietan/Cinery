@@ -1,16 +1,17 @@
 {
-  "nodeCount": 1821,
-  "edgeCount": 2689,
+  "nodeCount": 2424,
+  "edgeCount": 3660,
   "languages": [
+    "python",
     "rust",
     "tsx",
     "typescript"
   ],
-  "totalCount": 1821,
+  "totalCount": 2424,
   "readyCount": 0,
-  "staleCount": 0,
-  "dirty": false,
+  "staleCount": 21,
+  "dirty": true,
   "syncing": false,
-  "syncedAt": "2026-08-28T17:14:28.092Z",
-  "lastFile": "provenance.rs"
+  "syncedAt": "2026-08-29T03:33:55.379Z",
+  "lastFile": "service.rs"
 }

@@ -244,13 +244,13 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
             "scene",
             "Scene",
             "Stage a scene with pinned character references and a shot.",
-            "cinema",
+            "scenes",
             None,
             None,
         ));
         return Ok(with_next(
             steps,
-            action("scene", "Scene", "cinema", None, None),
+            action("scene", "Scene", "scenes", None, None),
         ));
     }
     steps.push(complete_step(
@@ -291,7 +291,7 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
             "cinema_compilation",
             "Cinema Compilation",
             "Compile the staged scene into a durable provider-neutral prompt.",
-            "cinema",
+            "scenes",
             None,
             Some(&pending.scene_id),
         ));
@@ -300,7 +300,7 @@ fn derive_readiness(conn: &Connection, project_id: &str) -> Result<ProjectReadin
             action(
                 "cinema_compilation",
                 "Cinema Compilation",
-                "cinema",
+                "scenes",
                 None,
                 Some(&pending.scene_id),
             ),
@@ -441,7 +441,7 @@ fn list_scene_readiness(
     conn: &Connection,
     project_id: &str,
 ) -> Result<Vec<SceneReadiness>, AppError> {
-    let mut stmt = conn.prepare("SELECT s.id, s.title, EXISTS(SELECT 1 FROM cinema_compilations cc WHERE cc.project_id = s.project_id AND cc.scene_id = s.id), EXISTS(SELECT 1 FROM canon_tbds t WHERE t.project_id = s.project_id AND t.status = 'open' AND t.protected = 1 AND (t.canon_entity_id IS NULL OR EXISTS(SELECT 1 FROM scene_characters sc WHERE sc.scene_id = s.id AND sc.character_entity_id = t.canon_entity_id))), (NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = s.world_asset_version_id) OR EXISTS(SELECT 1 FROM scene_characters sc WHERE sc.scene_id = s.id AND (NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = sc.look_asset_version_id) OR (sc.sheet_asset_version_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = sc.sheet_asset_version_id))))) FROM scenes s WHERE s.project_id = ?1 AND s.world_asset_version_id IS NOT NULL AND EXISTS(SELECT 1 FROM asset_versions av WHERE av.id = s.world_asset_version_id) AND EXISTS(SELECT 1 FROM scene_characters sc JOIN asset_versions look ON look.id = sc.look_asset_version_id WHERE sc.scene_id = s.id) AND EXISTS(SELECT 1 FROM shots sh WHERE sh.scene_id = s.id) ORDER BY s.created_at DESC, s.id DESC").map_err(database)?;
+    let mut stmt = conn.prepare("SELECT s.id, s.title, EXISTS(SELECT 1 FROM scene_compilations cc WHERE cc.project_id = s.project_id AND cc.scene_id = s.id), EXISTS(SELECT 1 FROM canon_tbds t WHERE t.project_id = s.project_id AND t.status = 'open' AND t.protected = 1 AND (t.canon_entity_id IS NULL OR EXISTS(SELECT 1 FROM world_scene_characters sc WHERE sc.scene_id = s.id AND sc.character_entity_id = t.canon_entity_id))), (NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = s.world_asset_version_id) OR EXISTS(SELECT 1 FROM world_scene_characters sc WHERE sc.scene_id = s.id AND (NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = sc.look_asset_version_id) OR (sc.sheet_asset_version_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM assets a WHERE a.canonical_version_id = sc.sheet_asset_version_id))))) FROM world_scenes s WHERE s.project_id = ?1 AND s.world_asset_version_id IS NOT NULL AND EXISTS(SELECT 1 FROM asset_versions av WHERE av.id = s.world_asset_version_id) AND EXISTS(SELECT 1 FROM world_scene_characters sc JOIN asset_versions look ON look.id = sc.look_asset_version_id WHERE sc.scene_id = s.id) AND EXISTS(SELECT 1 FROM scene_shots sh WHERE sh.scene_id = s.id) ORDER BY s.created_at DESC, s.id DESC").map_err(database)?;
     let rows = stmt
         .query_map([project_id], |row| {
             let id: String = row.get(0)?;
@@ -465,7 +465,7 @@ fn list_scene_readiness(
                 (
                     ReadinessStatus::Blocked,
                     "This scene pins a superseded exact asset version; restage it before compilation.".to_string(),
-                    Some(action("restage_scene", "Restage Scene", "cinema", None, Some(&id))),
+                    Some(action("restage_scene", "Restage Scene", "scenes", None, Some(&id))),
                 )
             } else if compiled {
                 (
@@ -480,7 +480,7 @@ fn list_scene_readiness(
                     Some(action(
                         "cinema_compilation",
                         "Cinema Compilation",
-                        "cinema",
+                        "scenes",
                         None,
                         Some(&id),
                     )),
@@ -531,7 +531,7 @@ fn list_recent_activity(
     project_id: &str,
 ) -> Result<Vec<ActivityItem>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, kind, label, occurred_at FROM (SELECT id, 'asset' AS kind, label, updated_at AS occurred_at FROM assets WHERE project_id = ?1 UNION ALL SELECT id, 'scene' AS kind, title AS label, updated_at AS occurred_at FROM scenes WHERE project_id = ?1 UNION ALL SELECT id, 'cinema_compilation' AS kind, 'Cinema compilation' AS label, created_at AS occurred_at FROM cinema_compilations WHERE project_id = ?1) ORDER BY occurred_at DESC, id DESC LIMIT 8",
+        "SELECT id, kind, label, occurred_at FROM (SELECT id, 'asset' AS kind, label, updated_at AS occurred_at FROM assets WHERE project_id = ?1 UNION ALL SELECT id, 'scene' AS kind, title AS label, updated_at AS occurred_at FROM world_scenes WHERE project_id = ?1 UNION ALL SELECT id, 'cinema_compilation' AS kind, 'Cinema compilation' AS label, created_at AS occurred_at FROM scene_compilations WHERE project_id = ?1) ORDER BY occurred_at DESC, id DESC LIMIT 8",
     ).map_err(database)?;
     let rows = stmt
         .query_map(params![project_id], |row| {

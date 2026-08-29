@@ -71,7 +71,7 @@ fn p8_acceptance_one_sheet_one_world_8s_compiles_coherently() {
     assert!(text.contains("Time Budget"));
     assert!(text.contains("Establish the ops room"));
     assert!(text.contains("Close on the console"));
-    assert!(text.contains("Station interior"));
+    assert!(text.contains("World Continuity"));
     assert!(text.contains("world plate"));
     assert!(text.contains(&prompt.compilation_id));
 

@@ -16,10 +16,15 @@ use cinematic_desktop_lib::canon::commands::{
     create_canon_entity, ensure_canon_singletons, lock_canon_section, upsert_canon_section,
 };
 use cinematic_desktop_lib::cinema::commands::{
-    add_scene_character, add_scene_prop, compile_cinema, create_scene, create_shot,
-    get_cinema_compilation, get_scene, get_scene_readiness, list_scenes, rename_scene,
-    set_scene_world, set_shot_keyframe, update_shot,
+    compile_cinema, create_shot, get_cinema_compilation, get_scene_readiness, list_shots,
+    set_shot_keyframe, update_shot,
 };
+use cinematic_desktop_lib::canon::commands::create_canon_entity as create_location_entity;
+use cinematic_desktop_lib::scenes::commands::{
+    add_world_scene_character, add_world_scene_prop, assign_scene_world, create_world_scene,
+    get_world_scene, list_world_scenes, update_scene_details,
+};
+use cinematic_desktop_lib::worlds::commands::create_world;
 use cinematic_desktop_lib::generation::commands::{
     list_generation_results, promote_generated_artifact,
 };
@@ -268,23 +273,57 @@ fn mvp_full_journey_through_command_boundaries() {
 
     // 7. Scene assembly: create, rename, choose world, cast with exact
     //    look/sheet, attach prop, create/edit shot, attach keyframe.
-    let scene = create_scene(root.clone(), "Scene 001".into(), None, None).unwrap();
-    rename_scene(root.clone(), scene.id.clone(), "Scene 001 - Ops".into()).unwrap();
-    set_scene_world(
+    let scene = create_world_scene(
         root.clone(),
-        scene.id.clone(),
-        Some(world_version.id.clone()),
+        "Scene 001".into(),
+        "Mara returns to the ops room".into(),
     )
     .unwrap();
-    add_scene_character(
+    update_scene_details(
+        root.clone(),
+        scene.id.clone(),
+        "Scene 001 - Ops".into(),
+        "Mara returns to the ops room".into(),
+    )
+    .unwrap();
+    let location = create_location_entity(root.clone(), "location".into(), "The Station".into())
+        .unwrap();
+    let world = create_world(root.clone(), location.id.clone()).unwrap();
+    {
+        // Canonicalize the World's own plate asset (import + promote via commands).
+        let plate_source = harness.image("world-plate.png", [10, 11, 12, 255]);
+        let plate_version = import_asset_version(
+            root.clone(),
+            world.world_plate_asset_id.clone(),
+            plate_source.to_string_lossy().to_string(),
+            None,
+        )
+        .unwrap();
+        promote_asset_version(root.clone(), plate_version.id.clone()).unwrap();
+    }
+    assign_scene_world(root.clone(), scene.id.clone(), world.id.clone()).unwrap();
+    // The scene pins the World's own plate asset canonical version.
+    let pinned_world_version = get_world_scene(root.clone(), scene.id.clone())
+        .unwrap()
+        .world_asset_version_id
+        .unwrap();
+    add_world_scene_character(
         root.clone(),
         scene.id.clone(),
         character.id.clone(),
         outfit_version.id.clone(),
         Some(sheet_version.id.clone()),
+        None,
     )
     .unwrap();
-    add_scene_prop(root.clone(), scene.id.clone(), prop_version.id.clone()).unwrap();
+    add_world_scene_prop(
+        root.clone(),
+        scene.id.clone(),
+        prop_version.id.clone(),
+        None,
+        None,
+    )
+    .unwrap();
 
     let shot = create_shot(
         root.clone(),
@@ -353,27 +392,26 @@ fn mvp_full_journey_through_command_boundaries() {
     drop(opened);
     open_project_standalone(root.clone()).unwrap();
 
-    let reopened_scene = get_scene(root.clone(), scene.id.clone()).unwrap();
+    let reopened_scene = get_world_scene(root.clone(), scene.id.clone()).unwrap();
     assert_eq!(
-        reopened_scene.scene.world_asset_version_id.as_deref(),
-        Some(world_version.id.as_str())
+        reopened_scene.world_asset_version_id.as_deref(),
+        Some(pinned_world_version.as_str())
     );
+    let reopened_cast =
+        cinematic_desktop_lib::scenes::commands::list_scene_characters(root.clone(), scene.id.clone())
+            .unwrap();
+    assert_eq!(reopened_cast[0].look_asset_version_id, outfit_version.id);
     assert_eq!(
-        reopened_scene.characters[0].look_asset_version_id,
-        outfit_version.id
-    );
-    assert_eq!(
-        reopened_scene.characters[0]
-            .sheet_asset_version_id
-            .as_deref(),
+        reopened_cast[0].sheet_asset_version_id.as_deref(),
         Some(sheet_version.id.as_str())
     );
+    let reopened_props =
+        cinematic_desktop_lib::scenes::commands::list_scene_props(root.clone(), scene.id.clone())
+            .unwrap();
+    assert_eq!(reopened_props[0].prop_asset_version_id, prop_version.id);
+    let reopened_shots = list_shots(root.clone(), scene.id.clone()).unwrap();
     assert_eq!(
-        reopened_scene.props[0].prop_asset_version_id,
-        prop_version.id
-    );
-    assert_eq!(
-        reopened_scene.shots[0].keyframe_asset_version_id.as_deref(),
+        reopened_shots[0].keyframe_asset_version_id.as_deref(),
         Some(keyframe_version.id.as_str())
     );
 
@@ -450,6 +488,7 @@ fn mvp_character_operations_reject_prerequisites_through_command_boundary() {
     .unwrap_err();
     assert_eq!(error.code, "WORKFLOW_PREREQUISITE_FAILED");
 
-    let scenes = list_scenes(harness.root.to_string_lossy().to_string()).unwrap();
+    let scenes =
+        list_world_scenes(harness.root.to_string_lossy().to_string()).unwrap();
     assert!(scenes.is_empty());
 }
