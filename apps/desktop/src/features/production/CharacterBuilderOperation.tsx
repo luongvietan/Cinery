@@ -57,7 +57,7 @@ export function CharacterBuilderOperation({
         <div className="production-form-grid">{VISUAL_FIELDS.map((field) => <label key={field}>{field[0].toUpperCase() + field.slice(1)}<input value={visualSpec[field]} onChange={(event) => setVisualSpec((current) => ({ ...current, [field]: event.target.value }))} required /></label>)}</div>
         <label>Baseline wardrobe<input value={baselineWardrobe} onChange={(event) => setBaselineWardrobe(event.target.value)} required /></label>
         <ProviderModelFields projectRootPath={projectRootPath} value={providerSelection} mediaType="image" requiresReferences onChange={setProviderSelection} />
-        <div className="production-form-actions"><button type="submit" disabled={pending || !sourceAssetVersionId}>{pending ? "Preparing…" : "Review Request"}</button><button className="production-secondary" type="button" onClick={onCancel} disabled={pending}>Cancel</button></div>
+        <div className="production-form-actions"><button type="submit" disabled={pending}>{pending ? "Preparing…" : "Review Request"}</button><button className="production-secondary" type="button" onClick={onCancel} disabled={pending}>Cancel</button></div>
       </form>
     </section>
   );

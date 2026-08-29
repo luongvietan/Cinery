@@ -198,3 +198,24 @@ fn cancellation_marks_remote_attempt_cancelled_and_run_terminal() {
         .unwrap();
     assert_eq!(status, "cancelled");
 }
+
+#[test]
+fn list_providers_includes_builtin_registry_ids_for_a_project() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("provider-list");
+    cinematic_desktop_lib::project::service::ProjectService::create(&root, "Provider List").unwrap();
+
+    let providers = cinematic_desktop_lib::providers::commands::list_providers(Some(
+        root.to_string_lossy().to_string(),
+    ))
+    .unwrap();
+
+    // The generation forms rely on the built-ins being listed for every
+    // project; customs are merged in on top.
+    for builtin in ["dry_run", "mock", "openai"] {
+        assert!(
+            providers.iter().any(|id| id == builtin),
+            "builtin provider {builtin} must be listed, got {providers:?}"
+        );
+    }
+}

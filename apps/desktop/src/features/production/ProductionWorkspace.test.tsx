@@ -48,3 +48,15 @@ describe("ProductionWorkspace", () => {
     expect(screen.getByRole("option", { name: /MARA-FACE.*v002/ })).toBeInTheDocument();
   });
 });
+
+describe("ProductionWorkspace first-face regression", () => {
+  it("keeps Review Request enabled when no canonical face exists yet", async () => {
+    vi.mocked(listAssets).mockResolvedValue([] as AssetSummary[]);
+    render(<ProductionWorkspace projectRootPath="/projects/red-door" />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Create Face Lock" }));
+    const review = await screen.findByRole("button", { name: "Review Request" });
+    expect(review).toBeEnabled();
+    expect(screen.getByText(/Requires a canonical Face/)).toBeInTheDocument();
+  });
+});

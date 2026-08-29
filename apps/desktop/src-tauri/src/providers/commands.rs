@@ -25,16 +25,21 @@ fn command_credential_store() -> Arc<KeyringCredentialStore> {
 
 #[tauri::command]
 pub fn list_providers(project_root_path: Option<String>) -> Result<Vec<String>, AppCommandError> {
+    // Built-in registry providers are always available; project-scoped custom
+    // providers are merged in. Returning only customs (the previous behavior)
+    // left every generation form's provider picker empty on fresh projects.
     let mut providers = ProviderService::list_provider_ids();
     if let Some(path) = project_root_path {
         validate_root_path(&path)?;
-        providers = ProviderService::list_custom_providers(
+        for provider in ProviderService::list_custom_providers(
             &PathBuf::from(path),
             command_credential_store().as_ref(),
-        )?
-        .into_iter()
-        .map(|provider| provider.provider_id)
-        .collect();
+        )? {
+            let id = provider.provider_id;
+            if !providers.contains(&id) {
+                providers.push(id);
+            }
+        }
     }
     Ok(providers)
 }
