@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import type { ProviderCapabilities, ProviderConfigurationStatus } from "@cinematic/domain";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { ProviderModelFields } from "./ProviderModelFields";
-import { getProviderCapabilities, getProviderConfigurationStatus, listProviderModels, listProviders } from "../workflows/api";
+import { getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders } from "../workflows/api";
 
 vi.mock("../workflows/api");
 
@@ -32,6 +32,7 @@ function statusFor(providerId: string): ProviderConfigurationStatus {
 
 describe("ProviderModelFields", () => {
   beforeEach(() => {
+    vi.mocked(listCustomProviders).mockResolvedValue([]);
     vi.mocked(listProviders).mockResolvedValue(["mock", "openai"]);
     vi.mocked(listProviderModels).mockImplementation(async (providerId) =>
       providerId === "openai" ? ["gpt-image-2"] : ["mock-image-v1"]);
@@ -78,5 +79,26 @@ describe("ProviderModelFields", () => {
     render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "openai", modelId: "gpt-image-2" }} mediaType="image" requiresReferences onChange={vi.fn()} />);
     const providerSelect = await screen.findByLabelText(/Provider/);
     expect(providerSelect).toHaveAccessibleDescription(/Credential not configured/);
+  });
+
+  it("does not offer an LLM-only custom provider to image workflows", async () => {
+    vi.mocked(listProviders).mockResolvedValue(["llm_only"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([{
+      providerId: "llm_only", displayName: "LLM only", baseUrl: "https://api.example.test/v1",
+      purpose: "llm", models: [{ id: "chat-v1", name: "Chat V1" }], headers: [],
+    }]);
+    vi.mocked(listProviderModels).mockResolvedValue(["chat-v1"]);
+    vi.mocked(getProviderCapabilities).mockRejectedValue(new Error("custom provider"));
+    vi.mocked(getProviderConfigurationStatus).mockResolvedValue({
+      providerId: "llm_only", enabled: true, credentialConfigured: true,
+      defaultModel: "chat-v1", models: ["chat-v1"],
+    });
+
+    render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "", modelId: "" }} mediaType="image" requiresReferences={false} onChange={vi.fn()} />);
+
+    const option = Array.from(((await screen.findByLabelText(/Provider/)) as HTMLSelectElement).options)[0];
+    expect(option.value).toBe("llm_only");
+    expect(option.disabled).toBe(true);
+    expect(option.textContent).toContain("not compatible");
   });
 });

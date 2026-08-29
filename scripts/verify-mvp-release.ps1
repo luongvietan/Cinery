@@ -66,6 +66,12 @@ if (-not $SkipInstall) {
   Invoke-Gate 'pnpm-install' { pnpm install --frozen-lockfile }
 }
 Invoke-Gate 'pnpm-test' { pnpm test }
+# `tauri::generate_context!()` validates `build.frontendDist` while compiling
+# Rust tests. A clean checkout has no ignored `apps/desktop/dist` directory,
+# so build it explicitly before Cargo instead of depending on stale output
+# from a developer working tree. The later frontend-build gate remains in the
+# documented release sequence and verifies the production frontend again.
+Invoke-Gate 'frontend-prereq-build' { pnpm --filter @cinematic/desktop build }
 Invoke-Gate 'cargo-test' { cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml -j 1 }
 Invoke-Gate 'frontend-build' { pnpm --filter @cinematic/desktop build }
 if (-not $SkipBundle) {

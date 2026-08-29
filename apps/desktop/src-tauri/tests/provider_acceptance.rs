@@ -30,7 +30,7 @@ fn approved_mock_execution_persists_attempt_job_and_candidate_artifact() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         json!({
             "projectRootPath": root.to_string_lossy(),
@@ -69,7 +69,7 @@ fn recovery_preserves_a_durable_remote_job_for_reconciliation() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal"}),
     ).unwrap();
@@ -91,7 +91,7 @@ fn failed_provider_attempt_is_immutable_and_retry_creates_a_new_attempt() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal","providerId":"missing","modelId":"missing-v1"}),
     ).unwrap();
@@ -117,7 +117,7 @@ fn cancellation_marks_remote_attempt_cancelled_and_run_terminal() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         json!({"projectRootPath":root.to_string_lossy(),"characterEntityId":"mara","visualSpec":{"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},"baselineWardrobe":"charcoal"}),
     ).unwrap();

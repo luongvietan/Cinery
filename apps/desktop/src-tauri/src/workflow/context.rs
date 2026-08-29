@@ -6,7 +6,7 @@ use crate::workflow::model::{
     WorkflowContextSnapshot, WorkflowProjectRef, WorkflowSkillRef,
 };
 use chrono::Utc;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
@@ -151,6 +151,275 @@ pub fn resolve_character_face_lock_context(
         resolved_context,
         captured_at: Utc::now().to_rfc3339(),
     })
+}
+
+pub fn resolve_character_outfit_context(
+    conn: &Connection,
+    project_id: &str,
+    _skill_id: &str,
+    _skill_version: &str,
+    _operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let character_id = input
+        .get("characterEntityId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::WorkflowInputInvalid("characterEntityId must be a non-empty string".into())
+        })?;
+    let (story_name, entity_type): (String, String) = conn
+        .query_row(
+            "SELECT name, type FROM canon_entities WHERE project_id = ?1 AND id = ?2",
+            params![project_id, character_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::CanonEntityNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if entity_type != CanonEntityType::Character.as_str() {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "selected entity is not a character".into(),
+        ));
+    }
+
+    let mut canon = Vec::new();
+    let mut role_tag = None;
+    let mut visual_summary = None;
+    let mut permanent_visual_locks = Vec::new();
+    let mut statement = conn
+        .prepare("SELECT id, section_key, value_json, revision, status FROM canon_sections WHERE canon_entity_id = ?1 AND status = 'locked' ORDER BY section_key")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([character_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (section_id, section_key, value_json, revision, status) = row.map_err(db_error)?;
+        let value: Value = serde_json::from_str(&value_json)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        canon.push(CanonSnapshotRef {
+            entity_id: character_id.to_string(),
+            entity_type: CanonEntityType::Character,
+            section_id,
+            section_key: section_key.clone(),
+            revision,
+            status: CanonSnapshotStatus::Locked,
+            value: value.clone(),
+        });
+        match section_key.as_str() {
+            "role_tag" => {
+                role_tag = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            "visual_summary" => {
+                visual_summary = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            "visual_locks" => {
+                if let Some(values) = value.get("locks").and_then(Value::as_array) {
+                    permanent_visual_locks = values.clone();
+                }
+            }
+            _ => {}
+        }
+        let _ = status;
+    }
+
+    let protected_tbds = load_protected_tbds(conn, project_id)?;
+    let wardrobe_proposal = input.get("wardrobeProposal").cloned().unwrap_or(Value::Null);
+    let canonical_face_version = load_canonical_asset_version(
+        conn,
+        project_id,
+        character_id,
+        "face_lock",
+    )?;
+    let assets = if let Some(version_id) = &canonical_face_version {
+        vec![load_selected_asset_snapshot(conn, project_id, version_id)?]
+    } else {
+        Vec::new()
+    };
+    let resolved_context = json!({
+        "character": {
+            "entityId": character_id,
+            "storyName": story_name,
+            "roleTag": role_tag,
+            "visualSummary": visual_summary,
+            "permanentVisualLocks": permanent_visual_locks,
+        },
+        "wardrobeProposal": wardrobe_proposal,
+        "canonicalFaceAssetVersionId": canonical_face_version,
+    });
+
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: _skill_id.to_string(),
+            skill_version: _skill_version.to_string(),
+            operation_id: _operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report,
+        canon,
+        assets,
+        protected_tbds,
+        resolved_context,
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
+pub fn resolve_character_sheet_context(
+    conn: &Connection,
+    project_id: &str,
+    _skill_id: &str,
+    _skill_version: &str,
+    _operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let character_id = input
+        .get("characterEntityId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            AppError::WorkflowInputInvalid("characterEntityId must be a non-empty string".into())
+        })?;
+    let (story_name, entity_type): (String, String) = conn
+        .query_row(
+            "SELECT name, type FROM canon_entities WHERE project_id = ?1 AND id = ?2",
+            params![project_id, character_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::CanonEntityNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if entity_type != CanonEntityType::Character.as_str() {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "selected entity is not a character".into(),
+        ));
+    }
+
+    let mut canon = Vec::new();
+    let mut role_tag = None;
+    let mut visual_summary = None;
+    let mut statement = conn
+        .prepare("SELECT id, section_key, value_json, revision, status FROM canon_sections WHERE canon_entity_id = ?1 AND status = 'locked' ORDER BY section_key")
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([character_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(db_error)?;
+    for row in rows {
+        let (section_id, section_key, value_json, revision, status) = row.map_err(db_error)?;
+        let value: Value = serde_json::from_str(&value_json)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        canon.push(CanonSnapshotRef {
+            entity_id: character_id.to_string(),
+            entity_type: CanonEntityType::Character,
+            section_id,
+            section_key: section_key.clone(),
+            revision,
+            status: CanonSnapshotStatus::Locked,
+            value: value.clone(),
+        });
+        match section_key.as_str() {
+            "role_tag" => {
+                role_tag = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            "visual_summary" => {
+                visual_summary = value
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            }
+            _ => {}
+        }
+        let _ = status;
+    }
+
+    let protected_tbds = load_protected_tbds(conn, project_id)?;
+    let canonical_outfit_version = load_canonical_asset_version(
+        conn,
+        project_id,
+        character_id,
+        "outfit",
+    )?;
+    let assets = if let Some(version_id) = &canonical_outfit_version {
+        vec![load_selected_asset_snapshot(conn, project_id, version_id)?]
+    } else {
+        Vec::new()
+    };
+    let resolved_context = json!({
+        "character": {
+            "entityId": character_id,
+            "storyName": story_name,
+            "roleTag": role_tag,
+            "visualSummary": visual_summary,
+        },
+        "canonicalOutfitAssetVersionId": canonical_outfit_version,
+    });
+
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: _skill_id.to_string(),
+            skill_version: _skill_version.to_string(),
+            operation_id: _operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report,
+        canon,
+        assets,
+        protected_tbds,
+        resolved_context,
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
+fn load_canonical_asset_version(
+    conn: &Connection,
+    project_id: &str,
+    owner_entity_id: &str,
+    asset_type: &str,
+) -> Result<Option<String>, AppError> {
+    conn.query_row(
+        "SELECT a.canonical_version_id FROM assets a JOIN asset_versions v ON v.id = a.canonical_version_id WHERE a.project_id = ?1 AND a.owner_entity_id = ?2 AND a.type = ?3 AND v.status = 'canonical'",
+        params![project_id, owner_entity_id, asset_type],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+    .map_err(db_error)
+    .map(|value| value.flatten())
 }
 
 fn load_protected_tbds(

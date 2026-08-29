@@ -250,6 +250,38 @@ export interface ProviderConfigurationStatus {
   defaultModel: string | null;
 }
 
+export interface CustomProviderModel {
+  id: string;
+  name: string;
+}
+
+export interface CustomProviderHeader {
+  name: string;
+  /** Write-only input; omitted from responses. */
+  value?: string;
+}
+
+export interface CustomProviderDefinition {
+  providerId: string;
+  displayName: string;
+  baseUrl: string;
+  purpose: "legacy" | "llm" | "image" | "video";
+  /** Write-only input; omitted from responses. */
+  apiKey?: string;
+  /** Non-secret display hint (e.g. "sk-j9ml•••ray") derived from the vault secret. */
+  apiKeyHint?: string | null;
+  models: CustomProviderModel[];
+  headers: CustomProviderHeader[];
+}
+
+export interface ProviderConnectionTestResult {
+  providerId: string;
+  endpoint: string;
+  connected: boolean;
+  statusCode: number | null;
+  message: string;
+}
+
 export interface ProviderExecutionSummary {
   id: string;
   stepDefinitionId: string;

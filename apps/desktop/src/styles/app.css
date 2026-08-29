@@ -1602,6 +1602,20 @@ section[aria-label^="Asset "] li[data-testid="asset-version"] > button {
   width: 100%;
 }
 
+.api-key-hint {
+  margin-top: -0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, #6f6a60);
+}
+
+.api-key-hint code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 6px;
+  background: var(--surface-inset, rgba(128, 128, 128, 0.12));
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
 .workflow-overview {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
@@ -2124,6 +2138,7 @@ nav:has(> .gooey-nav),
   background: var(--c-surface);
 }
 
+<<<<<<< HEAD
 .ai-director-input-row {
   display: flex;
   align-items: center;
@@ -2170,6 +2185,12 @@ nav:has(> .gooey-nav),
 
 .ai-director-ready { color: var(--c-success); font-weight: 600; }
 .ai-director-blocked { color: var(--c-danger); font-weight: 600; }
+
+.action-button-blocked { display: inline-flex; flex-direction: column; gap: var(--space-4); }
+.action-button-reason { color: var(--c-warning, var(--color-warning)); font-size: 12px; max-width: 42ch; }
+.qa-busy-note { margin: 0; padding: var(--space-8) var(--space-16); color: var(--c-warning, var(--color-warning)); font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+:focus-visible { outline: 2px solid var(--c-info, var(--color-info)); outline-offset: 2px; }
 
 .provider-model-fields {
   display: flex;

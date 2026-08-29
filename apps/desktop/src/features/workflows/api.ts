@@ -1,6 +1,8 @@
 import type {
   ProviderCapabilities,
   ProviderConfigurationStatus,
+  CustomProviderDefinition,
+  ProviderConnectionTestResult,
   SkillOperation,
   WorkflowCharacterOption,
   WorkflowRunDetail,
@@ -69,8 +71,24 @@ export function listWorkflowRuns(projectRootPath: string): Promise<WorkflowRunRe
   return invokeCommand("list_workflow_runs", { projectRootPath });
 }
 
-export function listProviders(): Promise<string[]> {
-  return invokeCommand("list_providers");
+export function listProviders(projectRootPath?: string): Promise<string[]> {
+  return invokeCommand("list_providers", projectRootPath ? { projectRootPath } : undefined);
+}
+
+export function listCustomProviders(projectRootPath: string): Promise<CustomProviderDefinition[]> {
+  return invokeCommand("list_custom_providers", { projectRootPath });
+}
+
+export function upsertCustomProvider(projectRootPath: string, definition: CustomProviderDefinition): Promise<CustomProviderDefinition> {
+  return invokeCommand("upsert_custom_provider", { projectRootPath, definition });
+}
+
+export function deleteCustomProvider(projectRootPath: string, providerId: string): Promise<void> {
+  return invokeCommand("delete_custom_provider", { projectRootPath, providerId });
+}
+
+export function testCustomProviderConnection(projectRootPath: string, providerId: string): Promise<ProviderConnectionTestResult> {
+  return invokeCommand("test_custom_provider_connection", { projectRootPath, providerId });
 }
 
 export function getProviderCapabilities(providerId: string): Promise<ProviderCapabilities> {
@@ -97,8 +115,8 @@ export function validateProviderConfiguration(projectRootPath: string, providerI
   return invokeCommand("validate_provider_configuration", { projectRootPath, providerId });
 }
 
-export function listProviderModels(providerId: string): Promise<string[]> {
-  return invokeCommand("list_provider_models", { providerId });
+export function listProviderModels(providerId: string, projectRootPath?: string): Promise<string[]> {
+  return invokeCommand("list_provider_models", projectRootPath ? { providerId, projectRootPath } : { providerId });
 }
 
 export function cancelWorkflowExecution(projectRootPath: string, workflowRunId: string, stepId: string): Promise<WorkflowRunDetail> {

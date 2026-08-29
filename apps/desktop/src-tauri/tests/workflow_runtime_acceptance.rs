@@ -55,7 +55,7 @@ fn face_lock_waits_for_approval_then_requires_explicit_dry_run() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
@@ -237,7 +237,7 @@ fn rejected_run_is_terminal_and_skips_remaining_steps() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
@@ -277,7 +277,7 @@ fn invalid_or_missing_character_input_creates_no_persisted_run() {
         WorkflowRuntime::create_run(
             &root,
             "character-builder",
-            "1.0.0",
+            "1.1.0",
             "character.create_face_lock",
             invalid
         )
@@ -291,7 +291,7 @@ fn invalid_or_missing_character_input_creates_no_persisted_run() {
         WorkflowRuntime::create_run(
             &root,
             "character-builder",
-            "1.0.0",
+            "1.1.0",
             "character.create_face_lock",
             missing
         )
@@ -308,7 +308,7 @@ fn cancelled_run_is_terminal_and_skips_pending_work() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
@@ -331,7 +331,7 @@ fn recovery_fails_interrupted_running_work_without_replaying_it() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
@@ -362,7 +362,7 @@ fn recovery_fails_ready_run_with_an_interrupted_execute_step() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
@@ -393,7 +393,7 @@ fn execution_failure_transitions_run_to_failed_with_an_audit_event() {
     let created = WorkflowRuntime::create_run(
         &root,
         "character-builder",
-        "1.0.0",
+        "1.1.0",
         "character.create_face_lock",
         face_lock_input(&root),
     )
