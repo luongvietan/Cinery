@@ -373,19 +373,75 @@ impl ProviderService {
         model_id: &str,
         attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
+        Self::submit_prepared_request(request, None, step_id, compiled_request_id, provider_id, model_id, attempt_number)
+    }
+
+    /// Submission with attachments already resolved by the caller (the
+    /// workflow runtime owns project-root access). The secret is resolved
+    /// from the vault when the caller supplies a credential store.
+    pub fn submit_prepared_request(
+        request: &ExecutionRequest,
+        credentials: Option<&dyn CredentialStore>,
+        step_id: &str,
+        compiled_request_id: &str,
+        provider_id: &str,
+        model_id: &str,
+        attempt_number: i64,
+    ) -> Result<ProviderSubmissionHandle, AppError> {
+        Self::submit_provider_request(
+            request,
+            Vec::new(),
+            credentials,
+            step_id,
+            compiled_request_id,
+            provider_id,
+            model_id,
+            attempt_number,
+        )
+    }
+
+    /// Full submission path: caller-supplied verified attachments plus an
+    /// optional credential store.
+    pub fn submit_provider_request(
+        request: &ExecutionRequest,
+        reference_attachments: Vec<ProviderReferenceAttachment>,
+        credentials: Option<&dyn CredentialStore>,
+        step_id: &str,
+        compiled_request_id: &str,
+        provider_id: &str,
+        model_id: &str,
+        attempt_number: i64,
+    ) -> Result<ProviderSubmissionHandle, AppError> {
         let mut registry = ProviderRegistry::builtin();
         if provider_id == "openai" {
-            let token = std::env::var("OPENAI_API_KEY").map_err(|_| {
-                AppError::ProviderConfiguration("OPENAI_API_KEY is not configured".into())
-            })?;
+            let token = match credentials {
+                Some(store) => {
+                    let project_root = std::env::var("CINERY_PROJECT_ROOT").map_err(|_| {
+                        AppError::ProviderConfiguration("project context is unavailable for credential resolution".into())
+                    })?;
+                    let conn = db::open_existing_connection(&Path::new(&project_root).join("project.db"))?;
+                    let project_id = read_project(&conn)?.id;
+                    let account = credential_account(&project_id, provider_id);
+                    store
+                        .get_secret(&account)
+                        .map_err(|_| credential_store_error("reading the credential"))?
+                        .ok_or_else(|| {
+                            AppError::ProviderConfiguration(format!(
+                                "provider {provider_id} has no credential configured for this project"
+                            ))
+                        })?
+                }
+                None => std::env::var("OPENAI_API_KEY").map_err(|_| {
+                    AppError::ProviderConfiguration("OPENAI_API_KEY is not configured".into())
+                })?,
+            };
             registry.register(OpenAiImageProvider::new(
                 "https://api.openai.com/v1",
                 token,
             ));
         }
-
         let provider = registry.get(provider_id).map_err(provider_error)?;
-        let provider_request = ProviderExecutionRequest::from_execution_request(
+        let mut provider_request = ProviderExecutionRequest::from_execution_request(
             &request.provenance.workflow_run_id,
             step_id,
             compiled_request_id,
@@ -395,6 +451,7 @@ impl ProviderService {
             request,
         )
         .map_err(|message| AppError::ProviderExecution(message))?;
+        provider_request.reference_attachments = reference_attachments;
         provider
             .capabilities()
             .supports(&provider_request)

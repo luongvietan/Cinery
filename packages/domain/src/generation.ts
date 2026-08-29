@@ -1,4 +1,7 @@
 import { z } from "zod";
+import type { AssetType } from "./asset";
+import type { SkillOperation } from "./skill";
+import type { WorkflowRunDetail } from "./workflow";
 
 export const generationMediaKindSchema = z.literal("image");
 export type GenerationMediaKind = z.infer<typeof generationMediaKindSchema>;
@@ -66,4 +69,46 @@ export interface GeneratedArtifactDetail {
 export interface GenerationResultSetDetail {
   resultSet: GenerationResultSet;
   artifacts: GeneratedArtifactDetail[];
+}
+
+/**
+ * Provider-neutral description of what a completed generation run produced
+ * and which asset a candidate may be saved into. Derived from persisted run
+ * input plus the skill operation's expected output — never from component
+ * state.
+ */
+export interface GenerationResultContext {
+  workflowRunId: string;
+  operationId: string;
+  expectedAssetType: AssetType;
+  ownerEntityId: string | null;
+  resultSets: GenerationResultSetDetail[];
+}
+
+/**
+ * Derives a {@link GenerationResultContext} from a persisted workflow run
+ * and the operation definition. Returns `null` when the operation has no
+ * promotable generated output (non-generative operations).
+ */
+export function deriveGenerationResultContext(
+  run: WorkflowRunDetail,
+  operation: SkillOperation,
+): GenerationResultContext | null {
+  const expected = operation.expectedOutput;
+  if (!expected) return null;
+  let input: Record<string, unknown> = {};
+  try {
+    input = (JSON.parse(run.run.inputJson) as Record<string, unknown>) ?? {};
+  } catch {
+    input = {};
+  }
+  const ownerRef = expected.ownerEntityInputRef;
+  const ownerValue = ownerRef ? input[ownerRef] : undefined;
+  return {
+    workflowRunId: run.run.id,
+    operationId: run.run.operationId,
+    expectedAssetType: expected.assetType,
+    ownerEntityId: typeof ownerValue === "string" && ownerValue.trim() !== "" ? ownerValue : null,
+    resultSets: [],
+  };
 }

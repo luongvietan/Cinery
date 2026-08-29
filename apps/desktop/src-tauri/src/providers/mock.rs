@@ -105,6 +105,7 @@ mod tests {
             })).unwrap(),
             generation_parameters: ProviderGenerationParameters::default(),
             selected_provider: "mock".into(), selected_model: "mock-image-v1".into(), idempotency_key: "run-1:execute:1".into(),
+            reference_attachments: Vec::new(),
         }
     }
 
