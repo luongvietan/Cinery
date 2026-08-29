@@ -340,6 +340,37 @@ fn mock_provider_needs_no_credential() {
     assert!(status.credential_configured, "mock is always configured");
 }
 
+#[test]
+fn sentinel_secret_never_reaches_project_files_or_status_payloads() {
+    let (_temp, root) = fixture();
+    let store = memory_store();
+    ProviderService::save_credential(&root, store.as_ref(), "openai", SECRET, Some("gpt-image-2")).unwrap();
+
+    // Execute a mocked reference-image style run: the secret exists only in
+    // the vault; every file under the project root and every serialized
+    // status payload must be free of the sentinel.
+    let status = ProviderService::configuration_status(&root, store.as_ref(), "openai").unwrap();
+    let status_json = serde_json::to_string(&status).unwrap();
+    assert!(!status_json.contains(SECRET));
+
+    fn scan(dir: &std::path::Path, needle: &str) -> bool {
+        let mut found = false;
+        for entry in std::fs::read_dir(dir).into_iter().flatten() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                found = found || scan(&path, needle);
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                let text = String::from_utf8_lossy(&bytes);
+                found = found || text.contains(needle);
+            }
+        }
+        found
+    }
+    assert!(!scan(&root, SECRET), "the sentinel secret must never be written into project files");
+    assert!(!scan(&root, "sk-acceptance-sentinel"), "prefix-scoped sentinel scan must also be clean");
+}
+
 fn project_id(root: &std::path::Path) -> String {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap()
