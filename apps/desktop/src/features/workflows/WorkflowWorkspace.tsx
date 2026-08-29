@@ -3,6 +3,8 @@ import type { SkillOperation, WorkflowCharacterOption, WorkflowRunDetail, Workfl
 import { describeError } from "../../lib/errors";
 import { advanceWorkflowRun, createWorkflowRun, getWorkflowRun, listSkillOperations, listWorkflowCharacters, listWorkflowRuns } from "./api";
 import { CreateFaceLockForm } from "./CreateFaceLockForm";
+import { CreateOutfitForm } from "./CreateOutfitForm";
+import { CreateCharacterSheetForm } from "./CreateCharacterSheetForm";
 import { OperationCatalog } from "./OperationCatalog";
 import { WorkflowRunView } from "./WorkflowRunView";
 import { humanizeWorkflowStatus } from "./format";
@@ -41,9 +43,16 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
   }
 
   async function handleCreate(input: Record<string, unknown>) {
+    if (!selectedOperation) return;
     setPending(true); setError(null);
     try {
-      const created = await createWorkflowRun(projectRootPath, input);
+      const created = await createWorkflowRun(
+        projectRootPath,
+        "character-builder",
+        "1.1.0",
+        selectedOperation.id,
+        input,
+      );
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
       setSelectedRun(waiting); setSelectedOperation(null);
       setRuns(await listWorkflowRuns(projectRootPath));
@@ -77,7 +86,15 @@ export function WorkflowWorkspace({ projectRootPath }: { projectRootPath: string
           )}
         </section>
       </div>
-      {selectedOperation ? <CreateFaceLockForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} /> : null}
+      {selectedOperation ? (
+        selectedOperation.id === "character.create_outfit" ? (
+          <CreateOutfitForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+        ) : selectedOperation.id === "character.create_character_sheet" ? (
+          <CreateCharacterSheetForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+        ) : (
+          <CreateFaceLockForm projectRootPath={projectRootPath} characters={characters} pending={pending} onCancel={cancelOperation} onSubmit={handleCreate} />
+        )
+      ) : null}
       {selectedRun ? <WorkflowRunView projectRootPath={projectRootPath} detail={selectedRun} onChange={handleRunChange} /> : null}
     </div>
   );

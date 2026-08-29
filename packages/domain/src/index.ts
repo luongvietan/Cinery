@@ -4,6 +4,7 @@ export * from "./canon";
 export * from "./canon-schema";
 export * from "./tbd";
 export * from "./skill";
+export * from "./router";
 export * from "./workflow";
 export * from "./execution";
 export * from "./generation";
@@ -23,3 +24,4 @@ export interface AppCommandError {
   recoverability?: "retry" | "resume" | "manual" | "none";
   actionGuidance?: string; // User-facing next steps
 }
+

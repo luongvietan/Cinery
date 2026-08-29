@@ -1,70 +1,67 @@
 .container {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: var(--space-16);
 }
 
 .explanation {
-  padding: 0.75rem;
-  background: var(--color-surface, #f9f9f9);
-  border-left: 3px solid var(--color-border, #ddd);
-  border-radius: 0.25rem;
+  padding: var(--space-12);
+  background: var(--c-surface);
+  border-left: 3px solid var(--c-hairline);
+  border-radius: var(--radius-md);
 }
 
 .explanation p {
   margin: 0;
   line-height: 1.5;
-  color: var(--color-text, #333);
+  color: var(--c-text);
   font-size: 0.95rem;
 }
 
 .qaFailures {
-  padding: 0.75rem;
-  background: var(--color-info-bg, #e3f2fd);
-  border-radius: 0.25rem;
+  padding: var(--space-12);
+  background: var(--c-info-bg);
+  border-radius: var(--radius-md);
 }
 
 .qaFailures h4 {
-  margin: 0 0 0.75rem 0;
+  margin: 0 0 var(--space-12) 0;
   font-size: 0.95rem;
-  color: var(--color-info, #1976d2);
+  color: var(--c-info);
 }
 
 .checksList {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--space-8);
 }
 
 .check {
-  padding: 0.5rem;
-  border-radius: 0.25rem;
+  padding: var(--space-8);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: var(--space-8);
   font-size: 0.875rem;
-  background: white;
-  border: 1px solid var(--color-border, #ddd);
+  background: var(--c-panel-soft);
+  border: 0;
+  box-shadow: var(--sh-chip);
 }
 
 .check-pass {
-  background: var(--color-success-bg, #e8f5e9);
-  border-color: var(--color-success, #388e3c);
+  background: var(--c-success-bg);
 }
 
 .check-fail {
-  background: var(--color-error-bg, #ffebee);
-  border-color: var(--color-error, #d32f2f);
+  background: var(--c-danger-bg);
 }
 
 .check-uncertain {
-  background: var(--color-warning-bg, #fff3e0);
-  border-color: var(--color-warning, #f57c00);
+  background: var(--c-warning-bg);
 }
 
 .check-not_applicable {
-  background: var(--color-surface, #f5f5f5);
-  border-color: var(--color-border, #ddd);
+  background: var(--c-surface);
 }
 
 .checkStatus {
@@ -75,44 +72,44 @@
 }
 
 .check-pass .checkStatus {
-  color: var(--color-success, #388e3c);
+  color: var(--c-success);
 }
 
 .check-fail .checkStatus {
-  color: var(--color-error, #d32f2f);
+  color: var(--c-danger);
 }
 
 .check-uncertain .checkStatus {
-  color: var(--color-warning, #f57c00);
+  color: var(--c-warning);
 }
 
 .checkLabel {
   flex: 1;
-  color: var(--color-text, #333);
+  color: var(--c-text);
 }
 
 .checkType {
   font-size: 0.75rem;
-  color: var(--color-text-muted, #999);
+  color: var(--c-muted);
 }
 
 .action {
-  padding: 0.75rem;
-  background: var(--color-success-bg, #e8f5e9);
-  border-left: 3px solid var(--color-success, #388e3c);
-  border-radius: 0.25rem;
+  padding: var(--space-12);
+  background: var(--c-success-bg);
+  border-left: 3px solid var(--c-success);
+  border-radius: var(--radius-md);
 }
 
 .actionLabel {
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 var(--space-8) 0;
   font-weight: 600;
   font-size: 0.95rem;
-  color: var(--color-success, #388e3c);
+  color: var(--c-success);
 }
 
 .actionText {
   margin: 0;
-  color: var(--color-text, #333);
+  color: var(--c-text);
   line-height: 1.5;
   font-size: 0.95rem;
 }

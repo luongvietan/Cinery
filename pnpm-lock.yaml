@@ -22,12 +22,18 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: ^2.2.0
         version: 2.5.4
+      liquid-gooey:
+        specifier: ^0.2.1
+        version: 0.2.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
+      thinking-orbs:
+        specifier: ^0.3.1
+        version: 0.3.1(react@18.3.1)
       zod:
         specifier: ^3.24.2
         version: 3.25.76
@@ -939,6 +945,12 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
+  liquid-gooey@0.2.1:
+    resolution: {integrity: sha512-BRb0Rscie4JCHFmk4bkWxM+p03c34sidLgNE8XFJGRGEyWM/Wf0FYztJH3CfMWwOVajd4dVurAFe+BTSj8Eeeg==}
+    peerDependencies:
+      react: '>=18'
+      react-dom: '>=18'
+
   loose-envify@1.4.0:
     resolution: {integrity: sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==}
     hasBin: true
@@ -1086,6 +1098,11 @@ packages:
 
   symbol-tree@3.2.4:
     resolution: {integrity: sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==}
+
+  thinking-orbs@0.3.1:
+    resolution: {integrity: sha512-3BG1aeB1RUTxItCml/BBuIz5JRM4kZqGuyx+vouv0fXTtcR9ZNoKjWGneHPx94y74GxgArwJZ1qbJR5dt54kSw==}
+    peerDependencies:
+      react: '>=18.0.0'
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -2030,6 +2047,11 @@ snapshots:
 
   json5@2.2.3: {}
 
+  liquid-gooey@0.2.1(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
+
   loose-envify@1.4.0:
     dependencies:
       js-tokens: 4.0.0
@@ -2176,6 +2198,10 @@ snapshots:
       js-tokens: 9.0.1
 
   symbol-tree@3.2.4: {}
+
+  thinking-orbs@0.3.1(react@18.3.1):
+    dependencies:
+      react: 18.3.1
 
   tinybench@2.9.0: {}
 

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { OverviewAction, ProjectSummary } from "@cinematic/domain";
 import { BackButton } from "../../components/BackButton";
+import { GooeyNav, GooeyNavItem } from "../../components/GooeyNav";
 import { AssetInspector } from "../assets/AssetInspector";
 import { AssetList } from "../assets/AssetList";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
@@ -42,6 +43,16 @@ export function ProjectWorkspace({
     setSelectedAssetId(null);
   }
 
+  const navItems: Array<{ view: PanelView; label: string }> = [
+    { view: "overview", label: "Overview" },
+    { view: "assets", label: "Assets" },
+    { view: "canon", label: "Canon" },
+    { view: "workflows", label: "Workflows" },
+    { view: "production", label: "Production" },
+    { view: "providers", label: "Providers" },
+    { view: "diagnostics", label: "Diagnostics" },
+  ];
+
   return (
     <>
       <header className="workspace-header">
@@ -51,73 +62,20 @@ export function ProjectWorkspace({
           <span>{project.rootPath}</span>
         </div>
       </header>
-      <nav>
-        <button
-          type="button"
-          aria-pressed={panelView === "overview"}
-          className={panelView === "overview" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => { setPanelView("overview"); setSelectedAssetId(null); }}
-        >
-          Overview
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "assets"}
-          className={panelView === "assets" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => setPanelView("assets")}
-        >
-          Assets
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "canon"}
-          className={panelView === "canon" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => {
-            setPanelView("canon");
-            setSelectedAssetId(null);
-          }}
-        >
-          Canon
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "workflows"}
-          className={panelView === "workflows" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => {
-            setPanelView("workflows");
-            setSelectedAssetId(null);
-          }}
-        >
-          Workflows
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "production"}
-          className={panelView === "production" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => {
-            setPanelView("production");
-            setSelectedAssetId(null);
-          }}
-        >
-          Production
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "providers"}
-          className={panelView === "providers" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => { setPanelView("providers"); setSelectedAssetId(null); }}
-        >
-          Providers
-        </button>
-        <button
-          type="button"
-          aria-pressed={panelView === "diagnostics"}
-          className={panelView === "diagnostics" ? "nav-button nav-button--active" : "nav-button"}
-          onClick={() => { setPanelView("diagnostics"); setSelectedAssetId(null); }}
-        >
-          Diagnostics
-        </button>
-      </nav>
+      <GooeyNav ariaLabel="Workspace panels">
+        {navItems.map(({ view, label }) => (
+          <GooeyNavItem
+            key={view}
+            label={label}
+            pressed={panelView === view}
+            className={panelView === view ? "nav-button nav-button--active" : "nav-button"}
+            onClick={() => {
+              setPanelView(view);
+              setSelectedAssetId(null);
+            }}
+          />
+        ))}
+      </GooeyNav>
       <section aria-label="Project workspace">
         {panelView === "overview" ? (
           <ProjectOverview projectRootPath={project.rootPath} onNavigate={navigateOverviewAction} />
