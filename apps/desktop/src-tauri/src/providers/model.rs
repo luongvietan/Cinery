@@ -13,6 +13,15 @@ pub struct CustomProviderModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomProviderPurpose {
+    Legacy,
+    Llm,
+    Image,
+    Video,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CustomProviderHeader {
     pub name: String,
@@ -26,8 +35,14 @@ pub struct CustomProviderDefinition {
     pub provider_id: String,
     pub display_name: String,
     pub base_url: String,
+    pub purpose: CustomProviderPurpose,
     #[serde(default, skip_serializing)]
     pub api_key: Option<String>,
+    /// Non-secret display hint (e.g. "sk-j9ml•••ray") derived from the vault
+    /// secret on read paths. Never persisted in the database and never
+    /// accepted back as a credential value.
+    #[serde(default)]
+    pub api_key_hint: Option<String>,
     pub models: Vec<CustomProviderModel>,
     pub headers: Vec<CustomProviderHeader>,
 }
@@ -46,10 +61,24 @@ impl CustomProviderDefinition {
         if self.display_name.trim().is_empty() {
             return Err("display name must not be blank".into());
         }
-        if !(self.base_url.starts_with("http://") || self.base_url.starts_with("https://"))
-            || self.base_url.chars().any(char::is_whitespace)
-        {
+        let base_url = url::Url::parse(&self.base_url)
+            .map_err(|_| "base URL must be an absolute HTTP(S) URL")?;
+        if !matches!(base_url.scheme(), "http" | "https") || base_url.host_str().is_none() {
             return Err("base URL must be an absolute HTTP(S) URL".into());
+        }
+        if !base_url.username().is_empty()
+            || base_url.password().is_some()
+            || base_url.query().is_some()
+            || base_url.fragment().is_some()
+        {
+            return Err("base URL must not contain credentials, a query, or a fragment".into());
+        }
+        if self
+            .api_key
+            .as_deref()
+            .is_some_and(|value| value.contains(['\r', '\n']))
+        {
+            return Err("API key must not contain line breaks".into());
         }
         if self.models.is_empty() {
             return Err("at least one model is required".into());
@@ -65,10 +94,23 @@ impl CustomProviderDefinition {
         }
         let mut header_names = HashSet::new();
         for header in &self.headers {
-            if header.name.trim().is_empty()
+            if !is_http_header_name(&header.name)
                 || !header_names.insert(header.name.to_ascii_lowercase())
             {
-                return Err("header names must be non-blank and unique".into());
+                return Err("header names must be valid, unique HTTP header names".into());
+            }
+            if matches!(
+                header.name.to_ascii_lowercase().as_str(),
+                "host" | "content-length" | "transfer-encoding" | "connection"
+            ) {
+                return Err("transport-controlled headers cannot be customized".into());
+            }
+            if header
+                .value
+                .as_deref()
+                .is_some_and(|value| value.contains(['\r', '\n']))
+            {
+                return Err("header values must not contain line breaks".into());
             }
         }
         Ok(())
@@ -88,6 +130,44 @@ impl CustomProviderDefinition {
             ..self.clone()
         }
     }
+}
+
+/// Builds a short, non-secret display hint such as `sk-j9ml•••ray` from a
+/// stored secret. Only the first 7 and last 3 characters are exposed; shorter
+/// secrets produce a length-only mask so no full value ever round-trips.
+pub fn mask_secret(secret: &str) -> String {
+    let trimmed = secret.trim();
+    let char_count = trimmed.chars().count();
+    if char_count < 12 {
+        return "•".repeat(char_count.max(1));
+    }
+    let head: String = trimmed.chars().take(7).collect();
+    let tail: String = trimmed.chars().skip(char_count - 3).collect();
+    format!("{head}•••{tail}")
+}
+
+fn is_http_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,7 +392,9 @@ mod tests {
             provider_id: "image_provider".into(),
             display_name: "Image Provider".into(),
             base_url: "https://images.example.test/v1".into(),
+            purpose: CustomProviderPurpose::Image,
             api_key: Some("secret-api-key".into()),
+            api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "image-v1".into(),
                 name: "Image V1".into(),
@@ -329,12 +411,24 @@ mod tests {
     }
 
     #[test]
+    fn mask_secret_exposes_only_edges_and_never_the_full_value() {
+        assert_eq!(mask_secret("sk-j9mlQwErTyXzray"), "sk-j9ml•••ray");
+        assert_eq!(mask_secret("  sk-j9mlQwErTyXzray  "), "sk-j9ml•••ray");
+        assert_eq!(mask_secret("short"), "•••••");
+        assert_eq!(mask_secret(""), "•");
+        let masked = mask_secret("sk-j9mlQwErTyXzray");
+        assert!(!masked.contains("QwErTyXz"));
+    }
+
+    #[test]
     fn custom_provider_definition_rejects_invalid_id_and_duplicates() {
         let definition = CustomProviderDefinition {
             provider_id: "Bad ID".into(),
             display_name: "x".into(),
             base_url: "http://x".into(),
+            purpose: CustomProviderPurpose::Image,
             api_key: None,
+            api_key_hint: None,
             models: vec![
                 CustomProviderModel {
                     id: "same".into(),
@@ -348,6 +442,43 @@ mod tests {
             headers: vec![],
         };
         assert!(definition.validate().is_err());
+    }
+
+    #[test]
+    fn custom_provider_definition_rejects_secret_bearing_urls_and_unsafe_headers() {
+        let mut definition = CustomProviderDefinition {
+            provider_id: "safe_id".into(),
+            display_name: "Safe".into(),
+            base_url: "https://user:secret@example.test/v1".into(),
+            purpose: CustomProviderPurpose::Llm,
+            api_key: None,
+            api_key_hint: None,
+            models: vec![CustomProviderModel {
+                id: "m".into(),
+                name: "M".into(),
+            }],
+            headers: vec![],
+        };
+        assert!(definition
+            .validate()
+            .unwrap_err()
+            .contains("must not contain credentials"));
+
+        definition.base_url = "https://example.test/v1".into();
+        definition.headers = vec![CustomProviderHeader {
+            name: "Host".into(),
+            value: Some("redirect.example.test".into()),
+        }];
+        assert!(definition
+            .validate()
+            .unwrap_err()
+            .contains("transport-controlled"));
+
+        definition.headers[0] = CustomProviderHeader {
+            name: "X-Api-Key\r\nInjected".into(),
+            value: Some("secret".into()),
+        };
+        assert!(definition.validate().unwrap_err().contains("valid, unique"));
     }
 
     fn execution_request() -> ExecutionRequest {

@@ -2,7 +2,9 @@ use super::credential_store::KeyringCredentialStore;
 use super::model::{CustomProviderDefinition, ProviderCapabilities};
 use super::registry::ProviderRegistry;
 use super::repository::ProviderConfigRecord;
-use super::service::{ProviderConfigurationStatus, ProviderService};
+use super::service::{
+    ProviderConfigurationStatus, ProviderConnectionTestResult, ProviderService, UreqConnectionProbe,
+};
 use crate::db;
 use crate::error::{AppCommandError, AppError};
 use crate::project::repository::read_project;
@@ -12,6 +14,7 @@ use crate::workflow::repository::WorkflowRepository;
 use crate::workflow::runtime::WorkflowRuntime;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The process-wide credential store. Tests inject their own store through
 /// the service API directly; the Tauri command surface always uses the real
@@ -25,11 +28,10 @@ pub fn list_providers(project_root_path: Option<String>) -> Result<Vec<String>, 
     let mut providers = ProviderService::list_provider_ids();
     if let Some(path) = project_root_path {
         validate_root_path(&path)?;
-        providers.extend(
-            ProviderService::list_custom_providers(&PathBuf::from(path))?
-                .into_iter()
-                .map(|provider| provider.provider_id),
-        );
+        providers = ProviderService::list_custom_providers(&PathBuf::from(path), command_credential_store().as_ref())?
+            .into_iter()
+            .map(|provider| provider.provider_id)
+            .collect();
     }
     Ok(providers)
 }
@@ -39,7 +41,11 @@ pub fn list_custom_providers(
     project_root_path: String,
 ) -> Result<Vec<CustomProviderDefinition>, AppCommandError> {
     validate_root_path(&project_root_path)?;
-    ProviderService::list_custom_providers(&PathBuf::from(project_root_path)).map_err(Into::into)
+    ProviderService::list_custom_providers(
+        &PathBuf::from(project_root_path),
+        command_credential_store().as_ref(),
+    )
+    .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -68,6 +74,30 @@ pub fn delete_custom_provider(
         &provider_id,
     )
     .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn test_custom_provider_connection(
+    project_root_path: String,
+    provider_id: String,
+) -> Result<ProviderConnectionTestResult, AppCommandError> {
+    validate_root_path(&project_root_path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let probe = UreqConnectionProbe::new(Duration::from_secs(10));
+        ProviderService::test_connection(
+            &PathBuf::from(project_root_path),
+            command_credential_store().as_ref(),
+            &probe,
+            &provider_id,
+        )
+        .map_err(Into::into)
+    })
+    .await
+    .map_err(|_| {
+        AppCommandError::from(AppError::ProviderExecution(
+            "connection test task failed".into(),
+        ))
+    })?
 }
 
 #[tauri::command]
@@ -163,9 +193,10 @@ pub fn list_provider_models(
 ) -> Result<Vec<String>, AppCommandError> {
     if let Some(path) = project_root_path {
         validate_root_path(&path)?;
-        if let Some(custom) = ProviderService::list_custom_providers(&PathBuf::from(path))?
-            .into_iter()
-            .find(|provider| provider.provider_id == provider_id)
+        if let Some(custom) =
+            ProviderService::list_custom_providers(&PathBuf::from(path), command_credential_store().as_ref())?
+                .into_iter()
+                .find(|provider| provider.provider_id == provider_id)
         {
             return Ok(custom.models.into_iter().map(|model| model.id).collect());
         }

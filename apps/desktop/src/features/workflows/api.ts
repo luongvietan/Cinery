@@ -2,6 +2,7 @@ import type {
   ProviderCapabilities,
   ProviderConfigurationStatus,
   CustomProviderDefinition,
+  ProviderConnectionTestResult,
   SkillOperation,
   WorkflowCharacterOption,
   WorkflowRunDetail,
@@ -84,6 +85,10 @@ export function upsertCustomProvider(projectRootPath: string, definition: Custom
 
 export function deleteCustomProvider(projectRootPath: string, providerId: string): Promise<void> {
   return invokeCommand("delete_custom_provider", { projectRootPath, providerId });
+}
+
+export function testCustomProviderConnection(projectRootPath: string, providerId: string): Promise<ProviderConnectionTestResult> {
+  return invokeCommand("test_custom_provider_connection", { projectRootPath, providerId });
 }
 
 export function getProviderCapabilities(providerId: string): Promise<ProviderCapabilities> {

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add project-scoped custom provider settings with independent credentials, models, and headers for LLM, image, and video services.
+**Goal:** Add project-scoped custom provider settings with independent purpose, credentials, models, and headers for LLM, image, and video services.
 
 **Architecture:** Store non-secret provider metadata in a dedicated SQLite table and store API-key/header secrets through the existing CredentialStore. Add typed Tauri commands and a Provider Settings editor while preserving built-in provider behavior and adapter boundaries.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Provider IDs must match `^[a-z0-9_-]+$`.
+- Provider IDs must match `^[a-z0-9_-]+$`; new records use `llm`, `image`, or `video`, while upgraded schema-14 records retain a temporary `legacy` classification until edited.
 - API keys and header values must never be serialized or returned to the frontend.
 - Existing built-in providers and OpenAI reference-image behavior must remain unchanged.
 - Work only in `codex/mvp-release-source`; preserve the dirty `master` checkout.
@@ -54,6 +54,7 @@
 - [ ] **Step 2: Run focused tests** and verify failure.
 - [ ] **Step 3: Implement service/command wiring** and register commands; route secret writes through existing CredentialStore namespaces.
 - [ ] **Step 4: Run focused and existing provider tests** and verify pass.
+- [ ] **Step 4a: Add a non-inference connection probe** using `GET {base_url}/models`, OS-vault credentials, no redirects/body reads, status-only results, and secret redaction.
 - [ ] **Step 5: Commit** `feat: expose custom provider IPC`.
 
 ### Task 3: Frontend API and Provider Settings editor
@@ -70,7 +71,7 @@
 
 - [ ] **Step 1: Add failing UI tests** for custom fields, add/remove rows, validation copy, and save payload.
 - [ ] **Step 2: Run the focused Vitest suite** and verify failure.
-- [ ] **Step 3: Implement typed API and editor UI** with built-in/custom merged discovery and configured-only credential status.
+- [ ] **Step 3: Implement typed API and custom-only editor UI** with purpose selection, saved-provider switching, and configured-only credential status.
 - [ ] **Step 4: Run focused and full frontend tests** and verify pass.
 - [ ] **Step 5: Commit** `feat: add custom provider settings UI`.
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { ProviderCapabilities } from "@cinematic/domain";
+import type { CustomProviderDefinition, ProviderCapabilities } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
-import { getProviderCapabilities, getProviderConfigurationStatus, listProviderModels, listProviders } from "../workflows/api";
+import { getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders } from "../workflows/api";
 
 export interface ProviderModelSelection {
   providerId: string;
@@ -23,6 +23,7 @@ interface ProviderOption {
   capabilities: ProviderCapabilities | null;
   models: string[];
   configured: boolean;
+  purpose: CustomProviderDefinition["purpose"] | null;
 }
 
 export function ProviderModelFields({ projectRootPath, value, mediaType, requiresReferences, onChange }: ProviderModelFieldsProps) {
@@ -35,18 +36,19 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     setPending(true);
     setError(null);
     Promise.resolve()
-      .then(() => listProviders(projectRootPath))
-      .then((providerIds) => Promise.all(
+      .then(() => Promise.all([listProviders(projectRootPath), Promise.resolve(listCustomProviders(projectRootPath)).catch(() => [] as CustomProviderDefinition[])]))
+      .then(([providerIds, customProviders]) => Promise.all(
         (providerIds ?? []).map(async (id): Promise<ProviderOption> => {
+          const custom = (customProviders ?? []).find((provider) => provider.providerId === id);
           try {
             const [capabilities, models, status] = await Promise.all([
               getProviderCapabilities(id).catch(() => null),
               listProviderModels(id, projectRootPath).catch(() => [] as string[]),
               getProviderConfigurationStatus(projectRootPath, id).catch(() => null),
             ]);
-            return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? ALWAYS_CONFIGURED.has(id) };
+            return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? ALWAYS_CONFIGURED.has(id), purpose: custom?.purpose ?? null };
           } catch {
-            return { id, capabilities: null, models: [], configured: false };
+            return { id, capabilities: null, models: [], configured: false, purpose: custom?.purpose ?? null };
           }
         }),
       ))
@@ -58,6 +60,7 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
 
   const selected = options.find((option) => option.id === value.providerId) ?? null;
   const compatible = (option: ProviderOption): boolean => {
+    if (option.purpose && option.purpose !== "legacy" && option.purpose !== mediaType) return false;
     if (!option.capabilities) return true;
     const wanted = mediaType === "image" ? "image" : "video";
     if (!option.capabilities.mediaTypes.includes(wanted)) return false;

@@ -1388,6 +1388,20 @@ select:focus-visible {
   width: 100%;
 }
 
+.api-key-hint {
+  margin-top: -0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-muted, #6f6a60);
+}
+
+.api-key-hint code {
+  padding: 0.1rem 0.4rem;
+  border-radius: 6px;
+  background: var(--surface-inset, rgba(128, 128, 128, 0.12));
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
+}
+
 .workflow-overview {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);

@@ -27,6 +27,15 @@ pub fn credential_reference(account: &str) -> String {
 
 /// Deterministic account key for one custom HTTP header value.
 pub fn header_credential_account(project_id: &str, provider_id: &str, header_name: &str) -> String {
+    legacy_header_credential_account(project_id, provider_id, &header_name.to_ascii_lowercase())
+}
+
+/// Pre-normalization account key retained only for migrating existing vault entries.
+pub fn legacy_header_credential_account(
+    project_id: &str,
+    provider_id: &str,
+    header_name: &str,
+) -> String {
     let encoded = header_name
         .as_bytes()
         .iter()

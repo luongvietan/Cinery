@@ -12,7 +12,9 @@ mod tests {
             provider_id: "video_provider".into(),
             display_name: "Video".into(),
             base_url: "https://video.example.test".into(),
+            purpose: CustomProviderPurpose::Video,
             api_key: Some("secret".into()),
+            api_key_hint: None,
             models: vec![CustomProviderModel {
                 id: "v1".into(),
                 name: "Video 1".into(),
@@ -30,6 +32,17 @@ mod tests {
         assert_eq!(saved.models[0].id, "v1");
         assert!(saved.api_key.is_none());
         assert!(saved.headers[0].value.is_none());
+
+        let mut changed = definition.clone();
+        changed.purpose = CustomProviderPurpose::Llm;
+        upsert_custom_provider(&conn, &changed).unwrap();
+        assert_eq!(
+            get_custom_provider(&conn, "video_provider")
+                .unwrap()
+                .unwrap()
+                .purpose,
+            CustomProviderPurpose::Llm
+        );
     }
 
     #[test]
@@ -140,7 +153,9 @@ mod tests {
         assert_eq!(saved, "[\"artifact-1\",\"artifact-2\"]");
     }
 }
-use super::model::{CustomProviderDefinition, CustomProviderHeader, CustomProviderModel};
+use super::model::{
+    CustomProviderDefinition, CustomProviderHeader, CustomProviderModel, CustomProviderPurpose,
+};
 use crate::error::AppError;
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -193,19 +208,21 @@ pub fn upsert_custom_provider(
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO custom_provider_definitions
-         (provider_id, display_name, base_url, models_json, headers_json, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+         (provider_id, display_name, base_url, purpose, models_json, headers_json, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
          ON CONFLICT(provider_id) DO UPDATE SET
            display_name = excluded.display_name, base_url = excluded.base_url,
+           purpose = excluded.purpose,
            models_json = excluded.models_json, headers_json = excluded.headers_json,
            updated_at = excluded.updated_at",
         params![
             metadata.provider_id,
             metadata.display_name,
             metadata.base_url,
+            serde_json::to_string(&metadata.purpose).unwrap().trim_matches('"'),
             models_json,
             headers_json,
-            now
+            now,
         ],
     )
     .map_err(db_error)?;
@@ -217,16 +234,17 @@ pub fn get_custom_provider(
     provider_id: &str,
 ) -> Result<Option<CustomProviderDefinition>, AppError> {
     conn.query_row(
-        "SELECT provider_id, display_name, base_url, models_json, headers_json
+        "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json
          FROM custom_provider_definitions WHERE provider_id = ?1",
         [provider_id],
         |row| {
-            let models_json: String = row.get(3)?;
-            let headers_json: String = row.get(4)?;
+            let purpose_text: String = row.get(3)?;
+            let models_json: String = row.get(4)?;
+            let headers_json: String = row.get(5)?;
             let models = serde_json::from_str::<Vec<CustomProviderModel>>(&models_json).map_err(
                 |error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        3,
+                        4,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
@@ -235,16 +253,27 @@ pub fn get_custom_provider(
             let headers = serde_json::from_str::<Vec<CustomProviderHeader>>(&headers_json)
                 .map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        4,
+                        5,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
                 })?;
+            let purpose =
+                serde_json::from_str::<CustomProviderPurpose>(&format!("\"{purpose_text}\""))
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
             Ok(CustomProviderDefinition {
                 provider_id: row.get(0)?,
                 display_name: row.get(1)?,
                 base_url: row.get(2)?,
+                purpose,
                 api_key: None,
+                api_key_hint: None,
                 models,
                 headers,
             })
@@ -257,24 +286,34 @@ pub fn get_custom_provider(
 pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefinition>, AppError> {
     let mut statement = conn
         .prepare(
-            "SELECT provider_id, display_name, base_url, models_json, headers_json
+            "SELECT provider_id, display_name, base_url, purpose, models_json, headers_json
          FROM custom_provider_definitions ORDER BY provider_id",
         )
         .map_err(db_error)?;
     let rows = statement
         .query_map([], |row| {
-            let models: Vec<CustomProviderModel> = serde_json::from_str(&row.get::<_, String>(3)?)
+            let purpose_text: String = row.get(3)?;
+            let purpose =
+                serde_json::from_str::<CustomProviderPurpose>(&format!("\"{purpose_text}\""))
+                    .map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            3,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+            let models: Vec<CustomProviderModel> = serde_json::from_str(&row.get::<_, String>(4)?)
                 .map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        3,
+                        4,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
                 })?;
             let headers: Vec<CustomProviderHeader> =
-                serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| {
+                serde_json::from_str(&row.get::<_, String>(5)?).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        4,
+                        5,
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
@@ -283,7 +322,9 @@ pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefi
                 provider_id: row.get(0)?,
                 display_name: row.get(1)?,
                 base_url: row.get(2)?,
+                purpose,
                 api_key: None,
+                api_key_hint: None,
                 models,
                 headers,
             })
@@ -295,6 +336,15 @@ pub fn list_custom_providers(conn: &Connection) -> Result<Vec<CustomProviderDefi
 pub fn delete_custom_provider(conn: &Connection, provider_id: &str) -> Result<(), AppError> {
     conn.execute(
         "DELETE FROM custom_provider_definitions WHERE provider_id = ?1",
+        [provider_id],
+    )
+    .map_err(db_error)?;
+    Ok(())
+}
+
+pub fn delete_provider_config(conn: &Connection, provider_id: &str) -> Result<(), AppError> {
+    conn.execute(
+        "DELETE FROM provider_configurations WHERE provider_id = ?1",
         [provider_id],
     )
     .map_err(db_error)?;

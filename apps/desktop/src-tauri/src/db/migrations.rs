@@ -68,6 +68,10 @@ pub const MIGRATIONS: &[Migration] = &[
         version: 14,
         sql: include_str!("../../migrations/0014_custom_provider_definitions.sql"),
     },
+    Migration {
+        version: 15,
+        sql: include_str!("../../migrations/0015_custom_provider_purpose.sql"),
+    },
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -129,6 +133,38 @@ fn read_applied_versions(conn: &Connection) -> Result<Vec<i64>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_14_custom_providers_upgrade_as_legacy_instead_of_guessing_a_purpose() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);").unwrap();
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 14)
+        {
+            conn.execute_batch(migration.sql).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'now')",
+                [migration.version],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO custom_provider_definitions (provider_id, display_name, base_url, models_json, headers_json, created_at, updated_at) VALUES ('old', 'Old', 'https://example.test/v1', '[{\"id\":\"m\",\"name\":\"M\"}]', '[]', 'now', 'now')",
+            [],
+        ).unwrap();
+
+        run_migrations(&mut conn).unwrap();
+
+        let purpose: String = conn
+            .query_row(
+                "SELECT purpose FROM custom_provider_definitions WHERE provider_id = 'old'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(purpose, "legacy");
+    }
 
     #[test]
     fn cinema_migration_creates_required_tables() {

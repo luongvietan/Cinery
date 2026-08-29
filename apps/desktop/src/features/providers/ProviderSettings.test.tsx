@@ -1,76 +1,30 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ProviderCapabilities, ProviderConfigurationStatus } from "@cinematic/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderSettings } from "./ProviderSettings";
-import { configureProvider, getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders, removeProviderCredentials, saveProviderCredential, upsertCustomProvider, validateProviderConfiguration } from "../workflows/api";
+import { deleteCustomProvider, listCustomProviders, testCustomProviderConnection, upsertCustomProvider } from "../workflows/api";
 
 vi.mock("../workflows/api");
 
-const capabilities: ProviderCapabilities = { mediaTypes: ["image"], supportsSeed: true, supportsNegativePrompt: false, supportsReferenceImage: true, supportsImageEdit: true, supportsMultipleReferenceImages: true, supportsImageToVideo: false, supportsCancel: true, supportsProgress: true, supportedAspectRatios: [], supportedModels: ["gpt-image-2"] };
-
-function statusFor(providerId: string, configured: boolean): ProviderConfigurationStatus {
-  return { providerId, enabled: true, credentialConfigured: configured, defaultModel: "gpt-image-2", models: ["gpt-image-2"] };
-}
-
 describe("ProviderSettings", () => {
   beforeEach(() => {
-    vi.mocked(listProviders).mockResolvedValue(["mock", "openai"]);
     vi.mocked(listCustomProviders).mockResolvedValue([]);
-    vi.mocked(listProviderModels).mockImplementation(async (providerId: string) => providerId === "openai" ? ["gpt-image-2"] : ["mock-image-v1"]);
-    vi.mocked(getProviderCapabilities).mockResolvedValue(capabilities);
-    vi.mocked(configureProvider).mockImplementation(async (_root: string, config: Record<string, unknown>) => statusFor(String(config.providerId), true));
-    vi.mocked(saveProviderCredential).mockImplementation(async (_root: string, providerId: string) => statusFor(providerId, true));
-    vi.mocked(removeProviderCredentials).mockResolvedValue();
-    vi.mocked(validateProviderConfiguration).mockResolvedValue();
-    vi.mocked(upsertCustomProvider).mockImplementation(async (_root, definition) => ({ ...definition, apiKey: undefined, headers: definition.headers.map((header) => ({ name: header.name })) }));
+    vi.mocked(upsertCustomProvider).mockImplementation(async (_root, definition) => ({ ...definition, apiKey: undefined, apiKeyHint: definition.apiKey ? "sk-j9ml•••ray" : null, headers: definition.headers.map((header) => ({ name: header.name })) }));
+    vi.mocked(deleteCustomProvider).mockResolvedValue();
+    vi.mocked(testCustomProviderConnection).mockResolvedValue({ providerId: "video_provider", endpoint: "https://video.example.test/v1/models", connected: true, statusCode: 200, message: "Endpoint reachable and credentials were not rejected; no inference was run." });
   });
 
-  it("keeps the credential write-only and exposes accessible provider controls", async () => {
-    vi.mocked(getProviderConfigurationStatus).mockResolvedValue(statusFor("openai", true));
+  it("shows only custom provider management and no built-in provider selector", async () => {
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    expect(await screen.findByRole("heading", { name: "Custom providers" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider", { selector: "select" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Purpose")).toHaveValue("image");
+  });
+
+  it("saves a provider purpose, models, API key, and headers", async () => {
     const user = userEvent.setup();
     render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
-
-    await screen.findByLabelText("Provider");
-    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
-
-    const secret = await screen.findByLabelText("API key", { selector: "input" });
-    expect(secret).toHaveAttribute("type", "password");
-    expect(screen.getByText("Credential configured")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save configuration" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Validate" })).toBeEnabled();
-
-    // Saving a replacement key clears the field and never displays the secret.
-    await user.type(secret, "sk-super-secret-value");
-    await user.click(screen.getByRole("button", { name: "Save credential" }));
-    await waitFor(() => expect(saveProviderCredential).toHaveBeenCalledWith("C:/projects/red-door", "openai", "sk-super-secret-value", "gpt-image-2"));
-    expect(await screen.findByText("Credential saved to the operating system credential vault.")).toBeInTheDocument();
-    expect(secret).toHaveValue("");
-    expect(screen.queryByText(/sk-super-secret-value/)).not.toBeInTheDocument();
-  });
-
-  it("shows not-configured status for a provider without a credential", async () => {
-    vi.mocked(getProviderConfigurationStatus).mockResolvedValue(statusFor("openai", false));
-    const user = userEvent.setup();
-    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
-
-    await screen.findByLabelText("Provider");
-    await user.selectOptions(screen.getByLabelText("Provider"), "openai");
-
-    expect(await screen.findByText("Credential not configured")).toBeInTheDocument();
-    expect(screen.getByLabelText("API key", { selector: "input" })).toHaveValue("");
-  });
-
-  it("does not offer a credential field for local providers", async () => {
-    vi.mocked(getProviderConfigurationStatus).mockResolvedValue({ providerId: "mock", enabled: true, credentialConfigured: true, defaultModel: "mock-image-v1", models: ["mock-image-v1"], } as ProviderConfigurationStatus);
-    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
-    expect(await screen.findByText("This provider runs locally and needs no credential.")).toBeInTheDocument();
-    expect(screen.queryByLabelText("API key")).not.toBeInTheDocument();
-  });
-
-  it("captures custom provider models, optional API key, and headers", async () => {
-    const user = userEvent.setup();
-    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.selectOptions(screen.getByLabelText("Purpose"), "video");
     await user.type(screen.getByLabelText("Provider ID"), "video_provider");
     await user.type(screen.getByLabelText("Display name"), "Video Provider");
     await user.type(screen.getByLabelText("Base URL"), "https://video.example.test/v1");
@@ -78,11 +32,82 @@ describe("ProviderSettings", () => {
     await user.type(screen.getByLabelText("Model ID"), "video-v1");
     await user.type(screen.getByLabelText("Model name"), "Video V1");
     await user.click(screen.getByRole("button", { name: "Add header" }));
-    const headerInputs = screen.getAllByLabelText("Header");
-    await user.type(headerInputs[0], "X-Workspace");
-    await user.type(screen.getAllByLabelText("Value")[0], "workspace-secret");
-    await user.click(screen.getByRole("button", { name: "Save custom provider" }));
-    await waitFor(() => expect(upsertCustomProvider).toHaveBeenCalledWith("C:/projects/red-door", expect.objectContaining({ providerId: "video_provider", apiKey: "video-secret", models: [{ id: "video-v1", name: "Video V1" }], headers: [{ name: "X-Workspace", value: "workspace-secret" }] })));
+    await user.type(screen.getByLabelText("Header"), "X-Workspace");
+    await user.type(screen.getByLabelText("Value"), "workspace-secret");
+    await user.click(screen.getByRole("button", { name: "Save provider" }));
+    await waitFor(() => expect(upsertCustomProvider).toHaveBeenCalledWith("C:/projects/red-door", expect.objectContaining({ providerId: "video_provider", purpose: "video", apiKey: "video-secret", headers: [{ name: "X-Workspace", value: "workspace-secret" }] })));
     expect(screen.queryByText("video-secret")).not.toBeInTheDocument();
+  });
+
+  it("shows the masked vault hint after saving and when selecting a saved provider", async () => {
+    const user = userEvent.setup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.type(screen.getByLabelText("Provider ID"), "video_provider");
+    await user.type(screen.getByLabelText("Display name"), "Video Provider");
+    await user.type(screen.getByLabelText("Base URL"), "https://video.example.test/v1");
+    await user.type(screen.getByLabelText("API key (optional)"), "sk-j9mlQwErTyXzray");
+    await user.type(screen.getByLabelText("Model ID"), "video-v1");
+    await user.type(screen.getByLabelText("Model name"), "Video V1");
+    await user.click(screen.getByRole("button", { name: "Save provider" }));
+
+    expect(await screen.findByText("sk-j9ml•••ray")).toBeInTheDocument();
+    expect(screen.getByLabelText("API key (optional)")).toHaveAttribute("placeholder", "Stored in vault: sk-j9ml•••ray");
+    expect(screen.queryByText("sk-j9mlQwErTyXzray")).not.toBeInTheDocument();
+
+    vi.mocked(listCustomProviders).mockResolvedValue([{ providerId: "video_provider", displayName: "Video Provider", baseUrl: "https://video.example.test/v1", purpose: "video", apiKeyHint: "sk-j9ml•••ray", models: [{ id: "video-v1", name: "Video V1" }], headers: [] }]);
+    cleanup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.selectOptions(await screen.findByLabelText("Saved providers"), "video_provider");
+    const hint = await screen.findByText((_, element) => element?.textContent === "Stored credential: sk-j9ml•••ray — leave the field empty to keep it." && element.tagName === "P");
+    expect(hint).toBeInTheDocument();
+    expect(screen.getByLabelText("API key (optional)")).toHaveAttribute("placeholder", "Stored in vault: sk-j9ml•••ray");
+  });
+
+  it("tests a saved provider without invoking a generation endpoint", async () => {
+    vi.mocked(listCustomProviders).mockResolvedValue([{ providerId: "video_provider", displayName: "Video Provider", baseUrl: "https://video.example.test/v1", purpose: "video", models: [{ id: "video-v1", name: "Video V1" }], headers: [] }]);
+    const user = userEvent.setup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.selectOptions(await screen.findByLabelText("Saved providers"), "video_provider");
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    await waitFor(() => expect(testCustomProviderConnection).toHaveBeenCalledWith("C:/projects/red-door", "video_provider"));
+    expect(await screen.findByText("Endpoint reachable and credentials were not rejected; no inference was run.")).toBeInTheDocument();
+  });
+
+  it("ignores a connection result after the user switches providers", async () => {
+    const providers = [
+      { providerId: "first", displayName: "First", baseUrl: "https://first.example.test/v1", purpose: "llm" as const, models: [{ id: "m1", name: "M1" }], headers: [] },
+      { providerId: "second", displayName: "Second", baseUrl: "https://second.example.test/v1", purpose: "llm" as const, models: [{ id: "m2", name: "M2" }], headers: [] },
+    ];
+    vi.mocked(listCustomProviders).mockResolvedValue(providers);
+    let resolveProbe!: (value: Awaited<ReturnType<typeof testCustomProviderConnection>>) => void;
+    vi.mocked(testCustomProviderConnection).mockReturnValue(new Promise((resolve) => { resolveProbe = resolve; }));
+    const user = userEvent.setup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    const saved = await screen.findByLabelText("Saved providers");
+    await user.selectOptions(saved, "first");
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    await user.selectOptions(saved, "second");
+
+    await act(async () => resolveProbe({ providerId: "first", endpoint: "https://first.example.test/v1/models", connected: true, statusCode: 200, message: "stale success" }));
+
+    expect(screen.queryByText("stale success")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test connection" })).toBeEnabled();
+  });
+
+  it("clears testing state when save supersedes a pending probe", async () => {
+    const provider = { providerId: "first", displayName: "First", baseUrl: "https://first.example.test/v1", purpose: "llm" as const, models: [{ id: "m1", name: "M1" }], headers: [] };
+    vi.mocked(listCustomProviders).mockResolvedValue([provider]);
+    let resolveProbe!: (value: Awaited<ReturnType<typeof testCustomProviderConnection>>) => void;
+    vi.mocked(testCustomProviderConnection).mockReturnValue(new Promise((resolve) => { resolveProbe = resolve; }));
+    const user = userEvent.setup();
+    render(<ProviderSettings projectRootPath="C:/projects/red-door" />);
+    await user.selectOptions(await screen.findByLabelText("Saved providers"), "first");
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(screen.getByRole("button", { name: "Testing…" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Save provider" }));
+    expect(await screen.findByRole("button", { name: "Test connection" })).toBeEnabled();
+    await act(async () => resolveProbe({ providerId: "first", endpoint: "https://first.example.test/v1/models", connected: true, statusCode: 200, message: "stale success" }));
+    expect(screen.queryByText("stale success")).not.toBeInTheDocument();
   });
 });
