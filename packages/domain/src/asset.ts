@@ -115,9 +115,15 @@ export function validateAssetLabel(value: string): string {
   return trimmed;
 }
 
+/**
+ * Asset types excluded from the current MVP slice. `video` is supported as
+ * of P10.0 (generated scene videos persist into per-scene `video` assets;
+ * the scene video workflow creates them, so the UI does not offer manual
+ * creation); `audio` remains unsupported until an audio pipeline exists.
+ */
 export function validateSprintOneAssetType(value: AssetType): AssetType {
-  if (value === "video" || value === "audio") {
-    throw new Error("This asset type is not supported in Sprint 1");
+  if (value === "audio") {
+    throw new Error("This asset type is not supported yet");
   }
   return value;
 }

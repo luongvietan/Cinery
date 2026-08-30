@@ -3,7 +3,7 @@ import type { AssetType } from "./asset";
 import type { SkillOperation } from "./skill";
 import type { WorkflowRunDetail } from "./workflow";
 
-export const generationMediaKindSchema = z.literal("image");
+export const generationMediaKindSchema = z.enum(["image", "video"]);
 export type GenerationMediaKind = z.infer<typeof generationMediaKindSchema>;
 
 export const generationResultSetSchema = z
@@ -26,7 +26,7 @@ export const generatedArtifactSchema = z
     resultSetId: z.string().min(1),
     ordinal: z.number().int().positive(),
     mediaKind: generationMediaKindSchema,
-    mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+    mimeType: z.enum(["image/png", "image/jpeg", "image/webp", "video/mp4"]),
     width: z.number().int().positive().nullable(),
     height: z.number().int().positive().nullable(),
     byteSize: z.number().int().nonnegative(),

@@ -34,7 +34,7 @@ vi.mock("../features/scenes/api", () => ({
   removeSceneTbdBinding: vi.fn().mockResolvedValue(undefined),
   setSceneTbdBinding: vi.fn().mockResolvedValue(null),
   listShots: vi.fn().mockResolvedValue([
-    { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
+    { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, generatedVideoAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
   ]),
   getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] }),
   listCinemaCompilations: vi.fn().mockResolvedValue([]),
@@ -166,7 +166,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
       blockers: [],
     });
     vi.mocked(listShots).mockReset().mockResolvedValue([
-      { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
+      { id: "shot-1", sceneId: "scene-001", ordering: 0, durationSeconds: 4, keyframeAssetVersionId: null, generatedVideoAssetVersionId: null, intent: "Establish", action: null, camera: null, createdAt: "now", updatedAt: "now" },
     ]);
     vi.mocked(getProjectOverview).mockReset().mockResolvedValue({
       readiness: {

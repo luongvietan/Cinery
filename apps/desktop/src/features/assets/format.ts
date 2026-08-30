@@ -1,9 +1,9 @@
 import { ASSET_TYPES, type AssetType, formatVersionNumber } from "@cinematic/domain";
 
 /**
- * The asset types Sprint 1's UI offers when creating an asset. `video` and
- * `audio` are excluded on purpose: the backend also rejects them
- * (`validateSprintOneAssetType`), but the UI shouldn't even offer them.
+ * The asset types the UI offers when creating an asset manually. `video` is
+ * supported (P10.0) but is created by the scene video workflow, not by
+ * hand; `audio` remains unsupported, so neither is offered here.
  */
 export const SPRINT_ONE_ASSET_TYPES = ASSET_TYPES.filter(
   (type): type is Exclude<AssetType, "video" | "audio"> =>

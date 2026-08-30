@@ -1,19 +1,28 @@
 import { useEffect, useState } from "react";
 import { describeError } from "../../lib/errors";
+import { listAssets } from "../assets/api";
+import { GenerationResults } from "../generation/GenerationResults";
+import {
+  listGenerationResults,
+} from "../generation/api";
 import { ProviderModelFields } from "../providers/ProviderModelFields";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
 import {
   advanceWorkflowRun,
   createWorkflowRun,
 } from "../workflows/api";
-import type { WorkflowRunDetail } from "@cinematic/domain";
+import { listSkillOperations } from "../workflows/api";
+import { deriveGenerationResultContext, type GenerationResultContext } from "@cinematic/domain";
+import type { AssetSummary, WorkflowRunDetail } from "@cinematic/domain";
 import {
   compileCinema,
   getCompileReadiness,
   listCinemaCompilations,
   listShots,
+  setShotVideo,
   type CinemaCompilation,
   type CompileReadiness,
+  type Shot,
 } from "./api";
 
 interface SceneCompileProps {
@@ -24,12 +33,15 @@ interface SceneCompileProps {
 
 /**
  * Compile/export section for the authoritative Scene: readiness blockers,
- * the compile action over the scene's shots, and the persisted compilation
- * history with export artifacts.
+ * the compile action over the scene's shots, the persisted compilation
+ * history with export artifacts, and scene video generation (P10.0) --
+ * approval, execution, a reviewable candidate gallery, explicit promotion
+ * into the scene's video asset, and an optional exact shot video pin.
  */
 export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompileProps) {
   const [readiness, setReadiness] = useState<CompileReadiness | null>(null);
   const [compilations, setCompilations] = useState<CinemaCompilation[]>([]);
+  const [shots, setShots] = useState<Shot[]>([]);
   const [totalDuration, setTotalDuration] = useState("8");
   const [compiling, setCompiling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +49,13 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
   const [videoSelection, setVideoSelection] = useState({ providerId: "", modelId: "" });
   const [generatingVideo, setGeneratingVideo] = useState(false);
   const [videoRun, setVideoRun] = useState<WorkflowRunDetail | null>(null);
+  const [videoContext, setVideoContext] = useState<GenerationResultContext | null>(null);
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [pinning, setPinning] = useState(false);
+  const [lastPromoted, setLastPromoted] = useState<{
+    assetId: string;
+    versionId: string;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,11 +66,12 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       listCinemaCompilations(projectRootPath, sceneId),
       listShots(projectRootPath, sceneId),
     ])
-      .then(([nextReadiness, nextCompilations, shots]) => {
+      .then(([nextReadiness, nextCompilations, nextShots]) => {
         if (cancelled) return;
         setReadiness(nextReadiness);
         setCompilations(nextCompilations);
-        const shotTotal = shots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
+        setShots(nextShots);
+        const shotTotal = nextShots.reduce((sum, shot) => sum + shot.durationSeconds, 0);
         if (shotTotal > 0) {
           setTotalDuration(String(Math.min(120, Math.round(shotTotal * 100) / 100)));
         }
@@ -63,6 +83,31 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       cancelled = true;
     };
   }, [projectRootPath, sceneId]);
+
+  async function applyVideoRun(detail: WorkflowRunDetail) {
+    setVideoRun(detail);
+    setVideoContext(null);
+    if (detail.run.status !== "completed") return;
+    // Resolve the review state: candidates + the scene-owned video asset
+    // from the persisted run and operation definition -- never local state.
+    try {
+      const [operations, assetList, resultSets] = await Promise.all([
+        listSkillOperations(),
+        listAssets(projectRootPath),
+        listGenerationResults(projectRootPath, detail.run.id),
+      ]);
+      const operation = operations.find((candidate) => candidate.id === detail.run.operationId) ?? null;
+      if (operation) {
+        const derived = deriveGenerationResultContext(detail, operation);
+        if (derived && resultSets.some((resultSet) => resultSet.artifacts.length > 0)) {
+          setVideoContext({ ...derived, resultSets });
+        }
+      }
+      setAssets(assetList);
+    } catch {
+      // The run view still shows the completed run without candidates.
+    }
+  }
 
   async function handleGenerateVideo() {
     if (!videoSelection.providerId || !videoSelection.modelId) {
@@ -85,12 +130,37 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
         },
       );
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
-      setVideoRun(waiting);
+      await applyVideoRun(waiting);
       onChanged?.();
     } catch (caught: unknown) {
       setError(describeError(caught));
     } finally {
       setGeneratingVideo(false);
+    }
+  }
+
+  function handleVideoRunChange(next: WorkflowRunDetail) {
+    if (next.run.status === "completed") {
+      void applyVideoRun(next);
+      return;
+    }
+    setVideoRun(next);
+  }
+
+  /** Pin the just-promoted canonical version as the shot's exact video. */
+  async function handlePinVideo(shotId: string, versionId: string) {
+    setPinning(true);
+    setError(null);
+    try {
+      await setShotVideo(projectRootPath, shotId, versionId);
+      const nextShots = await listShots(projectRootPath, sceneId);
+      setShots(nextShots);
+      setLastPromoted(null);
+      onChanged?.();
+    } catch (caught: unknown) {
+      setError(describeError(caught));
+    } finally {
+      setPinning(false);
     }
   }
 
@@ -116,6 +186,10 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
       setCompiling(false);
     }
   }
+
+  const pinTargetShots = shots.filter(
+    (shot) => shot.generatedVideoAssetVersionId === null,
+  );
 
   return (
     <section
@@ -203,14 +277,60 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
           <WorkflowRunView
             projectRootPath={projectRootPath}
             detail={videoRun}
-            onChange={(next) => setVideoRun(next)}
+            onChange={handleVideoRunChange}
           />
-          {videoRun.run.status === "completed" ? (
-            <p style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-              Your video is saved as a candidate in this scene&apos;s video asset. Open <strong>Assets</strong> to
-              set it as the approved version.
+        </div>
+      ) : null}
+
+      {videoContext ? (
+        <div style={{ marginTop: "var(--space-12)" }}>
+          <GenerationResults
+            projectRootPath={projectRootPath}
+            context={videoContext}
+            assets={assets}
+            saveActionLabel="Save Video to Assets"
+            onPromoted={(targetAssetId, versionId) => {
+              setLastPromoted({ assetId: targetAssetId, versionId });
+            }}
+          />
+          {lastPromoted && pinTargetShots.length > 0 ? (
+            <div style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
+              {pinning ? "Pinning video to shot…" : "Saved. Pin this video as the exact version for:"}
+              <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap", marginTop: "var(--space-4)" }}>
+                {pinTargetShots.map((shot) => (
+                  <button
+                    key={shot.id}
+                    type="button"
+                    className="production-secondary"
+                    disabled={pinning}
+                    onClick={() => void handlePinVideo(shot.id, lastPromoted.versionId)}
+                  >
+                    Shot {shot.ordering + 1}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : lastPromoted && pinTargetShots.length === 0 ? (
+            <p style={{ marginTop: "var(--space-8)", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
+              Every shot already has an exact video version pinned. Promoting a newer video never changes those pins
+              — restage a shot explicitly to update it.
             </p>
           ) : null}
+        </div>
+      ) : null}
+
+      {shots.some((shot) => shot.generatedVideoAssetVersionId !== null) ? (
+        <div style={{ marginTop: "var(--space-12)", fontSize: "var(--fs-md)" }}>
+          <p style={{ margin: "0 0 var(--space-4)", fontWeight: 600 }}>Pinned shot videos</p>
+          <ul style={{ margin: 0, paddingLeft: "var(--space-20)" }}>
+            {shots
+              .filter((shot) => shot.generatedVideoAssetVersionId !== null)
+              .map((shot) => (
+                <li key={shot.id}>
+                  Shot {shot.ordering + 1} — exact version {shot.generatedVideoAssetVersionId}
+                </li>
+              ))}
+          </ul>
         </div>
       ) : null}
 

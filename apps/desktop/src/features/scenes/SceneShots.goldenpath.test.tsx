@@ -116,6 +116,7 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
         ordering: shots.length,
         durationSeconds,
         keyframeAssetVersionId: null,
+        generatedVideoAssetVersionId: null,
         intent,
         action: null,
         camera: null,

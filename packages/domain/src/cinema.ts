@@ -96,6 +96,9 @@ export interface ShotRecord {
   ordering: number;
   durationSeconds: number;
   keyframeAssetVersionId: string | null;
+  /** Exact, immutable generated-video AssetVersion pin (P10.0). Promoting
+   * a newer video version never rewrites this reference. */
+  generatedVideoAssetVersionId: string | null;
   intent: string;
   action: string | null;
   camera: string | null;

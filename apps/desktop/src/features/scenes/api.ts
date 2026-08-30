@@ -207,6 +207,8 @@ export interface Shot {
   ordering: number;
   durationSeconds: number;
   keyframeAssetVersionId: string | null;
+  /** Exact, immutable generated-video AssetVersion pin (P10.0). */
+  generatedVideoAssetVersionId: string | null;
   intent: string;
   action: string | null;
   camera: string | null;
@@ -299,6 +301,20 @@ export function setShotKeyframe(
     projectRootPath,
     shotId,
     keyframeAssetVersionId,
+  });
+}
+
+/** Pins (or clears) the shot's exact generated-video AssetVersion. The
+ * reference never drifts when newer video versions are promoted. */
+export function setShotVideo(
+  projectRootPath: string,
+  shotId: string,
+  videoAssetVersionId: string | null,
+): Promise<void> {
+  return invokeCommand<void>("set_shot_video", {
+    projectRootPath,
+    shotId,
+    videoAssetVersionId,
   });
 }
 
