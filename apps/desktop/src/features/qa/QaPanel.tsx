@@ -4,6 +4,7 @@ import { describeError } from "../../lib/errors";
 import * as api from "./api";
 import { effectiveCheckStatus, QaCheckList } from "./QaCheckList";
 import { QaHistory } from "./QaHistory";
+import { ProviderModelFields } from "../providers/ProviderModelFields";
 import type { QaReviewStatus, QaRunDetail, QaRunRecord } from "./types";
 
 interface QaPanelProps {
@@ -62,6 +63,7 @@ export function QaPanel({
   const [busy, setBusy] = useState(false);
   const [busyCheckId, setBusyCheckId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [repairSelection, setRepairSelection] = useState({ providerId: "", modelId: "" });
 
   async function load(selectedId?: string | null) {
     const history = await api.listQaRuns(projectRootPath, assetVersionId);
@@ -117,8 +119,11 @@ export function QaPanel({
     setBusy(true);
     setError(null);
     try {
-      const providerId = detail.run.adapterId === "mock" ? "mock" : "openai";
-      const modelId = providerId === "mock" ? "mock-image-v1" : "gpt-image-1";
+      // No hardcoded provider: the user picks an image-edit-capable service
+      // (mock stays available for offline testing because the QA run's own
+      // adapter may have been the mock adapter).
+      const providerId = repairSelection.providerId || detail.run.adapterId || "mock";
+      const modelId = repairSelection.modelId || detail.run.modelId || "mock-image-v1";
       const created = await api.createVisualRepairWorkflow(
         projectRootPath,
         assetVersionId,
@@ -271,17 +276,26 @@ export function QaPanel({
           <QaCheckList title="Needs Review" ariaLabel="Checks needing review" checks={groups.uncertain} busyCheckId={busyCheckId} onReview={review} />
           <QaCheckList title="Passed" ariaLabel="Passed checks" checks={groups.passed} busyCheckId={busyCheckId} onReview={review} />
           {groups.failed.length > 0 ? (
-            <button
-              type="button"
-              className="qa-repair-button"
-              disabled={busy}
-              onClick={() => {
-                if (onRepair) onRepair(detail.run.id);
-                else void runRepair();
-              }}
-            >
-              Repair Failed Checks
-            </button>
+            <div className="qa-repair-controls">
+              <ProviderModelFields
+                projectRootPath={projectRootPath}
+                value={repairSelection}
+                mediaType="image"
+                requiresReferences
+                onChange={setRepairSelection}
+              />
+              <button
+                type="button"
+                className="qa-repair-button"
+                disabled={busy}
+                onClick={() => {
+                  if (onRepair) onRepair(detail.run.id);
+                  else void runRepair();
+                }}
+              >
+                Repair Failed Checks
+              </button>
+            </div>
           ) : null}
         </>
       ) : null}

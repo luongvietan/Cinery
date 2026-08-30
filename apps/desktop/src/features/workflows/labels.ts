@@ -50,7 +50,7 @@ const OPERATION_LABELS: Record<string, string> = {
   "character.create_face_lock": "Face reference",
   "character.create_outfit": "Outfit",
   "character.create_character_sheet": "Character sheet",
-  "world.create_world_plate": "World backdrop",
+  "world.create_plate": "World backdrop",
   "scene.create_keyframe": "Shot keyframe",
   "scene.generate_video": "Scene video",
   "asset.run_visual_qa": "Visual QA",

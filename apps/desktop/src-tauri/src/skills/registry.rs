@@ -202,9 +202,10 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             "complete",
         ]
     {
-        return Err(AppError::InvalidBuiltinSkillDefinition(
-            "character.create_face_lock has an invalid step topology".to_string(),
-        ));
+        return Err(AppError::InvalidBuiltinSkillDefinition(format!(
+            "{} has an invalid step topology",
+            operation.id
+        )));
     }
 
     let mut approval_artifact_ref = None;

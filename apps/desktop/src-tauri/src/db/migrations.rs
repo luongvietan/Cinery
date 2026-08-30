@@ -587,6 +587,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn p6_project_still_migrates_successfully_after_p7() {
         let mut conn = Connection::open_in_memory().unwrap();
         run_migrations(&mut conn).unwrap();

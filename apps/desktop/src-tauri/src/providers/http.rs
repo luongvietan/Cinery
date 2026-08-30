@@ -183,10 +183,11 @@ impl UreqExecutor {
 
 impl HttpExecutor for UreqExecutor {
     fn execute(&self, request: HttpRequest) -> Result<HttpResponse, TransportFailure> {
-        let mut builder = self
-            .agent
-            .request(&request.method, &request.url)
-            .timeout(Duration::from_secs(300));
+        // The per-request timeout is the single authoritative policy: the
+        // agent-level timeout configured at construction (10 s validation
+        // probes, 45-120 s provider calls, 60 s downloads) applies unless a
+        // request explicitly overrides it. There is no hidden 300 s default.
+        let mut builder = self.agent.request(&request.method, &request.url);
         for (name, value) in &request.headers {
             builder = builder.set(name, value);
         }
