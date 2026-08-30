@@ -1,9 +1,9 @@
 # Recovery
 
-**MVP IMPLEMENTED.** The app is designed so an interrupted run never corrupts
-project state. When a project reopens after an interruption, the recovery
-surface explains exactly what happened, what state is safe, and what the
-user can do next.
+**MVP RELEASE CANDIDATE.** The app is designed so an interrupted run never
+corrupts project state. When a project reopens after an interruption, the
+recovery surface explains exactly what happened, what state is safe, and
+what the user can do next.
 
 ## Guarantees
 

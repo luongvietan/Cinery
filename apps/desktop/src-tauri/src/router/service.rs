@@ -62,7 +62,7 @@ impl ProductionRouter {
                 });
             }
         }
-        candidates.sort_by(|left, right| right.score.cmp(&left.score));
+        candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.score));
 
         let suggested = candidates.first().cloned();
         let matched = suggested.is_some();

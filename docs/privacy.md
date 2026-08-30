@@ -1,6 +1,6 @@
 # Privacy
 
-**MVP IMPLEMENTED.** This product is local-first: your projects, canon,
+**MVP RELEASE CANDIDATE.** This product is local-first: your projects, canon,
 assets, and history live on your disk, and cloud execution happens only when
 you explicitly configure a provider and run a workflow.
 
@@ -9,7 +9,7 @@ you explicitly configure a provider and run a workflow.
 - Projects (SQLite database + managed media) live entirely on disk.
 - Provider credentials never enter project state. They are stored in the
   platform keychain (via the OS), and projects/databases/snapshots carry
-  only a credential **reference** (the environment-variable name).
+  only a credential **reference** (a `keyring://` pointer).
 - No telemetry, no analytics, no automatic uploads.
 
 ## Disclosure

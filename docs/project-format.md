@@ -23,7 +23,7 @@ metadata (name, timestamps) lives only in SQLite.
 
 ## SQLite schema
 
-- Append-only migrations in `apps/desktop/src-tauri/migrations/0001..0013.sql`.
+- Append-only migrations in `apps/desktop/src-tauri/migrations/0001..0021.sql`.
 - Applied migrations are recorded in `schema_migrations`.
 - Foreign keys are enforced. `asset_versions` never stores media bytes;
   it stores relative paths into `assets/` and `thumbnails/`.
@@ -31,13 +31,22 @@ metadata (name, timestamps) lives only in SQLite.
   actual query paths (workflow steps/events by run, QA by workflow, artifact
   lineage by artifact, workflow approvals by run+step, workflow runs by
   project+status, asset versions by asset+status, QA runs by project+version).
+- Migration `0020` widened the media CHECKs to `image | video` (MP4) — the
+  video pipeline's persistence contract. Migrations `0020`/`0021` rebuild
+  tables (SQLite cannot ALTER a CHECK): the runner disables `foreign_keys`
+  outside the transaction and verifies `foreign_key_check` inside it.
+- Migration `0021` added `scene_shots.generated_video_asset_version_id`,
+  a shot's exact immutable video version pin (mirrors the keyframe pin).
 
 ## Media
 
-- Only PNG, JPEG, and WebP images are supported in the MVP.
+- Images: PNG, JPEG, WebP. Video: MP4 (`video/mp4`, ISO-BMFF `ftyp`
+  container check). `audio` is not supported.
 - Media files are kept outside the database (never in DB blobs).
-- Thumbnails are generated at import time and used in grids; full-resolution
-  images are loaded only in the single-item inspector and candidate previews.
+- Thumbnails are generated at import time for images and used in grids;
+  full-resolution images are loaded only in the single-item inspector and
+  candidate previews. Video versions carry no thumbnail (the UI renders
+  `<video preload="metadata">` previews instead).
 - Grids lazy-load and async-decode thumbnails.
 
 ## Determinism
@@ -50,6 +59,6 @@ metadata (name, timestamps) lives only in SQLite.
 
 ## Privacy boundary
 
-- Credentials are never stored in the project; only a credential reference
-  (environment-variable name) is recorded.
+- Credentials are never stored in the project; only a `keyring://` vault
+  reference is recorded (the OS credential manager holds the secret).
 - Diagnostics bundles are redacted and exclude media by default.

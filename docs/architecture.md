@@ -78,13 +78,15 @@ operation:
   `intentExamples` (stop-word filtered, ≥50% word overlap threshold) and
   runs `evaluate_feasibility`, which mirrors the workflow prerequisite
   checks against current project state.
-- **LLM classifier (optional)** — when `OPENAI_API_KEY` is present, a chat
-  completion *proposes* an operation id. Code always re-validates the
-  proposal against the registry and prerequisites (§13, §53: the LLM may
-  suggest, code must validate). Any LLM failure or missing key degrades to
-  the deterministic matcher.
-- Exposed as `route_production_intent`; the AI Director bar in the
-  Production workspace renders the top suggestion and its blockers.
+- **LLM classifier (optional)** — when the project has a configured Text
+  (LLM) custom provider with a stored credential, a chat completion
+  *proposes* an operation id. Code always re-validates the proposal
+  against the registry and prerequisites, and the suggestion can never
+  outrank a deterministic match (§13, §53: the LLM may suggest, code must
+  validate). Any LLM failure or missing service degrades to the
+  deterministic matcher.
+- Exposed as `route_production_intent`; the AI Director bar on the
+  Overview renders the top suggestion and its blockers.
 
 ## Providers (master plan §14)
 
@@ -92,10 +94,19 @@ operation:
 interface (`submit` / `poll` / `cancel` / `fetch_result`):
 
 - `dry_run` — writes the compiled request as an artifact.
-- `mock` / `mock-video` — deterministic in-process image/video generators.
-- `comfyui_local` — local ComfyUI HTTP stub; unreachable endpoints fail
-  with a clear, endpoint-specific error (§14.2, §15).
-- `openai` — real image generation adapter (credential from keychain/env).
+- `mock` — deterministic in-process image generator (tests/diagnostics,
+  hidden from user-facing run forms).
+- `fake_async_video` — deterministic async video provider (submit →
+  polling with progress → MP4 data-URI result) used by the offline video
+  golden path.
+- `openai` — image generation/editing built from the `openai-compatible`
+  preset (credential from keychain; `OPENAI_API_KEY` is a developer-time
+  fallback only).
+- Any other id resolves to a **declarative custom provider** built from
+  the stored definition and vault credential: operation-based endpoints
+  (`image.generate`, `image.edit`, `video.generate`,
+  `video.imageToVideo`, `validate`), sync or async jobs, bearer/header/
+  query auth, per-operation polling, and secret redaction throughout.
 
 ## Python AI worker (master plan §5.5)
 

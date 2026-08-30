@@ -88,12 +88,20 @@ The current release covers the full MVP chain described in
   privacy hardening, diagnostics export, UX/accessibility polish,
   golden-path acceptance fixture.
 - **Production router (§13):** deterministic intent → operation routing
-  with code-validated prerequisites, optional LLM classification behind a
-  hard code-validation boundary, and an AI Director bar in the Production
-  workspace.
-- **Video generation and ComfyUI:** not implemented. Media-type and
-  capability plumbing exists, but no video adapter, no `cinema.generate_video`
-  workflow, and no ComfyUI adapter are registered.
+  with code-validated prerequisites, optional LLM classification via the
+  project's configured Text (LLM) service behind a hard code-validation
+  boundary, surfaced by the Overview AI Director bar.
+- **Video foundation (P10.0):** `scene.generate_video` animates a persisted
+  scene compilation into a real video through any configured video-capable
+  AI service (declarative `video.generate` / `video.imageToVideo`
+  operations; Alibaba-Wan preset shipped). The output persists as a
+  `video/mp4` GeneratedArtifact with full lineage, is reviewed in the
+  candidate gallery, promoted explicitly into the scene's stable video
+  asset, and can be pinned as a Shot's **exact** immutable video version
+  (`set_shot_video`) that never drifts when newer versions are promoted.
+  Verified end-to-end with the deterministic `fake_async_video` provider;
+  real video providers are **implemented, live-unverified**. ComfyUI is
+  not implemented (a future declarative preset).
 - **Python AI worker (§5.5 placeholder):** `services/ai-worker/` speaks
   JSON-RPC 2.0 over stdio (`ping`, `health`); AI responsibilities are
   post-MVP.
@@ -109,9 +117,11 @@ Documentation:
 ## POST-MVP (not implemented)
 
 The following are explicitly **not** in the current release and must not be
-advertised as available: multi-user collaboration, cloud sync, real
-(non-mock) video generation providers, six-panel layouts, and any feature
-listed in the master plan's Post-MVP roadmap (section 60).
+advertised as available: multi-user collaboration, cloud sync, **live-verified
+real video providers** (the declarative video presets are implemented but
+have never been exercised against a live paid endpoint), ComfyUI, six-panel
+layouts, and any feature listed in the master plan's Post-MVP roadmap
+(section 60).
 
 ## Sprint 1 non-goals (historical)
 
