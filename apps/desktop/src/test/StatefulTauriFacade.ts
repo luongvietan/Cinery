@@ -4,7 +4,12 @@
  * the fixture state so subsequent list/detail calls reflect prior
  * create/promote/compile actions — mirroring the real backend contract.
  *
- * Unknown commands throw so new backend commands must be added explicitly.
+ * Command names mirror the CURRENT registered surface (lib.rs), i.e. the
+ * unified Scene commands introduced in P9 (`create_world_scene`,
+ * `assign_scene_world`, `add_world_scene_prop`, `set_shot_video`, ...).
+ * Stale names must not accumulate here: the point of this facade is to
+ * model the real command boundary, so unknown commands throw and new
+ * backend commands must be added explicitly.
  */
 
 type InvokeHandler = (args: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -30,7 +35,14 @@ interface AssetState {
 interface ResultSetState {
   id: string;
   workflowRunId: string;
-  artifacts: Array<{ id: string; resultSetId: string; ordinal: number; captureStatus: string }>;
+  artifacts: Array<{
+    id: string;
+    resultSetId: string;
+    ordinal: number;
+    captureStatus: string;
+    mediaKind?: "image" | "video";
+    mimeType?: string;
+  }>;
   promotedToAssetId: Record<string, string>;
 }
 
@@ -40,10 +52,17 @@ export interface DesktopFixtureState {
   scenes: Array<{
     id: string;
     title: string;
+    worldId: string | null;
     worldAssetVersionId: string | null;
     characters: Array<{ characterEntityId: string; lookAssetVersionId: string; sheetAssetVersionId: string | null }>;
     props: Array<{ propAssetVersionId: string }>;
-    shots: Array<{ id: string; ordering: number; durationSeconds: number; keyframeAssetVersionId: string | null }>;
+    shots: Array<{
+      id: string;
+      ordering: number;
+      durationSeconds: number;
+      keyframeAssetVersionId: string | null;
+      generatedVideoAssetVersionId: string | null;
+    }>;
   }>;
   resultSets: ResultSetState[];
   compilations: Array<{ id: string; sceneId: string; exportSha256: string }>;
@@ -74,6 +93,21 @@ export class StatefulTauriFacade {
 
   snapshot(): Readonly<DesktopFixtureState> {
     return this.state;
+  }
+
+  private sceneSummary(scene: DesktopFixtureState["scenes"][number]) {
+    return {
+      id: scene.id,
+      projectId: this.state.projectId,
+      ordinal: 0,
+      title: scene.title,
+      summary: "",
+      worldId: scene.worldId,
+      worldAssetVersionId: scene.worldAssetVersionId,
+      keyframeAssetId: null,
+      createdAt: "now",
+      updatedAt: "now",
+    };
   }
 
   private registerHandlers() {
@@ -122,10 +156,46 @@ export class StatefulTauriFacade {
       return this.state.resultSets
         .filter((resultSet) => !runId || resultSet.workflowRunId === runId)
         .map((resultSet) => ({
-          resultSet: { ...resultSet, projectId: this.state.projectId, providerAttemptId: "attempt", mediaKind: "image", requestedOutputCount: 4, workflowStepKey: "execute", createdAt: "now" },
+          resultSet: {
+            ...resultSet,
+            projectId: this.state.projectId,
+            providerAttemptId: "attempt",
+            mediaKind: "image",
+            requestedOutputCount: 4,
+            workflowStepKey: "execute",
+            createdAt: "now",
+          },
           artifacts: resultSet.artifacts.map((artifact) => ({
-            artifact: { ...artifact, mediaKind: "image", mimeType: "image/png", width: 64, height: 64, byteSize: 10, sha256: "a".repeat(64), storagePath: "generations/x.png", captureErrorCode: null, createdAt: "now" },
-            lineage: { artifactId: artifact.id, workflowRunId: resultSet.workflowRunId, workflowStepKey: "execute", workflowDefinitionId: "op", workflowVersion: "1.1.0", skillId: "character-builder", skillVersion: "1.1.0", compiledExecutionArtifactId: "c", compiledRequestSha256: "b".repeat(64), canonSnapshotId: null, canonSnapshotSha256: null, providerAttemptId: "attempt", providerId: "mock", modelId: "mock-image-v1", sourceAssetVersionIds: [], createdAt: "now" },
+            artifact: {
+              ...artifact,
+              mediaKind: artifact.mediaKind ?? "image",
+              mimeType: artifact.mimeType ?? "image/png",
+              width: 64,
+              height: 64,
+              byteSize: 10,
+              sha256: "a".repeat(64),
+              storagePath: "generations/x.png",
+              captureErrorCode: null,
+              createdAt: "now",
+            },
+            lineage: {
+              artifactId: artifact.id,
+              workflowRunId: resultSet.workflowRunId,
+              workflowStepKey: "execute",
+              workflowDefinitionId: "op",
+              workflowVersion: "1.1.0",
+              skillId: "character-builder",
+              skillVersion: "1.1.0",
+              compiledExecutionArtifactId: "c",
+              compiledRequestSha256: "b".repeat(64),
+              canonSnapshotId: null,
+              canonSnapshotSha256: null,
+              providerAttemptId: "attempt",
+              providerId: "mock",
+              modelId: "mock-image-v1",
+              sourceAssetVersionIds: [],
+              createdAt: "now",
+            },
           })),
         }));
     });
@@ -159,28 +229,61 @@ export class StatefulTauriFacade {
       throw { code: "GENERATION_ARTIFACT_NOT_PROMOTABLE", message: "artifact not found" };
     });
 
-    // --- cinema ---
-    this.handlers.set("list_scenes", () =>
-      this.state.scenes.map((scene) => ({ ...scene, canonNotes: null, createdAt: "now", updatedAt: "now" })),
+    // --- scenes (unified world_scenes command surface, P9/P10) ---
+    this.handlers.set("list_world_scenes", () =>
+      this.state.scenes.map((scene) => this.sceneSummary(scene)),
     );
 
-    this.handlers.set("create_scene", (args) => {
+    this.handlers.set("create_world_scene", (args) => {
       const scene = {
         id: this.nextId("scene"),
         title: String(args.title),
-        worldAssetVersionId: (args.worldAssetVersionId as string) ?? null,
+        worldId: null,
+        worldAssetVersionId: null,
         characters: [],
         props: [],
         shots: [],
       };
       this.state.scenes.push(scene);
-      return { ...scene, projectId: this.state.projectId, canonNotes: null, createdAt: "now", updatedAt: "now" };
+      return this.sceneSummary(scene);
     });
 
-    this.handlers.set("get_scene", (args) => {
+    this.handlers.set("get_world_scene", (args) => {
       const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
       if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
-      return { scene: { ...scene, projectId: this.state.projectId, canonNotes: null, createdAt: "now", updatedAt: "now" }, characters: scene.characters, props: scene.props, shots: scene.shots };
+      return this.sceneSummary(scene);
+    });
+
+    this.handlers.set("assign_scene_world", (args) => {
+      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
+      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
+      scene.worldId = (args.worldId as string) ?? null;
+      scene.worldAssetVersionId = (args.worldAssetVersionId as string) ?? null;
+      return null;
+    });
+
+    this.handlers.set("add_world_scene_character", (args) => {
+      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
+      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
+      const assignment = {
+        characterEntityId: String(args.characterEntityId),
+        lookAssetVersionId: String(args.lookAssetVersionId),
+        sheetAssetVersionId: (args.sheetAssetVersionId as string) ?? null,
+      };
+      if (!scene.characters.some((c) => c.characterEntityId === assignment.characterEntityId)) {
+        scene.characters.push(assignment);
+      }
+      return assignment;
+    });
+
+    this.handlers.set("add_world_scene_prop", (args) => {
+      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
+      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
+      const versionId = String(args.propAssetVersionId);
+      if (!scene.props.some((prop) => prop.propAssetVersionId === versionId)) {
+        scene.props.push({ propAssetVersionId: versionId });
+      }
+      return { propAssetVersionId: versionId };
     });
 
     this.handlers.set("get_scene_readiness", (args) => {
@@ -199,16 +302,6 @@ export class StatefulTauriFacade {
       return { sceneId: scene.id, ready: blockers.length === 0, blockers };
     });
 
-    this.handlers.set("add_scene_prop", (args) => {
-      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
-      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
-      const versionId = String(args.propAssetVersionId);
-      if (!scene.props.some((prop) => prop.propAssetVersionId === versionId)) {
-        scene.props.push({ propAssetVersionId: versionId });
-      }
-      return { scene: { ...scene, projectId: this.state.projectId, canonNotes: null, createdAt: "now", updatedAt: "now" }, characters: scene.characters, props: scene.props, shots: scene.shots };
-    });
-
     this.handlers.set("compile_cinema", (args) => {
       const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
       if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
@@ -221,13 +314,7 @@ export class StatefulTauriFacade {
       return { ...compilation, projectId: this.state.projectId, inputJson: "{}", compilationJson: "{}", exportPath: "prompts/cinema/compiled.md", createdAt: "now" };
     });
 
-    this.handlers.set("set_scene_world", (args) => {
-      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
-      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
-      scene.worldAssetVersionId = (args.worldAssetVersionId as string) ?? null;
-      return null;
-    });
-
+    // --- shots (cinema command surface) ---
     this.handlers.set("create_shot", (args) => {
       const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
       if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
@@ -236,9 +323,24 @@ export class StatefulTauriFacade {
         ordering: scene.shots.length,
         durationSeconds: Number(args.durationSeconds ?? 4),
         keyframeAssetVersionId: null as string | null,
+        generatedVideoAssetVersionId: null as string | null,
       };
       scene.shots.push(shot);
       return { ...shot, sceneId: scene.id, intent: String(args.intent ?? "Establish"), action: null, camera: null, createdAt: "now", updatedAt: "now" };
+    });
+
+    this.handlers.set("list_shots", (args) => {
+      const scene = this.state.scenes.find((candidate) => candidate.id === args.sceneId);
+      if (!scene) throw { code: "SCENE_NOT_FOUND", message: "scene not found" };
+      return scene.shots.map((shot) => ({
+        ...shot,
+        sceneId: scene.id,
+        intent: "Establish",
+        action: null,
+        camera: null,
+        createdAt: "now",
+        updatedAt: "now",
+      }));
     });
 
     this.handlers.set("set_shot_keyframe", (args) => {
@@ -246,6 +348,17 @@ export class StatefulTauriFacade {
         const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
         if (shot) {
           shot.keyframeAssetVersionId = (args.keyframeAssetVersionId as string) ?? null;
+          return null;
+        }
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
+
+    this.handlers.set("set_shot_video", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) {
+          shot.generatedVideoAssetVersionId = (args.videoAssetVersionId as string) ?? null;
           return null;
         }
       }

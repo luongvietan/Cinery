@@ -9,13 +9,13 @@ describe("StatefulTauriFacade", () => {
     const listed = await facade.invoke<Array<{ id: string }>>("list_assets", {});
     expect(listed.map((entry) => entry.id)).toContain(asset.id);
 
-    const scene = await facade.invoke<{ id: string; worldAssetVersionId: string | null }>("create_scene", { title: "Scene 001", worldAssetVersionId: null });
+    const scene = await facade.invoke<{ id: string; worldAssetVersionId: string | null }>("create_world_scene", { title: "Scene 001", summary: "" });
     // Initial readiness has blockers; mutation clears them.
     const before = await facade.invoke<{ ready: boolean; blockers: Array<{ code: string }> }>("get_scene_readiness", { sceneId: scene.id });
     expect(before.ready).toBe(false);
     expect(before.blockers.map((blocker) => blocker.code)).toContain("missing_world");
 
-    await facade.invoke("set_scene_world", { sceneId: scene.id, worldAssetVersionId: "world-v1" });
+    await facade.invoke("assign_scene_world", { sceneId: scene.id, worldId: "world-1", worldAssetVersionId: "world-v1" });
     const after = await facade.invoke<{ ready: boolean; blockers: Array<{ code: string }> }>("get_scene_readiness", { sceneId: scene.id });
     expect(after.blockers.map((blocker) => blocker.code)).not.toContain("missing_world");
   });
@@ -42,9 +42,19 @@ describe("StatefulTauriFacade", () => {
 
   it("persists compilation records across repeated queries", async () => {
     const facade = new StatefulTauriFacade();
-    const scene = await facade.invoke<{ id: string }>("create_scene", { title: "S", worldAssetVersionId: "world-v1" });
+    const scene = await facade.invoke<{ id: string }>("create_world_scene", { title: "S", summary: "" });
     const compiled = await facade.invoke<{ id: string; exportSha256: string }>("compile_cinema", { sceneId: scene.id, totalDurationSeconds: 4 });
     expect(compiled.exportSha256).toHaveLength(64);
     expect(facade.state.compilations).toHaveLength(1);
+  });
+
+  it("models the shot video pin on the current command surface", async () => {
+    const facade = new StatefulTauriFacade();
+    const scene = await facade.invoke<{ id: string }>("create_world_scene", { title: "S", summary: "" });
+    const shot = await facade.invoke<{ id: string }>("create_shot", { sceneId: scene.id, durationSeconds: 4, intent: "Establish" });
+
+    await facade.invoke("set_shot_video", { shotId: shot.id, videoAssetVersionId: "video-v1" });
+    const shots = await facade.invoke<Array<{ id: string; generatedVideoAssetVersionId: string | null }>>("list_shots", { sceneId: scene.id });
+    expect(shots.find((candidate) => candidate.id === shot.id)?.generatedVideoAssetVersionId).toBe("video-v1");
   });
 });
