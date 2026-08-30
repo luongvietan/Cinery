@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SceneReadinessPanel } from "./SceneReadinessPanel";
-import { getScene, resolveSceneReferences, listSceneCharacters } from "./api";
+import { getScene, resolveSceneReferences, listSceneCharacters, listSceneTbdBindings } from "./api";
 import { listCanonTbds } from "../canon/api";
 import { listWorlds } from "../worlds/api";
 
@@ -23,6 +23,9 @@ vi.mock("./api", () => ({
   upgradeSceneCharacterLookReference: vi.fn(),
   upgradeSceneCharacterSheetReference: vi.fn(),
   upgradeScenePropReference: vi.fn(),
+  setSceneTbdBinding: vi.fn(),
+  removeSceneTbdBinding: vi.fn(),
+  listSceneTbdBindings: vi.fn(),
 }));
 vi.mock("../canon/api", () => ({
   listCanonTbds: vi.fn(),
@@ -48,6 +51,7 @@ describe("SceneReadinessPanel", () => {
     vi.mocked(listWorlds).mockResolvedValue([]);
     vi.mocked(listCanonTbds).mockResolvedValue([]);
     vi.mocked(resolveSceneReferences).mockResolvedValue({ sceneId: "scene-1", world: null, characters: [], props: [] } as any);
+    vi.mocked(listSceneTbdBindings).mockReset().mockResolvedValue([]);
   });
 
   it("shows NOT READY with blockers and READY FOR KEYFRAME when complete", async () => {

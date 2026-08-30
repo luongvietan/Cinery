@@ -318,6 +318,60 @@ export function setShotVideo(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Scene TBD bindings (persisted decisions; see SceneTbdPanel)
+// ---------------------------------------------------------------------------
+
+export interface SceneTbdBindingRecord {
+  id: string;
+  sceneId: string;
+  canonTbdId: string;
+  topicSnapshot: string;
+  noteSnapshot: string | null;
+  decision: "preserve_unknown" | "not_applicable";
+  justification: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function setSceneTbdBinding(
+  projectRootPath: string,
+  sceneId: string,
+  tbdId: string,
+  decision: "preserve_unknown" | "not_applicable",
+  justification: string | null,
+): Promise<SceneTbdBindingRecord> {
+  return invokeCommand<SceneTbdBindingRecord>("set_scene_tbd_binding", {
+    projectRootPath,
+    sceneId,
+    tbdId,
+    decision,
+    justification,
+  });
+}
+
+export function removeSceneTbdBinding(
+  projectRootPath: string,
+  sceneId: string,
+  tbdId: string,
+): Promise<void> {
+  return invokeCommand<void>("remove_scene_tbd_binding", {
+    projectRootPath,
+    sceneId,
+    tbdId,
+  });
+}
+
+export function listSceneTbdBindings(
+  projectRootPath: string,
+  sceneId: string,
+): Promise<SceneTbdBindingRecord[]> {
+  return invokeCommand<SceneTbdBindingRecord[]>("list_scene_tbd_bindings", {
+    projectRootPath,
+    sceneId,
+  });
+}
+
 export function getCompileReadiness(
   projectRootPath: string,
   sceneId: string,

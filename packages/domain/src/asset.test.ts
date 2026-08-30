@@ -16,12 +16,10 @@ describe("asset domain", () => {
     expect(validateAssetLabel("  MARA-FACE  ")).toBe("MARA-FACE");
   });
 
-  it("rejects video and audio in Sprint 1", () => {
-    expect(() => validateSprintOneAssetType("video")).toThrow(
-      "This asset type is not supported in Sprint 1",
-    );
+  it("supports video (P10.0) but still rejects audio", () => {
+    expect(validateSprintOneAssetType("video")).toBe("video");
     expect(() => validateSprintOneAssetType("audio")).toThrow(
-      "This asset type is not supported in Sprint 1",
+      "This asset type is not supported yet",
     );
   });
 });

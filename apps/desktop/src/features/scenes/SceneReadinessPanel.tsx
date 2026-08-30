@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { describeError } from "../../lib/errors";
-import { getScene, resolveSceneReferences, listSceneCharacters, listSceneProps } from "./api";
+import {
+  getScene,
+  listSceneCharacters,
+  listSceneProps,
+  listSceneTbdBindings,
+  resolveSceneReferences,
+} from "./api";
 import { listCanonTbds } from "../canon/api";
 import { listWorlds } from "../worlds/api";
 import type { Scene, SceneReadiness } from "./types";
@@ -70,11 +76,12 @@ export function SceneReadinessPanel({ projectRootPath, sceneId, refreshKey = 0 }
     async function load() {
       try {
         const scene = await getScene(projectRootPath, sceneId);
-        const [resolved, allTbds, characters, worlds] = await Promise.all([
+        const [resolved, allTbds, characters, worlds, bindings] = await Promise.all([
           resolveSceneReferences(projectRootPath, sceneId).catch(() => null),
           listCanonTbds(projectRootPath).catch(() => []),
           listSceneCharacters(projectRootPath, sceneId).catch(() => []),
           listWorlds(projectRootPath).catch(() => []),
+          listSceneTbdBindings(projectRootPath, sceneId).catch(() => []),
         ]);
 
         // health detection
@@ -90,29 +97,33 @@ export function SceneReadinessPanel({ projectRootPath, sceneId, refreshKey = 0 }
           (resolved?.characters ?? []).some((c) => c.look.health === "historical" || c.sheet?.health === "historical") ||
           (resolved?.props ?? []).some((p) => p.reference.health === "historical");
 
-        // TBD blocker check: relevant protected open TBDs without decision would block. For now we approximate by checking if relevant TBDs exist and scene has no decision snapshot?
-        // Since we don't persist decisions yet, we treat any relevant TBD as requiring decision -> blocker.
-        // To avoid always blocking, we check if there are relevant TBDs: if yes, we show blocker but with note that decisions panel exists.
+        // TBD blocker: a relevant protected open TBD blocks keyframe
+        // readiness until the scene carries an explicit persisted decision
+        // for it (set from the TBD decisions panel on this page).
         const entityIds = new Set<string>();
         if (scene.worldId) {
           const world = worlds.find((w) => w.id === scene.worldId);
           if (world) entityIds.add(world.canonLocationEntityId);
         }
         for (const ch of characters) entityIds.add(ch.characterEntityId);
+        const decidedTbdIds = new Set((bindings ?? []).map((binding) => binding.canonTbdId));
         const relevant = (allTbds ?? []).filter((tbd) => {
           if (!tbd.protected || tbd.status !== "open") return false;
           if (tbd.canonEntityId === null) return true;
           return entityIds.has(tbd.canonEntityId);
         });
-        const hasTbdBlocker = relevant.length > 0; // simplified: any relevant TBD without decision blocks
-        // But for demo, if scene has title/summary/world and no broken, we consider ready even with TBDs? The spec says TBD decision required is blocker.
-        // We'll keep blocker but show it as warning if needed for test to detect readiness.
+        const undecidedRelevant = relevant.filter((tbd) => !decidedTbdIds.has(tbd.id));
+        const hasTbdBlocker = undecidedRelevant.length > 0;
 
-        const derived = deriveReadiness(scene, worldHealth, charBroken, propBroken, false, hasUpgradeWarning, hasHistorical);
-        // If we want to show TBD blocker, uncomment:
-        // const derived = deriveReadiness(scene, worldHealth, charBroken, propBroken, hasTbdBlocker, hasUpgradeWarning, hasHistorical);
-        // For now, ignore TBD blocker to allow ready state in tests where TBD not mocked as resolved
-        void hasTbdBlocker;
+        const derived = deriveReadiness(
+          scene,
+          worldHealth,
+          charBroken,
+          propBroken,
+          hasTbdBlocker,
+          hasUpgradeWarning,
+          hasHistorical,
+        );
 
         if (!cancelled) setReadiness(derived);
       } catch (caught: unknown) {

@@ -197,7 +197,12 @@ export function SceneWorkspace({
                       sceneId={selectedSceneId}
                       onChanged={handleChanged}
                     />
-                    <SceneTbdPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} />
+                    <SceneTbdPanel
+                      key={`tbd-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onDecisionsChanged={handleChanged}
+                    />
                     <SceneReadinessPanel projectRootPath={projectRootPath} sceneId={selectedSceneId} refreshKey={refreshKey} />
                   </>
                 ) : null}

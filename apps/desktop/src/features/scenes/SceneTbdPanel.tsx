@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { describeError } from "../../lib/errors";
-import { getScene, listSceneCharacters } from "./api";
+import {
+  getScene,
+  listSceneCharacters,
+  listSceneTbdBindings,
+  setSceneTbdBinding,
+  type SceneTbdBindingRecord,
+} from "./api";
 import { listCanonTbds } from "../canon/api";
 import { listWorlds } from "../worlds/api";
 import type { CanonTbd } from "@cinematic/domain";
@@ -9,6 +15,8 @@ import type { Scene } from "./types";
 interface SceneTbdPanelProps {
   projectRootPath: string;
   sceneId: string;
+  /** Notified after a decision persists so readiness panels refresh. */
+  onDecisionsChanged?: () => void;
 }
 
 type DecisionKind = "preserve_unknown" | "not_applicable";
@@ -21,7 +29,7 @@ interface LocalDecision {
   justification: string | null;
 }
 
-export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) {
+export function SceneTbdPanel({ projectRootPath, sceneId, onDecisionsChanged }: SceneTbdPanelProps) {
   const [scene, setScene] = useState<Scene | null>(null);
   const [relevantTbds, setRelevantTbds] = useState<CanonTbd[]>([]);
   const [decisions, setDecisions] = useState<Record<string, LocalDecision>>({});
@@ -29,6 +37,8 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [savingTbdId, setSavingTbdId] = useState<string | null>(null);
+  const [savedTbdIds, setSavedTbdIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -36,11 +46,12 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
     setError(null);
     async function load() {
       try {
-        const [fetchedScene, allTbds, characters, worlds] = await Promise.all([
+        const [fetchedScene, allTbds, characters, worlds, bindings] = await Promise.all([
           getScene(projectRootPath, sceneId),
           listCanonTbds(projectRootPath),
           listSceneCharacters(projectRootPath, sceneId).catch(() => []),
           listWorlds(projectRootPath).catch(() => []),
+          listSceneTbdBindings(projectRootPath, sceneId).catch(() => [] as SceneTbdBindingRecord[]),
         ]);
         if (cancelled) return;
         setScene(fetchedScene);
@@ -61,8 +72,27 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
           return entityIds.has(tbd.canonEntityId);
         });
         setRelevantTbds(relevant);
-        // initialize decisions: if already has decisions, keep; otherwise default to preserve_unknown for entity-scoped, empty for project-scoped pending choice?
-        // For now leave empty to show UI requiring explicit choice.
+
+        // Rehydrate persisted decisions so a reload shows saved state.
+        const nextDecisions: Record<string, LocalDecision> = {};
+        const nextJustifications: Record<string, string> = {};
+        const nextSaved = new Set<string>();
+        for (const binding of bindings ?? []) {
+          nextDecisions[binding.canonTbdId] = {
+            tbdId: binding.canonTbdId,
+            topicSnapshot: binding.topicSnapshot,
+            noteSnapshot: binding.noteSnapshot,
+            decision: binding.decision,
+            justification: binding.justification,
+          };
+          if (binding.justification) {
+            nextJustifications[binding.canonTbdId] = binding.justification;
+          }
+          nextSaved.add(binding.canonTbdId);
+        }
+        setDecisions(nextDecisions);
+        setJustifications(nextJustifications);
+        setSavedTbdIds(nextSaved);
       } catch (caught: unknown) {
         if (!cancelled) setError(describeError(caught));
       } finally {
@@ -77,6 +107,21 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
 
   function isProjectScoped(tbd: CanonTbd): boolean {
     return tbd.canonEntityId === null;
+  }
+
+  /** Persists the decision through the command boundary. */
+  async function persistDecision(tbd: CanonTbd, kind: DecisionKind, justification: string | null) {
+    setSavingTbdId(tbd.id);
+    setError(null);
+    try {
+      await setSceneTbdBinding(projectRootPath, sceneId, tbd.id, kind, justification);
+      setSavedTbdIds((prev) => new Set(prev).add(tbd.id));
+      onDecisionsChanged?.();
+    } catch (caught: unknown) {
+      setError(describeError(caught));
+    } finally {
+      setSavingTbdId(null);
+    }
   }
 
   function handleDecisionChange(tbd: CanonTbd, kind: DecisionKind) {
@@ -100,20 +145,31 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
         justification: kind === "not_applicable" ? justification.trim() || null : null,
       },
     }));
+    // Persist immediately; for not_applicable the justification-update path
+    // below re-persists once the required text is present.
+    void persistDecision(tbd, kind, kind === "not_applicable" ? justification.trim() || null : null);
   }
 
-  function handleJustificationChange(tbdId: string, value: string) {
-    setJustifications((prev) => ({ ...prev, [tbdId]: value }));
-    // if already set to not_applicable, update decision justification
+  function handleJustificationChange(tbd: CanonTbd, value: string) {
+    setJustifications((prev) => ({ ...prev, [tbd.id]: value }));
+    setValidationError(null);
+    // Update the local decision, and re-persist once a complete
+    // not_applicable decision exists (binding requires a justification).
     setDecisions((prev) => {
-      const existing = prev[tbdId];
+      const existing = prev[tbd.id];
       if (!existing || existing.decision !== "not_applicable") return prev;
+      const next = {
+        ...existing,
+        justification: value.trim() || null,
+      };
+      if (value.trim()) {
+        void persistDecision(tbd, "not_applicable", value.trim());
+      }
       return {
         ...prev,
-        [tbdId]: { ...existing, justification: value.trim() || null },
+        [tbd.id]: next,
       };
     });
-    setValidationError(null);
   }
 
   if (loading) return <p role="status">Loading TBD decisions…</p>;
@@ -152,6 +208,11 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
                   <span style={{ fontSize: "var(--fs-xs)", textTransform: "uppercase", color: "var(--c-muted)" }}>
                     {isProject ? "PROJECT-SCOPED" : `SCOPED TO ${tbd.canonEntityId}`}
                   </span>
+                  {savingTbdId === tbd.id ? (
+                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--c-muted)" }} role="status">Saving…</span>
+                  ) : savedTbdIds.has(tbd.id) && decision ? (
+                    <span style={{ fontSize: "var(--fs-xs)", color: "var(--c-muted)" }}>Saved</span>
+                  ) : null}
                   {tbd.sectionKey ? <span style={{ fontSize: "var(--fs-xs)" }}>section: {tbd.sectionKey}</span> : null}
                 </div>
                 {tbd.note ? <p style={{ marginTop: "var(--space-4)", fontSize: "var(--fs-md)" }}>{tbd.note}</p> : null}
@@ -191,7 +252,7 @@ export function SceneTbdPanel({ projectRootPath, sceneId }: SceneTbdPanelProps) 
                     <textarea
                       id={`justification-${tbd.id}`}
                       value={justification}
-                      onChange={(event) => handleJustificationChange(tbd.id, event.target.value)}
+                      onChange={(event) => handleJustificationChange(tbd, event.target.value)}
                       placeholder="Explain why this global unknown is not applicable to this scene…"
                       rows={2}
                       aria-label={`Justification for ${tbd.topic}`}

@@ -2,7 +2,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SceneTbdPanel } from "./SceneTbdPanel";
-import { getScene, listSceneCharacters } from "./api";
+import {
+  getScene,
+  listSceneCharacters,
+  listSceneTbdBindings,
+  setSceneTbdBinding,
+} from "./api";
 import { listCanonTbds } from "../canon/api";
 import { listWorlds } from "../worlds/api";
 
@@ -24,6 +29,20 @@ vi.mock("./api", () => ({
   upgradeSceneCharacterLookReference: vi.fn(),
   upgradeSceneCharacterSheetReference: vi.fn(),
   upgradeScenePropReference: vi.fn(),
+  setSceneTbdBinding: vi.fn(),
+  removeSceneTbdBinding: vi.fn(),
+  listSceneTbdBindings: vi.fn(),
+  setShotKeyframe: vi.fn(),
+  setShotVideo: vi.fn(),
+  getCompileReadiness: vi.fn(),
+  compileCinema: vi.fn(),
+  listCinemaCompilations: vi.fn(),
+  listShots: vi.fn(),
+  createShot: vi.fn(),
+  updateShot: vi.fn(),
+  deleteShot: vi.fn(),
+  reorderShots: vi.fn(),
+  ensureSceneKeyframeAsset: vi.fn(),
 }));
 vi.mock("../canon/api", () => ({
   listCanonTbds: vi.fn(),
@@ -46,6 +65,18 @@ describe("SceneTbdPanel", () => {
     vi.mocked(listSceneCharacters).mockReset();
     vi.mocked(listCanonTbds).mockReset();
     vi.mocked(listWorlds).mockReset();
+    vi.mocked(listSceneTbdBindings).mockReset().mockResolvedValue([]);
+    vi.mocked(setSceneTbdBinding).mockReset().mockResolvedValue({
+      id: "binding-1",
+      sceneId: "scene-1",
+      canonTbdId: "tbd-1",
+      topicSnapshot: "Location secret",
+      noteSnapshot: null,
+      decision: "preserve_unknown",
+      justification: null,
+      createdAt: "now",
+      updatedAt: "now",
+    });
   });
 
   it("shows all relevant TBD decisions", async () => {
@@ -179,5 +210,17 @@ describe("SceneTbdPanel", () => {
     expect(document.activeElement).toBe(preserveRadio);
     await user.keyboard(" ");
     expect(preserveRadio).toBeChecked();
+
+    // The decision persists through the command boundary (P10.0 fix: the
+    // panel previously kept decisions in local state only).
+    await vi.waitFor(() =>
+      expect(setSceneTbdBinding).toHaveBeenCalledWith(
+        "/projects/red-door",
+        "scene-1",
+        "tbd-1",
+        "preserve_unknown",
+        null,
+      ),
+    );
   });
 });
