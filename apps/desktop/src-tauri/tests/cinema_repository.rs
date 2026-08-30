@@ -40,6 +40,7 @@ fn shot_record(scene_id: &str, id: &str, ordering: i64) -> ShotRecord {
         ordering,
         duration_seconds: 4.0,
         keyframe_asset_version_id: None,
+        generated_video_asset_version_id: None,
         intent: "Establish the ops room".into(),
         action: Some("Mara scans the console".into()),
         camera: Some("wide".into()),

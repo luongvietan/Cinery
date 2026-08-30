@@ -9,16 +9,17 @@ fn shot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ShotRecord> {
         ordering: row.get(2)?,
         duration_seconds: row.get(3)?,
         keyframe_asset_version_id: row.get(4)?,
-        intent: row.get(5)?,
-        action: row.get(6)?,
-        camera: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        generated_video_asset_version_id: row.get(5)?,
+        intent: row.get(6)?,
+        action: row.get(7)?,
+        camera: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 
 const SHOT_COLUMNS: &str = "id, scene_id, ordering, duration_seconds, keyframe_asset_version_id, \
-     intent, action, camera, created_at, updated_at";
+     generated_video_asset_version_id, intent, action, camera, created_at, updated_at";
 
 /// Verifies the scene exists and belongs to `project_id` (authoritative
 /// `world_scenes` aggregate). Scenes from other projects are reported as
@@ -47,14 +48,16 @@ pub fn ensure_scene_in_project(
 pub fn create_shot(conn: &Connection, record: &ShotRecord) -> Result<(), AppError> {
     conn.execute(
         "INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, \
-         keyframe_asset_version_id, intent, action, camera, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         keyframe_asset_version_id, generated_video_asset_version_id, intent, action, camera, \
+         created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             record.id,
             record.scene_id,
             record.ordering,
             record.duration_seconds,
             record.keyframe_asset_version_id,
+            record.generated_video_asset_version_id,
             record.intent,
             record.action,
             record.camera,
@@ -309,6 +312,32 @@ pub fn set_shot_keyframe(
     let updated = conn
         .execute(
             "UPDATE scene_shots SET keyframe_asset_version_id = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND scene_id IN (SELECT id FROM world_scenes WHERE project_id = ?4)",
+            params![
+                version_id,
+                chrono::Utc::now().to_rfc3339(),
+                shot_id,
+                project_id
+            ],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    if updated == 0 {
+        return Err(AppError::ShotNotFound);
+    }
+    Ok(())
+}
+
+/// Pins or clears one shot's exact generated-video version reference.
+/// Mirrors [`set_shot_keyframe`]; the caller validates the version first.
+pub fn set_shot_video(
+    conn: &Connection,
+    project_id: &str,
+    shot_id: &str,
+    version_id: Option<&str>,
+) -> Result<(), AppError> {
+    let updated = conn
+        .execute(
+            "UPDATE scene_shots SET generated_video_asset_version_id = ?1, updated_at = ?2 \
              WHERE id = ?3 AND scene_id IN (SELECT id FROM world_scenes WHERE project_id = ?4)",
             params![
                 version_id,

@@ -135,6 +135,22 @@ pub fn set_shot_keyframe(
     .map_err(AppCommandError::from)
 }
 
+/// Pins (or clears) the shot's exact generated-video AssetVersion. The
+/// reference never drifts when newer video versions are promoted.
+#[tauri::command]
+pub fn set_shot_video(
+    project_root_path: String,
+    shot_id: String,
+    video_asset_version_id: Option<String>,
+) -> Result<(), AppCommandError> {
+    CinemaService::set_shot_video(
+        root_path(&project_root_path)?,
+        &shot_id,
+        video_asset_version_id.as_deref(),
+    )
+    .map_err(AppCommandError::from)
+}
+
 #[tauri::command]
 pub fn get_scene_readiness(
     project_root_path: String,

@@ -31,7 +31,7 @@ pub enum AppError {
     #[error("Asset label must contain 1 to 160 characters")]
     InvalidAssetLabel,
 
-    #[error("This asset type is not supported in Sprint 1")]
+    #[error("This asset type is not supported yet")]
     UnsupportedAssetTypeForSprint,
 
     #[error("Unknown asset type")]
@@ -48,6 +48,9 @@ pub enum AppError {
 
     #[error("Only PNG, JPEG, and WebP images can be imported in Sprint 1")]
     UnsupportedImageFormat,
+
+    #[error("The video file must be a valid MP4")]
+    UnsupportedVideoFormat,
 
     #[error("This exact media file is already a version of the asset")]
     DuplicateAssetVersion,

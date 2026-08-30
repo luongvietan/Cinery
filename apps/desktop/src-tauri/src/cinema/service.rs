@@ -71,6 +71,7 @@ impl CinemaService {
             ordering,
             duration_seconds,
             keyframe_asset_version_id: None,
+            generated_video_asset_version_id: None,
             intent,
             action: action
                 .map(|value| value.trim().to_string())
@@ -388,6 +389,23 @@ impl CinemaService {
             ensure_canonical_version(&conn, &project.id, version, &["shot_keyframe"])?;
         }
         repository::set_shot_keyframe(&conn, &project.id, shot_id, version_id)
+    }
+
+    /// Pins (or clears) one shot's exact generated-video version reference.
+    /// Mirrors [`set_shot_keyframe`]: the pinned id is an exact immutable
+    /// AssetVersion of a `video` asset -- promoting a newer video later
+    /// never rewrites this pin.
+    pub fn set_shot_video(
+        project_root: &Path,
+        shot_id: &str,
+        version_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        if let Some(version) = version_id {
+            ensure_canonical_version(&conn, &project.id, version, &["video"])?;
+        }
+        repository::set_shot_video(&conn, &project.id, shot_id, version_id)
     }
 
     /// Computes structured compile readiness for the authoritative scene.

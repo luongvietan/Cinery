@@ -29,9 +29,11 @@ const ASSET_TYPES: &[&str] = &[
     "audio",
 ];
 
-/// Asset types excluded from Sprint 1, even though they are part of the
-/// stable, declared enum.
-const SPRINT_ONE_UNSUPPORTED_TYPES: &[&str] = &["video", "audio"];
+/// Asset types excluded from the current MVP slice, even though they are
+/// part of the stable, declared enum. `video` is supported as of P10.0
+/// (generated scene videos persist into per-scene `video` assets); `audio`
+/// remains unsupported until an audio pipeline exists.
+const SPRINT_ONE_UNSUPPORTED_TYPES: &[&str] = &["audio"];
 
 pub struct AssetService;
 
@@ -615,12 +617,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_video_asset_type_in_sprint_one() {
+    fn creates_a_video_asset_for_generated_scene_videos() {
         let fixture = ProjectFixture::new();
 
-        let error = AssetService::create_asset(&fixture.root, "video", "B-ROLL", None).unwrap_err();
-
-        assert!(matches!(error, AppError::UnsupportedAssetTypeForSprint));
+        // P10.0: `video` is a supported asset type; the scene video
+        // workflow find-or-creates one per scene.
+        let asset = AssetService::create_asset(&fixture.root, "video", "SCENE 001 — Video", None)
+            .unwrap();
+        assert_eq!(asset.asset_type, "video");
     }
 
     #[test]

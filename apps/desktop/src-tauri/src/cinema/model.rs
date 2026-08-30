@@ -16,7 +16,9 @@ pub struct SceneRef {
 
 /// A persisted shot belonging to the authoritative scene. Ordering is unique
 /// per scene and durations are bounded by the schema (0 < duration <= 30s).
-/// A video version field is deliberately absent until video generation ships.
+/// Both the keyframe and the generated video reference are exact,
+/// immutable AssetVersion pins -- promoting a newer version never mutates
+/// them (no canonical drift; restaging is an explicit user action).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ShotRecord {
@@ -25,6 +27,7 @@ pub struct ShotRecord {
     pub ordering: i64,
     pub duration_seconds: f64,
     pub keyframe_asset_version_id: Option<String>,
+    pub generated_video_asset_version_id: Option<String>,
     pub intent: String,
     pub action: Option<String>,
     pub camera: Option<String>,

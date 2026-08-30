@@ -1,93 +1,84 @@
 use crate::error::AppError;
 use chrono::Utc;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// A single, immutable database migration.
 pub struct Migration {
     pub version: i64,
     pub sql: &'static str,
+    /// True for the rare migration that rebuilds a table which other tables
+    /// reference via FOREIGN KEY (required to change a CHECK constraint,
+    /// which SQLite cannot ALTER in place). Such migrations follow SQLite's
+    /// documented rebuild procedure: the runner disables `foreign_keys`
+    /// *before* beginning the migration transaction (the pragma is a
+    /// silent no-op inside a transaction), executes the rebuild
+    /// transactionally, verifies `PRAGMA foreign_key_check` inside the
+    /// transaction, and re-enables enforcement afterwards.
+    pub rebuilds_foreign_key_tables: bool,
+}
+
+impl Migration {
+    /// An ordinary migration: runs inside a single transaction with
+    /// foreign-key enforcement left on.
+    pub const fn new(version: i64, sql: &'static str) -> Self {
+        Migration {
+            version,
+            sql,
+            rebuilds_foreign_key_tables: false,
+        }
+    }
+
+    /// A table-rebuild migration that requires foreign keys to be disabled
+    /// while it runs. See [`Migration::rebuilds_foreign_key_tables`].
+    pub const fn foreign_key_rebuild(version: i64, sql: &'static str) -> Self {
+        Migration {
+            version,
+            sql,
+            rebuilds_foreign_key_tables: true,
+        }
+    }
 }
 
 /// The full, ordered list of migrations that bring a fresh database up to
 /// the current schema. Append new migrations here; never edit an existing
 /// entry once it has shipped.
 pub const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        sql: include_str!("../../migrations/0001_project_kernel.sql"),
-    },
-    Migration {
-        version: 2,
-        sql: include_str!("../../migrations/0002_assets.sql"),
-    },
-    Migration {
-        version: 3,
-        sql: include_str!("../../migrations/0003_asset_version_dimensions.sql"),
-    },
-    Migration {
-        version: 4,
-        sql: include_str!("../../migrations/0004_canon_engine.sql"),
-    },
-    Migration {
-        version: 5,
-        sql: include_str!("../../migrations/0005_workflow_runtime.sql"),
-    },
-    Migration {
-        version: 6,
-        sql: include_str!("../../migrations/0006_provider_integrations.sql"),
-    },
-    Migration {
-        version: 7,
-        sql: include_str!("../../migrations/0007_provider_audit_events.sql"),
-    },
-    Migration {
-        version: 8,
-        sql: include_str!("../../migrations/0008_generated_artifacts.sql"),
-    },
-    Migration {
-        version: 9,
-        sql: include_str!("../../migrations/0009_artifact_lineage.sql"),
-    },
-    Migration {
-        version: 10,
-        sql: include_str!("../../migrations/0010_visual_qa.sql"),
-    },
-    Migration {
-        version: 11,
-        sql: include_str!("../../migrations/0011_visual_qa_repairs.sql"),
-    },
-    Migration {
-        version: 12,
-        sql: include_str!("../../migrations/0012_cinema_compiler.sql"),
-    },
-    Migration {
-        version: 13,
-        sql: include_str!("../../migrations/0013_performance_indexes.sql"),
-    },
-    Migration {
-        version: 14,
-        sql: include_str!("../../migrations/0014_custom_provider_definitions.sql"),
-    },
-    Migration {
-        version: 15,
-        sql: include_str!("../../migrations/0015_custom_provider_purpose.sql"),
-    },
-    Migration {
-        version: 16,
-        sql: include_str!("../../migrations/0016_world_scene_pipeline.sql"),
-    },
-    Migration {
-        version: 17,
-        sql: include_str!("../../migrations/0017_unified_scene_shots.sql"),
-    },
-    Migration {
-        version: 18,
-        sql: include_str!("../../migrations/0018_artifact_promotion_idempotency.sql"),
-    },
-    Migration {
-        version: 19,
-        sql: include_str!("../../migrations/0019_custom_provider_operations.sql"),
-    },
+    Migration::new(1, include_str!("../../migrations/0001_project_kernel.sql")),
+    Migration::new(2, include_str!("../../migrations/0002_assets.sql")),
+    Migration::new(3, include_str!("../../migrations/0003_asset_version_dimensions.sql")),
+    Migration::new(4, include_str!("../../migrations/0004_canon_engine.sql")),
+    Migration::new(5, include_str!("../../migrations/0005_workflow_runtime.sql")),
+    Migration::new(6, include_str!("../../migrations/0006_provider_integrations.sql")),
+    Migration::new(7, include_str!("../../migrations/0007_provider_audit_events.sql")),
+    Migration::new(8, include_str!("../../migrations/0008_generated_artifacts.sql")),
+    Migration::new(9, include_str!("../../migrations/0009_artifact_lineage.sql")),
+    Migration::new(10, include_str!("../../migrations/0010_visual_qa.sql")),
+    Migration::new(11, include_str!("../../migrations/0011_visual_qa_repairs.sql")),
+    Migration::new(12, include_str!("../../migrations/0012_cinema_compiler.sql")),
+    Migration::new(13, include_str!("../../migrations/0013_performance_indexes.sql")),
+    Migration::new(
+        14,
+        include_str!("../../migrations/0014_custom_provider_definitions.sql"),
+    ),
+    Migration::new(15, include_str!("../../migrations/0015_custom_provider_purpose.sql")),
+    Migration::new(16, include_str!("../../migrations/0016_world_scene_pipeline.sql")),
+    Migration::new(17, include_str!("../../migrations/0017_unified_scene_shots.sql")),
+    Migration::new(
+        18,
+        include_str!("../../migrations/0018_artifact_promotion_idempotency.sql"),
+    ),
+    Migration::new(
+        19,
+        include_str!("../../migrations/0019_custom_provider_operations.sql"),
+    ),
+    Migration::foreign_key_rebuild(
+        20,
+        include_str!("../../migrations/0020_video_media_kinds.sql"),
+    ),
+    Migration::foreign_key_rebuild(
+        21,
+        include_str!("../../migrations/0021_shot_video_pin.sql"),
+    ),
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -111,20 +102,57 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
             continue;
         }
 
-        let tx = conn
-            .transaction()
+        if migration.rebuilds_foreign_key_tables {
+            // SQLite's documented procedure for rebuilding a table that
+            // other tables reference: disable foreign-key enforcement
+            // *outside* any transaction (the pragma is a no-op inside
+            // one), run the rebuild inside the transaction, then verify
+            // integrity with `foreign_key_check` before committing.
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")
+                .map_err(|e| AppError::Database(e.to_string()))?;
+        }
+
+        let result = (|| -> Result<(), AppError> {
+            let tx = conn
+                .transaction()
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            tx.execute_batch(migration.sql)
+                .map_err(|e| AppError::Database(e.to_string()))?;
+
+            if migration.rebuilds_foreign_key_tables {
+                let violations = tx
+                    .query_row("PRAGMA foreign_key_check", [], |row| row.get::<_, i64>(0))
+                    .optional()
+                    .map_err(|e| AppError::Database(e.to_string()))?;
+                if violations.is_some() {
+                    return Err(AppError::Database(
+                        "migration 0020 failed its foreign_key_check: the rebuilt \
+                         tables would violate a foreign key; the database was left \
+                         unchanged"
+                            .into(),
+                    ));
+                }
+            }
+
+            tx.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
+                rusqlite::params![migration.version, Utc::now().to_rfc3339()],
+            )
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        tx.execute_batch(migration.sql)
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+            Ok(())
+        })();
 
-        tx.execute(
-            "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, ?2)",
-            rusqlite::params![migration.version, Utc::now().to_rfc3339()],
-        )
-        .map_err(|e| AppError::Database(e.to_string()))?;
+        if migration.rebuilds_foreign_key_tables {
+            // Enforcement is restored on every connection by
+            // `db::open_connection`; this only guards this session in case
+            // later migrations (or the caller) use the same connection.
+            let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
+        }
 
-        tx.commit().map_err(|e| AppError::Database(e.to_string()))?;
+        result?;
     }
 
     Ok(())

@@ -63,7 +63,7 @@ pub fn inspect_image(source: &Path) -> Result<InspectedImage, AppError> {
 pub fn inspect_video(source: &Path) -> Result<InspectedImage, AppError> {
     let bytes = fs::read(source).map_err(|e| AppError::FileSystem(e.to_string()))?;
     if bytes.len() <= 12 || &bytes[4..8] != b"ftyp" {
-        return Err(AppError::UnsupportedImageFormat);
+        return Err(AppError::UnsupportedVideoFormat);
     }
     let sha256 = hex_sha256(&bytes);
     Ok(InspectedImage {
@@ -123,6 +123,37 @@ mod tests {
         let error = inspect_image(&source).unwrap_err();
 
         assert!(matches!(error, AppError::UnsupportedImageFormat));
+    }
+
+    #[test]
+    fn recognizes_a_minimal_mp4_by_container_signature() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("clip.mp4");
+        // Minimal ISO-BMFF header: 32-bit size, "ftyp" brand, minor version,
+        // compatible brand.
+        let header: [u8; 16] = [
+            0, 0, 0, 24, b'f', b't', b'y', b'p', 0, 0, 0, 0, b'i', b's', b'o', b'm',
+        ];
+        fs::write(&source, header).unwrap();
+
+        let inspected = inspect_video(&source).unwrap();
+
+        assert_eq!(inspected.mime_type, "video/mp4");
+        assert_eq!(inspected.extension, "mp4");
+        assert_eq!(inspected.width, 0);
+        assert_eq!(inspected.height, 0);
+        assert_eq!(inspected.sha256.len(), 64);
+    }
+
+    #[test]
+    fn rejects_non_video_content_with_a_video_specific_error() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("fake.mp4");
+        fs::write(&source, b"not a video at all").unwrap();
+
+        let error = inspect_video(&source).unwrap_err();
+
+        assert!(matches!(error, AppError::UnsupportedVideoFormat));
     }
 
     #[test]

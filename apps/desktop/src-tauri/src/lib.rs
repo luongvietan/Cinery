@@ -10,6 +10,7 @@ pub mod project;
 pub mod providers;
 pub mod qa;
 pub mod recovery;
+pub mod router;
 pub mod scenes;
 pub mod skills;
 pub mod workflow;
@@ -71,6 +72,7 @@ pub fn run() {
             providers::commands::suggest_visual_spec,
             providers::commands::cancel_workflow_execution,
             providers::commands::retry_workflow_execution,
+            router::commands::route_production_intent,
             generation::commands::list_generation_results,
             generation::commands::get_generated_artifact,
             generation::commands::promote_generated_artifact,
@@ -85,6 +87,7 @@ pub fn run() {
             cinema::commands::delete_shot,
             cinema::commands::reorder_shots,
             cinema::commands::set_shot_keyframe,
+            cinema::commands::set_shot_video,
             cinema::commands::get_scene_readiness,
             cinema::commands::list_shots,
             cinema::commands::compile_cinema,
