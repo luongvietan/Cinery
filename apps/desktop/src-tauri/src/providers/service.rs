@@ -881,7 +881,9 @@ impl ProviderService {
         let mut registry = ProviderRegistry::builtin();
         match provider_id {
             // Local test/diagnostic providers need no external credential.
-            "mock" | "dry_run" => {}
+            // `fake_async_video` is the deterministic async video provider
+            // used by the offline video golden path and provider tests.
+            "mock" | "dry_run" | "fake_async_video" => {}
             "openai" => {
                 let token = Self::resolve_openai_token(project_root, credentials)?;
                 registry.register_arc(Self::openai_builtin_adapter(token));

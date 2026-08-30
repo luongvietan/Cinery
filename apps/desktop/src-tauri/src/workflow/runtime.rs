@@ -1400,7 +1400,11 @@ fn execute_scene_keyframe_ready(
             status,
             result: provider_result,
         };
-        update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+        // The attempt is only marked succeeded after the keyframe is durably
+        // captured and imported below: if capture/persist fails, the attempt
+        // stays non-succeeded so `retry_workflow_execution` can offer a
+        // retry and a succeeded attempt always corresponds to a persisted
+        // result.
         let snapshot: crate::workflow::model::WorkflowContextSnapshot = detail
             .run
             .context_snapshot_json
@@ -1506,6 +1510,9 @@ fn execute_scene_keyframe_ready(
                 }
                 Err(e) => return Err(e),
             };
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
             crate::workflow::execution::ExecutionResult {
                 kind: provider_id,
                 artifact_path: project_root.join(&imported.file_path),
@@ -1536,6 +1543,9 @@ fn execute_scene_keyframe_ready(
                 "provider.execution.completed",
                 Some(&serde_json::json!({"artifactPath": version.file_path})),
             )?;
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
             crate::workflow::execution::ExecutionResult {
                 kind: provider_id,
                 artifact_path: project_root.join(version.file_path),
@@ -1809,7 +1819,11 @@ fn execute_scene_video_ready(
             status,
             result: provider_result,
         };
-        update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+        // The attempt is only marked succeeded after the video is durably
+        // captured and imported below: if capture/persist fails, the attempt
+        // stays non-succeeded so `retry_workflow_execution` can offer a
+        // retry and a succeeded attempt always corresponds to a persisted
+        // result.
         let snapshot: crate::workflow::model::WorkflowContextSnapshot = detail
             .run
             .context_snapshot_json
@@ -1929,6 +1943,9 @@ fn execute_scene_video_ready(
                 }
                 Err(e) => return Err(e),
             };
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
             crate::workflow::execution::ExecutionResult {
                 kind: provider_id,
                 artifact_path: project_root.join(&imported.file_path),
@@ -1959,6 +1976,9 @@ fn execute_scene_video_ready(
                 "provider.execution.completed",
                 Some(&serde_json::json!({"artifactPath": version.file_path})),
             )?;
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
             crate::workflow::execution::ExecutionResult {
                 kind: provider_id,
                 artifact_path: project_root.join(version.file_path),
@@ -2221,7 +2241,10 @@ fn execute_ready(
             status,
             result: provider_result,
         };
-        update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+        // The attempt is only marked succeeded after outputs are durably
+        // captured/persisted below (see the keyframe executor for the same
+        // pattern): a succeeded attempt always corresponds to a persisted
+        // result, and a failed capture leaves the attempt retryable.
         let snapshot: crate::workflow::model::WorkflowContextSnapshot = detail
             .run
             .context_snapshot_json
@@ -2269,24 +2292,27 @@ fn execute_ready(
                 .iter()
                 .map(|artifact| artifact.id.clone())
                 .collect::<Vec<_>>();
-            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
-            append_audit_event(
-                conn,
-                Some(&attempt.id),
-                &detail.run.id,
-                "provider.execution.completed",
-                Some(
-                    &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
-                ),
-            )?;
-            crate::workflow::execution::ExecutionResult {
-                kind: provider_id,
-                artifact_path: project_root.join(&captured.artifacts[0].storage_path),
-                result_set_id: Some(captured.result_set.id),
-                artifact_ids,
-                request,
-            }
-        } else {
+             update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+             append_audit_event(
+                 conn,
+                 Some(&attempt.id),
+                 &detail.run.id,
+                 "provider.execution.completed",
+                 Some(
+                     &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
+                 ),
+             )?;
+             // Durable persistence is complete: only now is the attempt
+             // marked succeeded (see the comment above the capture call).
+             update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+             crate::workflow::execution::ExecutionResult {
+                 kind: provider_id,
+                 artifact_path: project_root.join(&captured.artifacts[0].storage_path),
+                 result_set_id: Some(captured.result_set.id),
+                 artifact_ids,
+                 request,
+             }
+         } else {
             // World/scene flows persist the candidate version directly into the
             // stable expected-output asset.
             let asset_type = request.expected_output.asset_type.as_str();
@@ -2311,6 +2337,9 @@ fn execute_ready(
                 "provider.execution.completed",
                 Some(&serde_json::json!({"artifactPath": version.file_path})),
             )?;
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
             crate::workflow::execution::ExecutionResult {
                 kind: provider_id,
                 artifact_path: project_root.join(version.file_path),

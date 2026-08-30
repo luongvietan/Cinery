@@ -19,7 +19,14 @@ use sha2::{Digest, Sha256};
 use std::io::Cursor;
 use std::path::Path;
 
+/// Download cap for image outputs. Images are small; 50 MiB is generous.
 const MAX_PROVIDER_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
+
+/// Download cap for video outputs (P10.0). Videos are one to two orders of
+/// magnitude larger than images at the durations this pipeline generates
+/// (<= 120 s), so the image cap is doubled into a distinct, still-bounded
+/// limit rather than raising the image cap or allowing unbounded downloads.
+const MAX_PROVIDER_VIDEO_OUTPUT_BYTES: usize = 100 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenerationCaptureInput {
@@ -101,7 +108,11 @@ impl GenerationService {
         recovery::quarantine_orphan_generated_files(project_root)?;
         if provider_result.outputs.is_empty() {
             return Err(AppError::GenerationArtifactCaptureFailed(
-                "provider returned no image outputs".into(),
+                if input.media_kind == "video" {
+                    "provider returned no video outputs".into()
+                } else {
+                    "provider returned no image outputs".into()
+                },
             ));
         }
         let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
@@ -121,9 +132,15 @@ impl GenerationService {
         };
 
         let mut stored = Vec::with_capacity(provider_result.outputs.len());
+        // Videos use a distinct, larger, still-bounded download cap.
+        let output_cap = if input.media_kind == "video" {
+            MAX_PROVIDER_VIDEO_OUTPUT_BYTES
+        } else {
+            MAX_PROVIDER_OUTPUT_BYTES
+        };
         for (index, output) in provider_result.outputs.iter().enumerate() {
             let ordinal = (index + 1) as i64;
-            let bytes = provider_output_bytes(output)?;
+            let bytes = provider_output_bytes(output, output_cap)?;
             let materialized = if input.media_kind == "video" {
                 if output.mime_type != "video/mp4" || !super::storage::looks_like_mp4(&bytes) {
                     return Err(AppError::GenerationArtifactCaptureFailed(
@@ -321,21 +338,41 @@ impl GenerationService {
             target.asset.owner_entity_id.as_deref(),
         )?;
         let source_path = project_root.join(&artifact.storage_path);
-        let imported = match AssetService::import_asset_version(
-            project_root,
-            target_asset_id,
-            &source_path,
-            target.asset.canonical_version_id.clone(),
-        ) {
-            Ok(version) => version,
-            Err(AppError::DuplicateAssetVersion) => {
-                AssetService::get_asset_with_versions(project_root, target_asset_id)?
-                    .versions
-                    .into_iter()
-                    .find(|version| version.sha256 == artifact.sha256)
-                    .ok_or(AppError::GenerationArtifactNotPromotable)?
+        // Video artifacts import through the MP4 path; images through the
+        // image path (decode + dimensions + thumbnail).
+        let imported = match artifact.media_kind.as_str() {
+            "video" => {
+                match AssetService::import_media_version(
+                    project_root,
+                    target_asset_id,
+                    &source_path,
+                    target.asset.canonical_version_id.clone(),
+                ) {
+                    Ok(version) => version,
+                    Err(AppError::DuplicateAssetVersion) => find_version_by_sha(
+                        project_root,
+                        target_asset_id,
+                        &artifact.sha256,
+                    )?,
+                    Err(error) => return Err(error),
+                }
             }
-            Err(error) => return Err(error),
+            _ => {
+                match AssetService::import_asset_version(
+                    project_root,
+                    target_asset_id,
+                    &source_path,
+                    target.asset.canonical_version_id.clone(),
+                ) {
+                    Ok(version) => version,
+                    Err(AppError::DuplicateAssetVersion) => find_version_by_sha(
+                        project_root,
+                        target_asset_id,
+                        &artifact.sha256,
+                    )?,
+                    Err(error) => return Err(error),
+                }
+            }
         };
         let promoted = if set_canonical {
             AssetService::promote_asset_version(project_root, &imported.id)?.promoted_version
@@ -393,7 +430,22 @@ impl GenerationService {
     }
 }
 
-fn provider_output_bytes(output: &ProviderOutput) -> Result<Vec<u8>, AppError> {
+/// Resolves the existing version of `target_asset_id` whose content hash
+/// matches `sha256` -- the idempotent-promotion reconciliation for
+/// content-deduped imports (both image and video).
+fn find_version_by_sha(
+    project_root: &Path,
+    target_asset_id: &str,
+    sha256: &str,
+) -> Result<crate::assets::model::AssetVersionRecord, AppError> {
+    AssetService::get_asset_with_versions(project_root, target_asset_id)?
+        .versions
+        .into_iter()
+        .find(|version| version.sha256 == sha256)
+        .ok_or(AppError::GenerationArtifactNotPromotable)
+}
+
+fn provider_output_bytes(output: &ProviderOutput, max_bytes: usize) -> Result<Vec<u8>, AppError> {
     if output.uri.starts_with("mock://") || output.uri.starts_with("dry-run://") {
         return Ok(deterministic_mock_png(&output.uri));
     }
@@ -417,7 +469,7 @@ fn provider_output_bytes(output: &ProviderOutput) -> Result<Vec<u8>, AppError> {
             });
     }
     if output.uri.starts_with("https://") || output.uri.starts_with("http://") {
-        return download_bytes(&output.uri, MAX_PROVIDER_OUTPUT_BYTES).map_err(|_| {
+        return download_bytes(&output.uri, max_bytes).map_err(|_| {
                 AppError::GenerationArtifactCaptureFailed("provider output download failed".into())
             });
     }

@@ -979,3 +979,272 @@ mod tests {
             .unwrap();
         assert_eq!(mapped, "wsc-L1");
     }
+
+    /// Builds a fully migrated (head = latest) database seeded with one
+    /// project, one image asset, and one image asset version, plus a second
+    /// asset reserved for video versions.
+    fn video_ready_conn() -> (Connection, String, String) {
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+             VALUES ('p1', 'Red Door', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, owner_entity_id, \
+             canonical_version_id, created_at, updated_at) \
+             VALUES ('asset-img', 'p1', 'image', 'IMG', NULL, NULL, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, owner_entity_id, \
+             canonical_version_id, created_at, updated_at) \
+             VALUES ('asset-vid', 'p1', 'video', 'VID', NULL, NULL, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+             thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+             VALUES ('v-img-1', 'asset-img', 1, 'candidate', 'a.png', 't.webp', ?, 'a.png', \
+             'image/png', 100, 'now')",
+            rusqlite::params!["b".repeat(64)],
+        )
+        .unwrap();
+        (conn, "asset-img".into(), "asset-vid".into())
+    }
+
+    #[test]
+    fn migration_0020_accepts_video_media_kinds_and_mime_types() {
+        let (mut conn, _, video_asset) = video_ready_conn();
+
+        // A video asset version persists with video/mp4.
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+             thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+             VALUES ('v-vid-1', ?1, 1, 'candidate', 'v.mp4', '', ?, 'v.mp4', 'video/mp4', 24, 'now')",
+            rusqlite::params![video_asset, "c".repeat(64)],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE assets SET canonical_version_id = 'v-vid-1' WHERE id = ?1",
+            [&video_asset],
+        )
+        .unwrap();
+
+        // A workflow run + provider attempt exist so a video result set can
+        // reference them (minimal seed rows satisfying the FKs).
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, \
+             status, input_json, created_at, updated_at) \
+             VALUES ('run-1', 'p1', 's', '1.0.0', 'o', 'completed', '{}', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_steps (id, workflow_run_id, step_index, step_definition_id, \
+             step_type, status, input_json) \
+             VALUES ('step-1', 'run-1', 0, 'execute', 'execute', 'completed', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, \
+             attempt_number, idempotency_key, provider_id, model_id, adapter_version, status, \
+             compiled_request_id, started_at) \
+             VALUES ('attempt-1', 'run-1', 'execute', 1, 'run-1:execute:1', 'fake_async_video', \
+             'fake-video-v1', 1, 'succeeded', ?, 'now')",
+            rusqlite::params!["d".repeat(64)],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO generation_result_sets (id, project_id, workflow_run_id, \
+             workflow_step_key, provider_attempt_id, media_kind, requested_output_count, \
+             created_at) \
+             VALUES ('rs-1', 'p1', 'run-1', 'execute', 'attempt-1', 'video', 1, 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO generated_artifacts (id, result_set_id, ordinal, media_kind, \
+             mime_type, byte_size, sha256, storage_path, capture_status, created_at) \
+             VALUES ('ga-1', 'rs-1', 1, 'video', 'video/mp4', 24, ?, \
+             'generated/run-1/attempt-1/0001.mp4', 'available', 'now')",
+            rusqlite::params!["e".repeat(64)],
+        )
+        .unwrap();
+
+        // Image semantics are unchanged: the pre-existing image rows survive.
+        let image_mime: String = conn
+            .query_row(
+                "SELECT mime_type FROM asset_versions WHERE id = 'v-img-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(image_mime, "image/png");
+    }
+
+    #[test]
+    fn migration_0020_still_rejects_unsupported_media() {
+        let (conn, _, video_asset) = video_ready_conn();
+
+        // Unknown media kinds are still rejected (constraints stay explicit).
+        assert!(conn
+            .execute(
+                "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+                 thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+                 VALUES ('bad-1', ?1, 1, 'candidate', 'x.avi', '', ?, 'x.avi', 'video/avi', 1, 'now')",
+                rusqlite::params![video_asset, "f".repeat(64)],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+                 thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+                 VALUES ('bad-2', ?1, 1, 'candidate', 'x.txt', '', ?, 'x.txt', 'text/plain', 1, 'now')",
+                rusqlite::params![video_asset, "0".repeat(64)],
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn migration_0020_upgrades_a_project_at_0019_without_losing_data() {
+        // Build a database stopped at 0019 with image data, then upgrade.
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);",
+        )
+        .unwrap();
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 19)
+        {
+            conn.execute_batch(migration.sql).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'now')",
+                [migration.version],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+             VALUES ('p1', 'Red Door', 'now', 'now', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, owner_entity_id, \
+             canonical_version_id, created_at, updated_at) \
+             VALUES ('a-img', 'p1', 'face_lock', 'Face', NULL, 'v-1', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+             thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+             VALUES ('v-1', 'a-img', 1, 'canonical', 'a.png', 't.webp', ?, 'a.png', 'image/png', 100, 'now')",
+            rusqlite::params!["1".repeat(64)],
+        )
+        .unwrap();
+
+        // The upgrade must preserve the existing image row exactly.
+        run_migrations(&mut conn).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let (status, mime, canonical): (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT av.status, av.mime_type, a.canonical_version_id \
+                 FROM asset_versions av JOIN assets a ON a.id = av.asset_id WHERE av.id = 'v-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "canonical");
+        assert_eq!(mime, "image/png");
+        assert_eq!(canonical.as_deref(), Some("v-1"));
+
+        // And the upgraded schema now accepts video versions.
+        conn.execute(
+            "INSERT INTO assets (id, project_id, type, label, owner_entity_id, \
+             canonical_version_id, created_at, updated_at) \
+             VALUES ('a-vid', 'p1', 'video', 'Scene 001 - Video', NULL, NULL, 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+             thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+             VALUES ('v-vid', 'a-vid', 1, 'candidate', 'v.mp4', '', ?, 'v.mp4', 'video/mp4', 24, 'now')",
+            rusqlite::params!["2".repeat(64)],
+        )
+        .unwrap();
+
+        // FK integrity held through the rebuild.
+        let violations: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_foreign_key_check",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(violations, 0);
+    }
+
+    #[test]
+    fn migration_0021_adds_the_shot_video_pin() {
+        let (conn, _, _) = video_ready_conn();
+        conn.execute(
+            "INSERT INTO world_scenes (id, project_id, ordinal, title, summary, created_at, updated_at) \
+             VALUES ('scene-1', 'p1', 0, 'Scene 001', 'A scene', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO asset_versions (id, asset_id, version_number, status, file_path, \
+             thumbnail_path, sha256, original_filename, mime_type, byte_size, created_at) \
+             VALUES ('v-vid-2', 'asset-vid', 2, 'canonical', 'v2.mp4', '', ?, 'v2.mp4', 'video/mp4', 24, 'now')",
+            rusqlite::params!["3".repeat(64)],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, \
+             generated_video_asset_version_id, intent, created_at, updated_at) \
+             VALUES ('shot-1', 'scene-1', 0, 4.0, 'v-vid-2', 'Establish', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+
+        // The pin is nullable, exact, and FK-enforced.
+        conn.execute(
+            "INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, intent, \
+             created_at, updated_at) \
+             VALUES ('shot-2', 'scene-1', 1, 4.0, 'Second', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        let pinned: Option<String> = conn
+            .query_row(
+                "SELECT generated_video_asset_version_id FROM scene_shots WHERE id = 'shot-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pinned, None);
+
+        assert!(conn
+            .execute(
+                "INSERT INTO scene_shots (id, scene_id, ordering, duration_seconds, \
+                 generated_video_asset_version_id, intent, created_at, updated_at) \
+                 VALUES ('shot-3', 'scene-1', 2, 4.0, 'missing-version', 'Third', 'now', 'now')",
+                [],
+            )
+            .is_err());
+    }
+

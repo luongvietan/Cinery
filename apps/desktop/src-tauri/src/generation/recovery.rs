@@ -80,7 +80,7 @@ fn is_generated_filename(filename: &str) -> bool {
     let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
         return false;
     };
-    stem.parse::<u64>().is_ok() && matches!(extension, "png" | "jpg" | "jpeg" | "webp")
+    stem.parse::<u64>().is_ok() && matches!(extension, "png" | "jpg" | "jpeg" | "webp" | "mp4")
 }
 
 fn read_directories(path: &Path) -> Result<Vec<PathBuf>, AppError> {
