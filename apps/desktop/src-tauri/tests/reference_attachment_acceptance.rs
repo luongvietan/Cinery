@@ -58,6 +58,7 @@ fn request_with_references(
             skill_version: "1.1.0".into(),
             operation_id: "character.create_outfit".into(),
         },
+        generation_parameters: Default::default(),
     }
 }
 

@@ -4,7 +4,7 @@ use super::credential_store::{
     credential_account, credential_reference, header_credential_account,
     legacy_header_credential_account, CredentialStore, KeyringCredentialStore,
 };
-use super::config::OPERATION_VALIDATE;
+use super::config::{OPERATION_VALIDATE, OPERATION_VIDEO_IMAGE_TO_VIDEO};
 use super::declarative::DeclarativeProvider;
 use super::error::{ProviderError, ProviderErrorKind};
 use super::http::{HttpExecutor, HttpRequest, HttpResponse, UreqExecutor};
@@ -888,6 +888,10 @@ impl ProviderService {
         model_id: &str,
         attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
+        if request.task == crate::workflow::execution::ExecutionTask::ShotImageToVideo {
+            let root = project_root.ok_or(AppError::ImageToVideoUnsupported)?;
+            Self::validate_image_to_video_selection(root, provider_id, model_id)?;
+        }
         let mut registry = ProviderRegistry::builtin();
         match provider_id {
             // Local test/diagnostic providers need no external credential.
@@ -1091,6 +1095,50 @@ impl ProviderService {
         }
     }
 
+    /// Validates a chosen service/model pair before an image-to-video
+    /// submission. Custom models with an empty capability list inherit every
+    /// operation declared by their service; non-empty lists are restrictive.
+    pub fn validate_image_to_video_selection(
+        project_root: &Path,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<(), AppError> {
+        if let Ok(provider) = ProviderRegistry::builtin().get(provider_id) {
+            let capabilities = provider.capabilities();
+            if capabilities.supports_image_to_video
+                && (capabilities.supported_models.is_empty()
+                    || capabilities.supported_models.iter().any(|model| model == model_id))
+            {
+                return Ok(());
+            }
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+
+        let definition = Self::load_custom_definition(project_root, provider_id)?
+            .ok_or(AppError::ImageToVideoUnsupported)?;
+        if !definition
+            .runtime
+            .operations
+            .contains_key(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+        let model = definition
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or(AppError::ImageToVideoUnsupported)?;
+        if !model.capabilities.is_empty()
+            && !model
+                .capabilities
+                .iter()
+                .any(|capability| capability == OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+        Ok(())
+    }
+
     /// Default model for a provider, from its config record or its custom
     /// definition's first model. No credential access is required.
     pub fn default_model_for(
@@ -1256,6 +1304,9 @@ fn restore_secret_states<S: CredentialStore + ?Sized>(
 #[cfg(test)]
 mod connection_tests {
     use super::*;
+    use crate::providers::config::{
+        EndpointConfig, ResponseMapping, OPERATION_VIDEO_IMAGE_TO_VIDEO,
+    };
     use crate::project::service::ProjectService;
     use crate::providers::credential_store::MemoryCredentialStore;
     use crate::providers::http::TransportFailure;
@@ -1493,6 +1544,58 @@ mod connection_tests {
         assert!(result.connected);
         assert_eq!(result.status_code, None);
         assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn image_to_video_selection_returns_a_typed_error_for_unsupported_provider_or_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "I2V selection").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        let mut definition = openai_compatible_definition("i2v_provider");
+        definition.runtime.operations.insert(
+            OPERATION_VIDEO_IMAGE_TO_VIDEO.into(),
+            EndpointConfig {
+                path_template: "/video/i2v".into(),
+                request_mapping: Some(serde_json::json!({"prompt": "{{prompt}}"})),
+                response: ResponseMapping {
+                    url_path: Some("url".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        definition.models[0].capabilities = vec![OPERATION_VIDEO_IMAGE_TO_VIDEO.into()];
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+
+        ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1")
+            .unwrap();
+
+        definition.models[0].capabilities = vec!["video.generate".into()];
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1"),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "missing-model"),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
+
+        definition.models[0].capabilities.clear();
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1")
+            .unwrap();
+
+        definition
+            .runtime
+            .operations
+            .remove(OPERATION_VIDEO_IMAGE_TO_VIDEO);
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1"),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
     }
 
     #[test]

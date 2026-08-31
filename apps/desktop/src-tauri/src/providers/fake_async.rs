@@ -58,10 +58,10 @@ impl GenerationProvider for FakeAsyncVideoProvider {
             media_types: vec![ProviderMediaType::Video],
             supports_seed: false,
             supports_negative_prompt: false,
-            supports_reference_image: false,
+            supports_reference_image: true,
             supports_image_edit: false,
             supports_multiple_reference_images: false,
-            supports_image_to_video: false,
+            supports_image_to_video: true,
             supports_cancel: false,
             supports_progress: true,
             supported_aspect_ratios: vec![],
@@ -189,5 +189,21 @@ mod tests {
         let result = provider.fetch_result(&submission.job).unwrap();
         assert_eq!(result.outputs.len(), 1);
         assert!(result.outputs[0].uri.starts_with("data:video/mp4;base64,"));
+    }
+
+    #[test]
+    fn deterministic_video_provider_accepts_shot_image_to_video_requests() {
+        let provider = FakeAsyncVideoProvider::default();
+        let mut request = request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "keyframe-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+
+        assert!(provider.capabilities().supports_image_to_video);
+        assert!(provider.submit(&request).is_ok());
     }
 }

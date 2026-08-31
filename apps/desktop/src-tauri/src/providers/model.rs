@@ -242,6 +242,9 @@ impl ProviderCapabilities {
         if !self.media_types.contains(&media_type) {
             return Err(format!("media type {:?} is not supported", media_type));
         }
+        if request.task == ExecutionTask::ShotImageToVideo && !self.supports_image_to_video {
+            return Err("image-to-video is not supported".into());
+        }
         if !request.references.is_empty() && !self.supports_reference_image {
             return Err("reference images are not supported".into());
         }
@@ -360,7 +363,14 @@ impl ProviderExecutionRequest {
             references: request.references.clone(),
             constraints: request.constraints.clone(),
             expected_output: request.expected_output.clone(),
-            generation_parameters: ProviderGenerationParameters::default(),
+            generation_parameters: ProviderGenerationParameters {
+                width: None,
+                height: None,
+                aspect_ratio: request.generation_parameters.aspect_ratio.clone(),
+                duration_seconds: request.generation_parameters.duration_seconds,
+                fps: request.generation_parameters.fps,
+                seed: request.generation_parameters.seed,
+            },
             selected_provider: selected_provider.into(),
             selected_model: selected_model.into(),
             idempotency_key: idempotency_key.into(),
@@ -615,6 +625,62 @@ mod tests {
 
         let error = capabilities.supports(&request).unwrap_err();
         assert!(error.contains("reference images"));
+    }
+
+    #[test]
+    fn shot_image_to_video_requires_image_to_video_capability_and_preserves_generation_parameters() {
+        let mut execution = execution_request();
+        execution.task = ExecutionTask::ShotImageToVideo;
+        execution.media_type = ExecutionMediaType::Video;
+        execution.references[0].role = Some(crate::workflow::execution::ReferenceRole::SourceImage);
+        execution.generation_parameters = crate::workflow::execution::ExecutionGenerationParameters {
+            aspect_ratio: Some("2.39:1".into()),
+            duration_seconds: Some(4.5),
+            fps: Some(24),
+            seed: Some(42),
+        };
+        let request = ProviderExecutionRequest::from_execution_request(
+            "run-1",
+            "execute",
+            "compiled-1",
+            "video-provider",
+            "video-model",
+            "run-1:execute:1",
+            &execution,
+        )
+        .unwrap();
+
+        assert_eq!(
+            request.generation_parameters,
+            ProviderGenerationParameters {
+                width: None,
+                height: None,
+                aspect_ratio: Some("2.39:1".into()),
+                duration_seconds: Some(4.5),
+                fps: Some(24),
+                seed: Some(42),
+            }
+        );
+
+        let capabilities = ProviderCapabilities {
+            media_types: vec![ProviderMediaType::Video],
+            supports_seed: true,
+            supports_negative_prompt: false,
+            supports_reference_image: true,
+            supports_image_edit: false,
+            supports_multiple_reference_images: false,
+            supports_image_to_video: false,
+            supports_cancel: false,
+            supports_progress: false,
+            supported_aspect_ratios: vec![],
+            supported_models: vec!["video-model".into()],
+            max_reference_images: None,
+        };
+
+        assert!(capabilities
+            .supports(&request)
+            .unwrap_err()
+            .contains("image-to-video"));
     }
 
     #[test]

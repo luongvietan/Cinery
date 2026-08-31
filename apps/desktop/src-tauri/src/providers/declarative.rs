@@ -104,12 +104,6 @@ impl DeclarativeProvider {
         if self.config.operations.contains_key(operation) {
             return Ok(operation.to_string());
         }
-        // A video edit without imageToVideo falls back to plain generation.
-        if operation == OPERATION_VIDEO_IMAGE_TO_VIDEO
-            && self.config.operations.contains_key(OPERATION_VIDEO_GENERATE)
-        {
-            return Ok(OPERATION_VIDEO_GENERATE.to_string());
-        }
         Err(self.error(
             ProviderErrorKind::UnsupportedCapability,
             format!(
@@ -819,6 +813,9 @@ impl GenerationProvider for DeclarativeProvider {
                 )
             })?;
         let operation = self.select_operation(request)?;
+        if operation == OPERATION_VIDEO_IMAGE_TO_VIDEO {
+            self.model_supports(&request.selected_model, OPERATION_VIDEO_IMAGE_TO_VIDEO)?;
+        }
         self.model_supports(&request.selected_model, &operation)?;
         let values = self.canonical_values(request);
         let references = self.reference_inputs(request);
@@ -1750,6 +1747,26 @@ mod tests {
         let mut request = provider_request(ExecutionMediaType::Video, "vid-1");
         request.prompt = "a slow pan".into();
         request
+    }
+
+    #[test]
+    fn video_generate_only_adapter_rejects_shot_image_to_video_without_submission() {
+        let transport = FakeTransport::with_responses(vec![]);
+        let provider = async_video_provider(async_video_config(1, 10_000), transport.clone());
+        let mut request = video_request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "source-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+
+        let error = provider.submit(&request).unwrap_err();
+
+        assert_eq!(error.kind, ProviderErrorKind::UnsupportedCapability);
+        assert!(error.message.contains("image-to-video"));
+        assert!(transport.requests.lock().unwrap().is_empty());
     }
 
     #[test]
