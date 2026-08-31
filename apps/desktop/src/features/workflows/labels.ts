@@ -53,6 +53,7 @@ const OPERATION_LABELS: Record<string, string> = {
   "world.create_plate": "World backdrop",
   "scene.create_keyframe": "Shot keyframe",
   "scene.generate_video": "Scene video",
+  "shot.image_to_video": "Shot video",
   "asset.run_visual_qa": "Visual QA",
   "asset.repair_failed_qa": "Repair",
 };

@@ -2,8 +2,8 @@ use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::providers::repository::{
-    append_audit_event, create_attempt, next_attempt_number, persist_job_with_operation,
-    update_artifact_ids,
+    append_audit_event, create_attempt, latest_attempt, next_attempt_number,
+    persist_job_with_operation, update_artifact_ids,
     update_attempt_status,
 };
 use crate::providers::service::ProviderService;
@@ -1818,7 +1818,7 @@ fn execute_scene_video_ready(
         ) => (id.as_str(), complete_id.as_str()),
         _ => {
             return Err(AppError::WorkflowRunInconsistent(
-                "scene keyframe execute/complete definitions are missing".into(),
+                "video execute/complete definitions are missing".into(),
             ))
         }
     };
@@ -1826,6 +1826,13 @@ fn execute_scene_video_ready(
     let input: Value = serde_json::from_str(&detail.run.input_json)
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
     let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
+    if operation.id == "shot.image_to_video" {
+        ProviderService::validate_image_to_video_selection(
+            project_root,
+            &provider_id,
+            &model_id,
+        )?;
+    }
 
     // Compute required reference count from request (world + looks + sheets + props)
     // Already in request.references; check capability
@@ -1909,19 +1916,39 @@ fn execute_scene_video_ready(
         )?
     } else {
         let compiled_hash = compiled_request_id(&request_json);
-        let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
-        let idempotency_key =
-            ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
-        let attempt = create_attempt(
-            conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
-        )?;
+        let attempt = match latest_attempt(conn, &detail.run.id, execute_step_id)? {
+            Some(attempt) if attempt.status == "queued" => {
+                if attempt.compiled_request_id != compiled_hash
+                    || attempt.provider_id != provider_id
+                    || attempt.model_id != model_id
+                {
+                    return Err(AppError::WorkflowRunInconsistent(
+                        "queued retry attempt does not match the frozen video request".into(),
+                    ));
+                }
+                attempt
+            }
+            _ => {
+                let attempt_number =
+                    next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+                let idempotency_key = ProviderService::idempotency_key(
+                    &detail.run.id,
+                    execute_step_id,
+                    attempt_number,
+                );
+                create_attempt(
+                    conn,
+                    &detail.run.id,
+                    execute_step_id,
+                    attempt_number,
+                    &compiled_hash,
+                    &provider_id,
+                    &model_id,
+                    &idempotency_key,
+                )?
+            }
+        };
+        let attempt_number = attempt.attempt_number;
         append_audit_event(
             conn,
             Some(&attempt.id),
@@ -1931,9 +1958,28 @@ fn execute_scene_video_ready(
                 &serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number}),
             ),
         )?;
-        let submission = match ProviderService::submit_compiled_request(
+        let reference_attachments =
+            match crate::workflow::execution::resolve_reference_attachments(project_root, &request)
+            {
+                Ok(attachments) => attachments,
+                Err(error) => {
+                    let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                    let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                    let _ = append_audit_event(
+                        conn,
+                        Some(&attempt.id),
+                        &detail.run.id,
+                        "provider.execution.failed",
+                        Some(&serde_json::json!({"error": error.to_string()})),
+                    );
+                    return Err(error);
+                }
+            };
+        let submission = match ProviderService::submit_provider_request(
             &request,
+            reference_attachments,
             Some(project_root),
+            None,
             execute_step_id,
             &compiled_hash,
             &provider_id,
@@ -2246,7 +2292,10 @@ fn execute_ready(
     if operation.id == "scene.create_keyframe" {
         return execute_scene_keyframe_ready(conn, project_root, project_id, detail, operation);
     }
-    if operation.id == "scene.generate_video" {
+    if matches!(
+        operation.id.as_str(),
+        "scene.generate_video" | "shot.image_to_video"
+    ) {
         return execute_scene_video_ready(conn, project_root, project_id, detail, operation);
     }
     let execute_index = detail

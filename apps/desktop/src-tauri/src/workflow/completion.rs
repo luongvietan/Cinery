@@ -102,8 +102,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// Captures a fetched provider result for the attempt, mirroring the exact
 /// per-operation capture behavior of the synchronous runtime:
 ///
-/// - `scene.generate_video` — generation result set (video) + candidate
-///   import into the scene's stable video asset;
+/// - `scene.generate_video` / `shot.image_to_video` — generation result set
+///   (video) + candidate import into the scene's stable video asset;
 /// - `scene.create_keyframe` — generation result set (image) + candidate
 ///   import into the scene's shot_keyframe asset;
 /// - other operations — generation result set (image) with promotion left
@@ -205,7 +205,12 @@ pub fn complete_attempt(
         .unwrap_or_default();
     let canon = snapshot.as_ref().map(|snapshot| &snapshot.canon);
 
-    let requested_output_count = if context.operation_id.starts_with("scene.") {
+    let requested_output_count = if matches!(
+        context.operation_id.as_str(),
+        "scene.generate_video" | "shot.image_to_video"
+    ) {
+        1
+    } else if context.operation_id.starts_with("scene.") {
         1
     } else {
         4
@@ -248,7 +253,10 @@ pub fn complete_attempt(
     // Video and keyframe runs also import the first artifact as a
     // *candidate* into the scene's durable asset slot (never canonical —
     // promotion stays under human review).
-    if context.operation_id == "scene.generate_video" {
+    if matches!(
+        context.operation_id.as_str(),
+        "scene.generate_video" | "shot.image_to_video"
+    ) {
         import_scene_video_candidate(
             project_root,
             &conn,
