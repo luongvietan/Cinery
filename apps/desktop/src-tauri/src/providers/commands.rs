@@ -130,7 +130,7 @@ pub fn get_provider_capabilities(
     }
     let provider = ProviderRegistry::builtin()
         .get(&provider_id)
-        .map_err(|error| crate::error::AppError::ProviderExecution(error.message))?;
+        .map_err(|error| crate::error::AppError::ProviderExecution(error.message.clone()))?;
     Ok(provider.capabilities())
 }
 
@@ -202,7 +202,7 @@ pub fn validate_provider_configuration(
     if provider_id == "mock" || provider_id == "dry_run" {
         ProviderRegistry::builtin()
             .get(&provider_id)
-            .map_err(|error| AppError::ProviderExecution(error.message))?;
+            .map_err(|error| AppError::ProviderExecution(error.message.clone()))?;
         return Ok(());
     }
     ProviderService::resolve_credential(&root, command_credential_store().as_ref(), &provider_id)

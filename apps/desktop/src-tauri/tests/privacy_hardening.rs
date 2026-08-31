@@ -235,7 +235,7 @@ fn error_diagnostic_messages_redacted() {
     let error = ProviderError::new(ProviderErrorKind::NetworkError, "request failed")
         .with_diagnostic(format!("Authorization: Bearer {}", TEST_API_SECRET));
 
-    let diagnostic = error.diagnostic.unwrap();
+    let diagnostic = error.diagnostic.clone().unwrap();
     assert!(!diagnostic.contains(TEST_API_SECRET));
     assert!(diagnostic.contains("[REDACTED]"));
 }

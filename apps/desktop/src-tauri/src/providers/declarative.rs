@@ -717,6 +717,7 @@ impl DeclarativeProvider {
             status_code: Some(response.status),
             provider_message: error
                 .provider_message
+                .clone()
                 .or_else(|| Some(redact_secret(&response.text()).chars().take(300).collect())),
         })
     }
