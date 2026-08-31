@@ -7,8 +7,7 @@ use super::credential_store::{
 };
 use super::declarative::DeclarativeProvider;
 use super::error::{ProviderError, ProviderErrorKind};
-use super::http::{HttpExecutor, HttpRequest, HttpResponse, UreqExecutor};
-use super::model::CustomProviderPurpose;
+use super::http::{HttpExecutor, UreqExecutor};
 use super::model::*;
 use super::presets::preset_by_id;
 use super::registry::ProviderRegistry;
@@ -922,7 +921,7 @@ impl ProviderService {
             &Self::idempotency_key(&request.provenance.workflow_run_id, step_id, attempt_number),
             request,
         )
-        .map_err(|message| AppError::ProviderExecution(message))?;
+        .map_err(AppError::ProviderExecution)?;
         provider_request.reference_attachments = reference_attachments;
         provider
             .capabilities()
@@ -1074,7 +1073,7 @@ impl ProviderService {
         provider_id: &str,
     ) -> Result<Option<CustomProviderDefinition>, AppError> {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        super::repository::get_custom_provider(&conn, provider_id).map_err(Into::into)
+        super::repository::get_custom_provider(&conn, provider_id)
     }
 
     /// Capability lookup that also resolves user-defined AI services. Used by
@@ -1300,6 +1299,11 @@ fn restore_secret_states<S: CredentialStore + ?Sized>(
     Ok(())
 }
 
+fn provider_error(error: ProviderError) -> AppError {
+    // Human-readable, secret-free text the UI can show verbatim.
+    AppError::ProviderExecution(error.display_text())
+}
+
 #[cfg(test)]
 mod connection_tests {
     use super::*;
@@ -1308,7 +1312,7 @@ mod connection_tests {
         EndpointConfig, ResponseMapping, OPERATION_VIDEO_IMAGE_TO_VIDEO,
     };
     use crate::providers::credential_store::MemoryCredentialStore;
-    use crate::providers::http::TransportFailure;
+    use crate::providers::http::{HttpRequest, HttpResponse, TransportFailure};
     use crate::providers::presets::preset_by_id;
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -1867,9 +1871,4 @@ mod connection_tests {
             matches!(redirect_target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
     }
-}
-
-fn provider_error(error: ProviderError) -> AppError {
-    // Human-readable, secret-free text the UI can show verbatim.
-    AppError::ProviderExecution(error.display_text())
 }

@@ -726,7 +726,7 @@ pub fn resolve_world_plate_context(
     let applicable_tbds = crate::workflow::tbd_policy::load_applicable_tbds(
         conn,
         project_id,
-        &[location_entity_id.clone()],
+        std::slice::from_ref(&location_entity_id),
     )?;
     let protected_tbds: Vec<CanonTbdSnapshot> = applicable_tbds
         .iter()
@@ -1449,7 +1449,7 @@ pub fn resolve_scene_keyframe_context(
             operation_id: operation_id.to_string(),
         },
         input: input.clone(),
-        prerequisite_report: prerequisite_report,
+        prerequisite_report,
         canon: canon_snapshots,
         assets: asset_snapshots,
         protected_tbds: protected_tbds_for_snapshot,
@@ -1478,6 +1478,55 @@ pub fn write_snapshot_atomically(
 
 fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(error.to_string())
+}
+
+fn load_selected_asset_snapshot(
+    conn: &Connection,
+    project_id: &str,
+    asset_version_id: &str,
+) -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
+    let (asset_id, asset_type, version_number, status, canonical_version_id, path): (String, String, i64, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT av.asset_id, a.type, av.version_number, av.status, a.canonical_version_id, av.file_path
+             FROM asset_versions av JOIN assets a ON a.id = av.asset_id
+             WHERE av.id = ?1 AND a.project_id = ?2",
+            params![asset_version_id, project_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => AppError::AssetVersionNotFound,
+            other => AppError::Database(other.to_string()),
+        })?;
+    if status != "canonical" {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "source asset version must be canonical".into(),
+        ));
+    }
+    if canonical_version_id.as_deref() != Some(asset_version_id) {
+        return Err(AppError::WorkflowPrerequisiteFailed(
+            "source asset version is not the current canonical pointer".into(),
+        ));
+    }
+    let asset_type = match asset_type.as_str() {
+        "face_lock" => AssetType::FaceLock,
+        "outfit" => AssetType::Outfit,
+        "character_sheet" => AssetType::CharacterSheet,
+        "world_plate" => AssetType::WorldPlate,
+        "shot_keyframe" => AssetType::ShotKeyframe,
+        "prop_plate" => AssetType::PropPlate,
+        "image" => AssetType::Image,
+        "video" => AssetType::Video,
+        "audio" => AssetType::Audio,
+        _ => return Err(AppError::InvalidAssetType),
+    };
+    Ok(crate::workflow::model::AssetSnapshotRef {
+        asset_id,
+        asset_version_id: asset_version_id.into(),
+        asset_type,
+        version_number,
+        status: crate::workflow::model::AssetSnapshotStatus::Canonical,
+        path,
+    })
 }
 
 #[cfg(test)]
@@ -1916,53 +1965,4 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code(), "TBD_DECISION_REQUIRED");
     }
-}
-
-fn load_selected_asset_snapshot(
-    conn: &Connection,
-    project_id: &str,
-    asset_version_id: &str,
-) -> Result<crate::workflow::model::AssetSnapshotRef, AppError> {
-    let (asset_id, asset_type, version_number, status, canonical_version_id, path): (String, String, i64, String, Option<String>, String) = conn
-        .query_row(
-            "SELECT av.asset_id, a.type, av.version_number, av.status, a.canonical_version_id, av.file_path
-             FROM asset_versions av JOIN assets a ON a.id = av.asset_id
-             WHERE av.id = ?1 AND a.project_id = ?2",
-            params![asset_version_id, project_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-        )
-        .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => AppError::AssetVersionNotFound,
-            other => AppError::Database(other.to_string()),
-        })?;
-    if status != "canonical" {
-        return Err(AppError::WorkflowPrerequisiteFailed(
-            "source asset version must be canonical".into(),
-        ));
-    }
-    if canonical_version_id.as_deref() != Some(asset_version_id) {
-        return Err(AppError::WorkflowPrerequisiteFailed(
-            "source asset version is not the current canonical pointer".into(),
-        ));
-    }
-    let asset_type = match asset_type.as_str() {
-        "face_lock" => AssetType::FaceLock,
-        "outfit" => AssetType::Outfit,
-        "character_sheet" => AssetType::CharacterSheet,
-        "world_plate" => AssetType::WorldPlate,
-        "shot_keyframe" => AssetType::ShotKeyframe,
-        "prop_plate" => AssetType::PropPlate,
-        "image" => AssetType::Image,
-        "video" => AssetType::Video,
-        "audio" => AssetType::Audio,
-        _ => return Err(AppError::InvalidAssetType),
-    };
-    Ok(crate::workflow::model::AssetSnapshotRef {
-        asset_id,
-        asset_version_id: asset_version_id.into(),
-        asset_type,
-        version_number,
-        status: crate::workflow::model::AssetSnapshotStatus::Canonical,
-        path,
-    })
 }

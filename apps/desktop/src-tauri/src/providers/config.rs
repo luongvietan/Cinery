@@ -1318,10 +1318,12 @@ mod tests {
 
     #[test]
     fn runtime_config_validation_rejects_unknown_operations_and_bad_auth() {
-        let mut config = ProviderRuntimeConfig::default();
-        config.auth = AuthConfig {
-            mode: AuthMode::Header,
-            credential_name: None,
+        let mut config = ProviderRuntimeConfig {
+            auth: AuthConfig {
+                mode: AuthMode::Header,
+                credential_name: None,
+            },
+            ..Default::default()
         };
         assert!(config.validate().is_err());
         config.auth = AuthConfig {

@@ -191,7 +191,7 @@ impl WorkflowRepository {
             .map_err(|error| AppError::Database(error.to_string()))?;
 
         let provider_executions =
-            crate::providers::repository::list_attempt_summaries(&conn, run_id)?;
+            crate::providers::repository::list_attempt_summaries(conn, run_id)?;
         Ok(WorkflowRunDetail {
             run,
             steps,

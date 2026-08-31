@@ -185,7 +185,7 @@ fn derive_world_plate_label(name: &str, slug: &str) -> String {
     let base = if trimmed.is_empty() {
         slug.to_uppercase()
     } else {
-        trimmed.to_uppercase().replace(' ', "-").replace('_', "-")
+        trimmed.to_uppercase().replace([' ', '_'], "-")
     };
     // Collapse non-alphanum? Keep simple: ensure label is valid (1..160)
     let candidate = format!("{base}-WORLD");

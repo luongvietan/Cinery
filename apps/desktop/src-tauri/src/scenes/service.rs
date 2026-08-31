@@ -1378,10 +1378,10 @@ impl SceneService {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| AppError::Database(e.to_string()))?;
         let current = scenes_repository::get_scene_character(&tx, assignment_id)?;
-        if current.look_asset_version_id != pinned_id {
-            if current.look_asset_version_id == canonical_id {
-                return Err(AppError::SceneReferenceAlreadyCurrent);
-            }
+        if current.look_asset_version_id != pinned_id
+            && current.look_asset_version_id == canonical_id
+        {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
         }
         let now = Utc::now().to_rfc3339();
         scenes_repository::update_scene_character_look(&tx, assignment_id, &canonical_id, &now)?;
@@ -1520,10 +1520,10 @@ impl SceneService {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| AppError::Database(e.to_string()))?;
         let current = scenes_repository::get_scene_character(&tx, assignment_id)?;
-        if current.sheet_asset_version_id.as_deref() != Some(pinned_id.as_str()) {
-            if current.sheet_asset_version_id.as_deref() == Some(canonical_id.as_str()) {
-                return Err(AppError::SceneReferenceAlreadyCurrent);
-            }
+        if current.sheet_asset_version_id.as_deref() != Some(pinned_id.as_str())
+            && current.sheet_asset_version_id.as_deref() == Some(canonical_id.as_str())
+        {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
         }
         let now = Utc::now().to_rfc3339();
         scenes_repository::update_scene_character_sheet(
@@ -1632,10 +1632,10 @@ impl SceneService {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| AppError::Database(e.to_string()))?;
         let current = scenes_repository::get_scene_prop(&tx, assignment_id)?;
-        if current.prop_asset_version_id != pinned_id {
-            if current.prop_asset_version_id == canonical_id {
-                return Err(AppError::SceneReferenceAlreadyCurrent);
-            }
+        if current.prop_asset_version_id != pinned_id
+            && current.prop_asset_version_id == canonical_id
+        {
+            return Err(AppError::SceneReferenceAlreadyCurrent);
         }
         scenes_repository::update_scene_prop_version(&tx, assignment_id, &canonical_id)?;
         let now = Utc::now().to_rfc3339();
@@ -3266,7 +3266,7 @@ mod tests {
     fn upgrade_fails_when_no_canonical() {
         let f = Fixture::new();
         let world = f.create_world("Station");
-        let v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
+        let _v1 = f.create_world_plate_canonical(&world, [5, 5, 5, 255]);
         let scene = SceneService::create_scene(&f.root, "Scene", "Summary").unwrap();
         SceneService::assign_scene_world(&f.root, &scene.id, &world.id).unwrap();
         // Clear canonical

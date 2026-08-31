@@ -750,7 +750,7 @@ impl RequestCompiler for SceneKeyframeCompiler {
                 role: None,
             })
             .collect::<Vec<_>>();
-        references.extend(canon_refs.drain(..));
+        references.append(&mut canon_refs);
 
         // Validate we never drop references: if any character/prop/world is present in context, we must have added it
         // This is enforced by above logic; never filter.

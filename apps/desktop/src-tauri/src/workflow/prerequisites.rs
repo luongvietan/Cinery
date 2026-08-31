@@ -291,7 +291,7 @@ mod tests {
             &conn,
             "p",
             &serde_json::json!({"characterEntityId":"c"}),
-            &[guard.clone()],
+            std::slice::from_ref(&guard),
         )
         .unwrap();
         assert_eq!(topics, vec!["scar placement"]);

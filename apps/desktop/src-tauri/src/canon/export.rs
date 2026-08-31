@@ -238,7 +238,7 @@ fn render_entities(
     for entity in &matching {
         output.push_str(&format!("### {}\n\n", entity.name));
         if let Some(items) = sections.get(&entity.id) {
-            if let Some(kind) = CanonEntityType::from_str(entity_type) {
+            if let Some(kind) = CanonEntityType::parse(entity_type) {
                 for key in schema::section_keys(kind) {
                     if let Some(section) = items.iter().find(|item| item.key == *key) {
                         output.push_str(&format!(
@@ -252,7 +252,7 @@ fn render_entities(
                     }
                 }
             }
-        } else if let Some(kind) = CanonEntityType::from_str(entity_type) {
+        } else if let Some(kind) = CanonEntityType::parse(entity_type) {
             for key in schema::section_keys(kind) {
                 output.push_str(&format!("#### {} — DRAFT\n\n[TBD]\n\n", title_for(key)));
             }

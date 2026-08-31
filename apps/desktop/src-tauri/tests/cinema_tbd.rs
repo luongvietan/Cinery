@@ -24,14 +24,6 @@ fn test_image(root: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
     path
 }
 
-fn canonical_version(root: &Path, asset_type: &str) -> String {
-    let asset = AssetService::create_asset(root, asset_type, "Plate", None).unwrap();
-    let source = test_image(root, "plate.png", [10, 20, 30, 255]);
-    let version = AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
-    AssetService::promote_asset_version(root, &version.id).unwrap();
-    version.id
-}
-
 /// Full compilable scene setup: locked-behavior character with a canonical
 /// look, one shot. Returns (root, scene_id, character_id).
 fn scene_with_character(keys: &[&str]) -> (TempDir, PathBuf, String, String) {
@@ -77,7 +69,7 @@ fn scene_with_character(keys: &[&str]) -> (TempDir, PathBuf, String, String) {
     (temp, root, scene.id, character.id)
 }
 
-fn project_id(root: &PathBuf) -> String {
+fn project_id(root: &Path) -> String {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     conn.query_row("SELECT id FROM projects LIMIT 1", [], |row| row.get(0))
         .unwrap()

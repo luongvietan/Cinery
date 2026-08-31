@@ -16,7 +16,6 @@ use cinematic_desktop_lib::generation::service::GenerationService;
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::scenes::service::SceneService;
 use cinematic_desktop_lib::workflow::runtime::WorkflowRuntime;
-use rusqlite::OptionalExtension;
 use std::path::Path;
 
 fn open_db(root: &Path) -> rusqlite::Connection {
@@ -41,7 +40,7 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
     CinemaService::set_shot_keyframe(root, &shot.id, Some(&keyframe_version.id)).unwrap();
 
     // --- Compile the scene. ---
-    let compilation = CinemaService::compile_scene(
+    let _compilation = CinemaService::compile_scene(
         root,
         cinematic_desktop_lib::cinema::model::CinemaCompileInput {
             scene_id: scene.id.clone(),

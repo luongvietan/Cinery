@@ -88,7 +88,7 @@ impl CanonService {
             return Err(AppError::CanonEntityNotFound);
         }
         let mut sections = repository::list_sections(&conn, entity_id)?;
-        if let Some(entity_type) = CanonEntityType::from_str(&entity.entity_type) {
+        if let Some(entity_type) = CanonEntityType::parse(&entity.entity_type) {
             let order = schema::section_keys(entity_type);
             sections.sort_by_key(|section| {
                 order
@@ -115,7 +115,7 @@ impl CanonService {
             return Err(AppError::CanonEntityNotFound);
         }
         let entity_type =
-            CanonEntityType::from_str(&entity.entity_type).ok_or(AppError::CanonEntityNotFound)?;
+            CanonEntityType::parse(&entity.entity_type).ok_or(AppError::CanonEntityNotFound)?;
         schema::validate_section_value(entity_type, section_key, &value)?;
         let now = Utc::now().to_rfc3339();
         let existing = repository::get_section_by_key(&tx, entity_id, section_key)?;

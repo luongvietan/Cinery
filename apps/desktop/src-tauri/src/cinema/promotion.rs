@@ -688,7 +688,7 @@ mod tests {
         }
     }
 
-    fn audit_payloads(root: &PathBuf, event_type: &str) -> Vec<serde_json::Value> {
+    fn audit_payloads(root: &Path, event_type: &str) -> Vec<serde_json::Value> {
         let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
         let mut statement = conn
             .prepare(

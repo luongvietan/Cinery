@@ -20,7 +20,7 @@ use cinematic_desktop_lib::workflow::commands::{
 use cinematic_desktop_lib::worlds::service::WorldService;
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use tempfile::{tempdir, TempDir};
+use tempfile::TempDir;
 
 fn write_png(root: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
     let path = root.join(name);

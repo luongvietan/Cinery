@@ -22,7 +22,7 @@ impl DiagnosticsRedactor {
                 Value::Object(redacted)
             }
             Value::Array(arr) => {
-                let redacted: Vec<Value> = arr.iter().map(|v| Self::redact_json(v)).collect();
+                let redacted: Vec<Value> = arr.iter().map(Self::redact_json).collect();
                 Value::Array(redacted)
             }
             Value::String(s) => Value::String(Self::redact_string(s)),

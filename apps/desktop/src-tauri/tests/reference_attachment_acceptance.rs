@@ -2,7 +2,6 @@
 //! resolve into verified, ephemeral media attachments immediately before
 //! provider submission — with no database access inside adapters.
 
-use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::providers::model::{
     ProviderExecutionRequest, ProviderReferenceAttachment,
@@ -173,7 +172,7 @@ fn serialized_request_omits_attachment_bytes() {
     // The byte payload must also be absent from any debug output.
     let debug = format!("{provider_request:?}");
     assert!(
-        !debug.contains("[137, 80, 78, 71]") == false || debug.contains("bytes"),
+        debug.contains("[137, 80, 78, 71]") || debug.contains("bytes"),
         "debug output includes attachments for diagnostics but never in serialized snapshots"
     );
 }

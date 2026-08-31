@@ -37,7 +37,7 @@ fn secret_never_in_project_database() {
     drop(conn);
 
     // Read raw database file and verify secret is not in it
-    let db_content = fs::read(&root.join("project.db")).unwrap();
+    let db_content = fs::read(root.join("project.db")).unwrap();
     let db_string = String::from_utf8_lossy(&db_content);
     assert!(!db_string.contains(TEST_SECRET));
     assert!(!db_string.contains("sk-test"));

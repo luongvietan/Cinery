@@ -25,7 +25,7 @@ pub fn register(provider_id: &str, provider_job_id: &str) -> Arc<AtomicBool> {
 /// actively polling this job.
 pub fn signal(provider_id: &str, provider_job_id: &str) -> bool {
     let key = (provider_id.to_string(), provider_job_id.to_string());
-    let mut tokens = registry().lock().unwrap();
+    let tokens = registry().lock().unwrap();
     match tokens.get(&key) {
         Some(token) => {
             token.store(true, Ordering::SeqCst);

@@ -313,7 +313,7 @@ mod tests {
             TbdDecisionKind::PreserveUnknown,
             None,
         );
-        assert!(validate_tbd_decisions(&[tbd.clone()], &[preserve]).is_ok());
+        assert!(validate_tbd_decisions(std::slice::from_ref(&tbd), &[preserve]).is_ok());
 
         // not_applicable must be rejected with PROTECTED_TBD_MUST_BE_PRESERVED
         let not_applicable = decision(
@@ -346,7 +346,7 @@ mod tests {
             TbdDecisionKind::PreserveUnknown,
             None,
         );
-        assert!(validate_tbd_decisions(&[tbd.clone()], &[preserve]).is_ok());
+        assert!(validate_tbd_decisions(std::slice::from_ref(&tbd), &[preserve]).is_ok());
 
         let not_applicable = decision(
             "tbd-2",
@@ -394,7 +394,7 @@ mod tests {
             TbdDecisionKind::NotApplicable,
             None,
         );
-        let err = validate_tbd_decisions(&[tbd.clone()], &[no_reason]).unwrap_err();
+        let err = validate_tbd_decisions(std::slice::from_ref(&tbd), &[no_reason]).unwrap_err();
         assert_eq!(err.code(), "TBD_NOT_APPLICABLE_REASON_REQUIRED");
 
         let empty_reason = decision(

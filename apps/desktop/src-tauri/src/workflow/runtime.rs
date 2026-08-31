@@ -1441,9 +1441,9 @@ fn execute_scene_keyframe_ready(
                 ),
                 &request,
             )
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
         caps.supports(&provider_request)
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
     }
 
     // Proceed with normal provider execution (reuse generic logic but for shot_keyframe)
@@ -1870,9 +1870,9 @@ fn execute_scene_video_ready(
                 ),
                 &request,
             )
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
         caps.supports(&provider_request)
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
     }
 
     // Proceed with normal provider execution (reuse generic logic but for shot_keyframe)
@@ -3211,7 +3211,7 @@ mod tests {
     fn world_plate_prerequisites_block_without_locked_sections() {
         let (_temp, root, world_id) = world_plate_fixture();
         let conn = open_project(&root).unwrap();
-        let project_id: String = conn
+        let _project_id: String = conn
             .query_row("SELECT id FROM projects", [], |row| row.get(0))
             .unwrap();
         let location_id: String = conn
@@ -3445,7 +3445,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(asset_versions2 >= 1 && asset_versions2 <= 2);
+        assert!((1..=2).contains(&asset_versions2));
         let asset_count2: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM assets WHERE type = 'world_plate' AND project_id = ?1",
@@ -3607,7 +3607,7 @@ mod tests {
 
     #[test]
     fn scene_keyframe_exact_reference_world() {
-        let (_temp, root, world_id, world_asset_id, scene_id, look_v01) = scene_keyframe_fixture();
+        let (_temp, root, _world_id, world_asset_id, scene_id, look_v01) = scene_keyframe_fixture();
         // Capture pinned V01
         let pinned_v01: String = {
             let conn = open_project(&root).unwrap();
@@ -3957,7 +3957,7 @@ mod tests {
             err
         );
         // Ensure no reference dropping: the compiled request should have contained all 4 refs before failure
-        let waiting = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
+        let _waiting = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
         // The run should be failed, no phantom asset versions created beyond the ensure asset slot
         let conn = open_project(&root).unwrap();
         let shot_assets: i64 = conn
@@ -4049,13 +4049,12 @@ mod tests {
         // Check that snapshot contained exact pinned version not canonical alias
         let context: WorkflowContextSnapshot =
             serde_json::from_str(&completed.run.context_snapshot_json.clone().unwrap()).unwrap();
-        assert_eq!(
+        assert!(
             context.resolved_context["world"]["assetVersionId"]
                 .as_str()
                 .unwrap()
                 .len()
-                > 10,
-            true
+                > 10
         );
         assert!(context.resolved_context["world"]["assetVersionId"].is_string());
         // Ensure request references contain exact pinned version

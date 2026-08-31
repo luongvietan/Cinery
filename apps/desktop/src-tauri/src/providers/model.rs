@@ -280,6 +280,7 @@ impl ProviderCapabilities {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct ProviderGenerationParameters {
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -287,19 +288,6 @@ pub struct ProviderGenerationParameters {
     pub duration_seconds: Option<f32>,
     pub fps: Option<u32>,
     pub seed: Option<u64>,
-}
-
-impl Default for ProviderGenerationParameters {
-    fn default() -> Self {
-        Self {
-            width: None,
-            height: None,
-            aspect_ratio: None,
-            duration_seconds: None,
-            fps: None,
-            seed: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

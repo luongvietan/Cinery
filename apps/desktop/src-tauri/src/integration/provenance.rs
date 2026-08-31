@@ -587,43 +587,40 @@ fn traverse_forwards(
     edges_vec: &mut Vec<ProvenanceEdge>,
     queue: &mut VecDeque<(String, String)>,
 ) -> Result<(), AppError> {
-    match kind_str {
-        "scene" => {
-            // Scene -> Shots
-            let mut stmt = conn
-                .prepare("SELECT id FROM scene_shots WHERE scene_id = ?1")
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            for row in stmt
-                .query_map([id], |r| r.get::<_, String>(0))
-                .map_err(|e| AppError::Database(e.to_string()))?
-            {
-                let shot_id = row.map_err(|e| AppError::Database(e.to_string()))?;
-                add_node_if_missing(conn, "shot", &shot_id, nodes_map, queue)?;
-                edges_vec.push(ProvenanceEdge {
-                    from: shot_id,
-                    to: id.to_string(),
-                    relation: "KEYFRAME_FOR".to_string(),
-                });
-            }
-
-            // Scene -> Cinema Compilations
-            let mut stmt = conn
-                .prepare("SELECT id FROM scene_compilations WHERE scene_id = ?1")
-                .map_err(|e| AppError::Database(e.to_string()))?;
-            for row in stmt
-                .query_map([id], |r| r.get::<_, String>(0))
-                .map_err(|e| AppError::Database(e.to_string()))?
-            {
-                let cinema_id = row.map_err(|e| AppError::Database(e.to_string()))?;
-                add_node_if_missing(conn, "cinema_compile", &cinema_id, nodes_map, queue)?;
-                edges_vec.push(ProvenanceEdge {
-                    from: cinema_id,
-                    to: id.to_string(),
-                    relation: "COMPILED_FROM".to_string(),
-                });
-            }
+    if kind_str == "scene" {
+        // Scene -> Shots
+        let mut stmt = conn
+            .prepare("SELECT id FROM scene_shots WHERE scene_id = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for row in stmt
+            .query_map([id], |r| r.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?
+        {
+            let shot_id = row.map_err(|e| AppError::Database(e.to_string()))?;
+            add_node_if_missing(conn, "shot", &shot_id, nodes_map, queue)?;
+            edges_vec.push(ProvenanceEdge {
+                from: shot_id,
+                to: id.to_string(),
+                relation: "KEYFRAME_FOR".to_string(),
+            });
         }
-        _ => {}
+
+        // Scene -> Cinema Compilations
+        let mut stmt = conn
+            .prepare("SELECT id FROM scene_compilations WHERE scene_id = ?1")
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        for row in stmt
+            .query_map([id], |r| r.get::<_, String>(0))
+            .map_err(|e| AppError::Database(e.to_string()))?
+        {
+            let cinema_id = row.map_err(|e| AppError::Database(e.to_string()))?;
+            add_node_if_missing(conn, "cinema_compile", &cinema_id, nodes_map, queue)?;
+            edges_vec.push(ProvenanceEdge {
+                from: cinema_id,
+                to: id.to_string(),
+                relation: "COMPILED_FROM".to_string(),
+            });
+        }
     }
 
     Ok(())

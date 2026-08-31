@@ -34,8 +34,8 @@ pub fn create(
     };
     if let Some(key) = section_key {
         let entity = entity.as_ref().ok_or(AppError::CanonTbdSectionMismatch)?;
-        let entity_type = CanonEntityType::from_str(&entity.entity_type)
-            .ok_or(AppError::CanonTbdSectionMismatch)?;
+        let entity_type =
+            CanonEntityType::parse(&entity.entity_type).ok_or(AppError::CanonTbdSectionMismatch)?;
         if !schema::section_keys(entity_type).contains(&key) {
             return Err(AppError::CanonTbdSectionMismatch);
         }

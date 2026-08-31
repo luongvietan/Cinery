@@ -449,7 +449,9 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
 
-    let error = promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None)
-        .unwrap_err();
-    assert_eq!(error.code, "PROMOTION_CONFLICT");
+    // Same-artifact replay wins even without an expected pin while the Shot
+    // still holds the promoted version (hardened final-review semantics).
+    let replayed = promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None)
+        .unwrap();
+    assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
 }

@@ -3,9 +3,9 @@
 
 use super::adapter::{GenerationProvider, PollingSpec};
 use super::config::{
-    self, AsyncJobConfig, AuthConfig, AuthMode, CanonicalValues, EndpointConfig,
-    ProviderRuntimeConfig, ReferenceInput, RequestType, ResponseMapping, UrlContext,
-    OPERATION_IMAGE_EDIT, OPERATION_IMAGE_GENERATE, OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE,
+    self, AsyncJobConfig, AuthMode, CanonicalValues, EndpointConfig, ProviderRuntimeConfig,
+    ReferenceInput, RequestType, ResponseMapping, UrlContext, OPERATION_IMAGE_EDIT,
+    OPERATION_IMAGE_GENERATE, OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE,
     OPERATION_VIDEO_IMAGE_TO_VIDEO,
 };
 use super::error::{redact_secret, ProviderError, ProviderErrorKind};
@@ -245,7 +245,7 @@ impl DeclarativeProvider {
         path_template: &str,
         body: HttpBody,
         values: &CanonicalValues,
-        references: &[ReferenceInput],
+        _references: &[ReferenceInput],
         job_id: Option<&str>,
         extra_headers: Vec<(String, String)>,
     ) -> Result<HttpRequest, ProviderError> {
@@ -1050,6 +1050,7 @@ impl GenerationProvider for DeclarativeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::config::AuthConfig;
     use crate::providers::http::{HttpResponse, TransportFailure};
     use crate::workflow::execution::{ExecutionMediaType, ExecutionTask};
     use std::sync::Mutex;
@@ -1264,7 +1265,6 @@ mod tests {
 
     use crate::providers::cancellation;
     use crate::providers::model::ProviderReferenceAttachment;
-    use std::time::Duration;
 
     fn cloudflare_config() -> ProviderRuntimeConfig {
         let mut operations = BTreeMap::new();

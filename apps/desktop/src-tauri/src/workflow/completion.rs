@@ -226,9 +226,8 @@ pub fn complete_attempt(
     let requested_output_count = if matches!(
         context.operation_id.as_str(),
         "scene.generate_video" | "shot.image_to_video"
-    ) {
-        1
-    } else if context.operation_id.starts_with("scene.") {
+    ) || context.operation_id.starts_with("scene.")
+    {
         1
     } else {
         4

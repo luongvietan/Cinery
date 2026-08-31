@@ -45,7 +45,7 @@ fn canonical_version(root: &Path, asset_type: &str, label: &str) -> String {
 
 /// Builds a compilable scene on the authoritative aggregate: locked-behavior
 /// + visual-locks character with a canonical look, a World whose plate is the
-/// canonical world plate assigned to the scene, and two 4s shots (8s total).
+///   canonical world plate assigned to the scene, and two 4s shots (8s total).
 pub fn compilable_scene() -> CompiledScene {
     let temp = tempdir().unwrap();
     let root = temp.path().join("red-door");

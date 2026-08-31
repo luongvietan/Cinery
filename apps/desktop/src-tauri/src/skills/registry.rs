@@ -454,7 +454,7 @@ mod tests {
             .find(|skill| skill.id == "character-builder")
             .unwrap()
             .to_owned();
-        let snapshot = serde_json::to_value(&skill).unwrap();
+        let snapshot = serde_json::to_value(skill).unwrap();
         let operations = snapshot["operations"].as_array().unwrap();
 
         assert_eq!(snapshot["id"], "character-builder");
