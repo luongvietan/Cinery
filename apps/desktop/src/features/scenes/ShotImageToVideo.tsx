@@ -7,7 +7,7 @@ import {
   promoteShotVideoCandidate,
   type Shot,
 } from "./api";
-import { advanceWorkflowRun, createWorkflowRun, listSkillOperations } from "../workflows/api";
+import { advanceWorkflowRun, createWorkflowRun, getWorkflowRun, listSkillOperations, listWorkflowRuns } from "../workflows/api";
 import { listGenerationResults } from "../generation/api";
 import { ProviderModelFields, type ProviderModelSelection } from "../providers/ProviderModelFields";
 import { joinProjectRelativePath } from "../assets/paths";
@@ -68,6 +68,41 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
       cancelled = true;
     };
   }, [projectRootPath, shot.id, shot.keyframeAssetVersionId]);
+
+  // Durable status restoration: remount re-attaches to this Shot's latest
+  // persisted I2V run through WorkflowRunView. No local timer — observation
+  // is centralized. A transient read failure keeps the previous detail.
+  useEffect(() => {
+    let cancelled = false;
+    listWorkflowRuns(projectRootPath)
+      .then((records) => {
+        if (cancelled) return null;
+        const latest = records
+          .filter((record) => record.operationId === "shot.image_to_video")
+          .filter((record) => {
+            try {
+              const parsed = JSON.parse(record.inputJson) as Record<string, unknown>;
+              return parsed.shotId === shot.id;
+            } catch {
+              return false;
+            }
+          })
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        return latest ? getWorkflowRun(projectRootPath, latest.id) : null;
+      })
+      .then((detail) => {
+        if (!cancelled && detail) setRun({ detail, artifacts: [] });
+      })
+      .catch(() => {
+        // Keep any previously-restored run; never surface a transient read
+        // failure as a generation error.
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Remount semantics: restore once per shot identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectRootPath, shot.id]);
 
   function resetCreateGuard() {
     creatingRef.current = false;

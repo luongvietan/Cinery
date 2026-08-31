@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { ShotVideoPromotionResult, WorkflowRunDetail } from "@cinematic/domain";
 import { ShotImageToVideo } from "./ShotImageToVideo";
 import type { Shot } from "./api";
-import { advanceWorkflowRun, createWorkflowRun, getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders } from "../workflows/api";
+import { advanceWorkflowRun, createWorkflowRun, getProviderCapabilities, getProviderConfigurationStatus, getWorkflowRun, listCustomProviders, listProviderModels, listProviders, listWorkflowRuns } from "../workflows/api";
 import { getShotImageToVideoSource, promoteShotVideoCandidate } from "./api";
 import { listGenerationResults } from "../generation/api";
 
@@ -72,11 +72,50 @@ function completedRun(): WorkflowRunDetail {
   };
 }
 
+function runningDetail(id: string): WorkflowRunDetail {
+  return {
+    run: {
+      id,
+      projectId: "project-1",
+      skillId: "scene-builder",
+      skillVersion: "1.0.0",
+      operationId: "shot.image_to_video",
+      status: "running",
+      inputJson: JSON.stringify({ sceneId: "scene-1", shotId: "shot-1" }),
+      prerequisiteReportJson: null,
+      contextSnapshotJson: null,
+      currentStepIndex: 4,
+      failureCode: null,
+      failureMessage: null,
+      createdAt: "now",
+      updatedAt: "now",
+      completedAt: null,
+    },
+    steps: [
+      {
+        id: "step-1",
+        workflowRunId: id,
+        stepDefinitionId: "execute",
+        stepIndex: 4,
+        stepType: "execute",
+        status: "running",
+        inputJson: null,
+        outputJson: null,
+        startedAt: "now",
+        completedAt: null,
+      },
+    ],
+    events: [],
+  };
+}
+
 describe("ShotImageToVideo", () => {
   beforeEach(() => {
     vi.mocked(getShotImageToVideoSource).mockResolvedValue(keyframeSource);
     vi.mocked(createWorkflowRun).mockResolvedValue(completedRun());
     vi.mocked(advanceWorkflowRun).mockResolvedValue(completedRun());
+    vi.mocked(listWorkflowRuns).mockResolvedValue([]);
+    vi.mocked(getWorkflowRun).mockResolvedValue(completedRun());
     vi.mocked(listGenerationResults).mockResolvedValue([]);
     vi.mocked(listProviders).mockResolvedValue(["i2v"]);
     vi.mocked(listCustomProviders).mockResolvedValue([]);
@@ -205,5 +244,85 @@ describe("ShotImageToVideo", () => {
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot({ generatedVideoAssetVersionId: "video-version-artifact-1" })} onShotChanged={vi.fn()} />,
     );
     expect(await screen.findByText(/current Shot video/)).toBeInTheDocument();
+  });
+
+  it("restores the latest persisted run for this Shot after remount", async () => {
+    vi.mocked(listWorkflowRuns).mockResolvedValue([
+      {
+        id: "other",
+        projectId: "project-1",
+        skillId: "scene-builder",
+        skillVersion: "1.0.0",
+        operationId: "shot.image_to_video",
+        status: "running",
+        inputJson: JSON.stringify({ shotId: "shot-2" }),
+        prerequisiteReportJson: null,
+        contextSnapshotJson: null,
+        currentStepIndex: 4,
+        failureCode: null,
+        failureMessage: null,
+        createdAt: "t1",
+        updatedAt: "t1",
+        completedAt: null,
+      },
+      {
+        id: "mine",
+        projectId: "project-1",
+        skillId: "scene-builder",
+        skillVersion: "1.0.0",
+        operationId: "shot.image_to_video",
+        status: "running",
+        inputJson: JSON.stringify({ shotId: "shot-1" }),
+        prerequisiteReportJson: null,
+        contextSnapshotJson: null,
+        currentStepIndex: 4,
+        failureCode: null,
+        failureMessage: null,
+        createdAt: "t2",
+        updatedAt: "t2",
+        completedAt: null,
+      },
+    ]);
+    vi.mocked(getWorkflowRun).mockResolvedValue(runningDetail("mine"));
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+    expect(await screen.findByText("Generating…")).toBeInTheDocument();
+    expect(getWorkflowRun).toHaveBeenCalledWith("C:/project", "mine");
+  });
+
+  it("keeps the last valid run across a transient read failure", async () => {
+    vi.mocked(listWorkflowRuns).mockResolvedValue([
+      {
+        id: "mine",
+        projectId: "project-1",
+        skillId: "scene-builder",
+        skillVersion: "1.0.0",
+        operationId: "shot.image_to_video",
+        status: "running",
+        inputJson: JSON.stringify({ shotId: "shot-1" }),
+        prerequisiteReportJson: null,
+        contextSnapshotJson: null,
+        currentStepIndex: 4,
+        failureCode: null,
+        failureMessage: null,
+        createdAt: "t1",
+        updatedAt: "t1",
+        completedAt: null,
+      },
+    ]);
+    vi.mocked(getWorkflowRun).mockResolvedValueOnce(runningDetail("mine")).mockRejectedValueOnce(new Error("temporary"));
+    const { rerender } = render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+    expect(await screen.findByText("Generating…")).toBeInTheDocument();
+    // Remount: restoration re-reads, the read fails, the panel must keep the
+    // previous detail rather than crashing or clearing.
+    rerender(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+    await waitFor(() => expect(getWorkflowRun).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Generating…")).toBeInTheDocument();
+    expect(screen.queryByText("temporary")).not.toBeInTheDocument();
   });
 });
