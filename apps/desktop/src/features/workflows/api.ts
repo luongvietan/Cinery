@@ -1,6 +1,7 @@
 import type {
   ProviderCapabilities,
   ProviderConfigurationStatus,
+  ProviderJobView,
   CustomProviderDefinition,
   ProviderConnectionTestResult,
   ProviderPreset,
@@ -138,4 +139,8 @@ export function cancelWorkflowExecution(projectRootPath: string, workflowRunId: 
 
 export function retryWorkflowExecution(projectRootPath: string, workflowRunId: string, stepId: string): Promise<WorkflowRunDetail> {
   return invokeCommand("retry_workflow_execution", { projectRootPath, workflowRunId, stepId });
+}
+
+export function listProviderJobs(projectRootPath: string): Promise<ProviderJobView[]> {
+  return invokeCommand("list_provider_jobs", { projectRootPath });
 }

@@ -2,8 +2,13 @@ import type { WorkflowRunDetail } from "@cinematic/domain";
 import { useEffect, useRef, useState } from "react";
 import { describeError } from "../../lib/errors";
 import { openPanel } from "../../lib/panelNavigation";
-import { advanceWorkflowRun, approveWorkflowStep, cancelWorkflowExecution, cancelWorkflowRun, rejectWorkflowStep, retryWorkflowExecution } from "./api";
+import { advanceWorkflowRun, approveWorkflowStep, cancelWorkflowExecution, cancelWorkflowRun, getWorkflowRun, rejectWorkflowStep, retryWorkflowExecution } from "./api";
 import { operationLabel, runStatusLabel, stepLabel, stepStatusLabel } from "./labels";
+
+/** How often an in-progress run re-reads authoritative state from SQLite. */
+const RUN_REFRESH_MS = 1500;
+
+const TERMINAL_STATUSES = ["completed", "rejected", "cancelled", "failed"];
 
 export function WorkflowRunView({ projectRootPath, detail, onChange }: { projectRootPath: string; detail: WorkflowRunDetail; onChange: (detail: WorkflowRunDetail) => void }) {
   const [pending, setPending] = useState(false);
@@ -19,9 +24,32 @@ export function WorkflowRunView({ projectRootPath, detail, onChange }: { project
     catch { return { provider: null, model: null }; }
   })();
   const isTestRun = executionConfig.provider === null;
-  const active = !(["completed", "rejected", "cancelled", "failed"] as string[]).includes(detail.run.status);
+  const active = !TERMINAL_STATUSES.includes(detail.run.status);
+  // The most recent provider execution for this run: provider, model, job,
+  // and progress come from durable state, never in-memory runner state.
+  const latestExecution = detail.providerExecutions?.[detail.providerExecutions.length - 1] ?? null;
+  const backgroundRunning = detail.run.status === "running" && latestExecution !== null &&
+    !["succeeded", "failed", "cancelled"].includes(latestExecution.status);
 
   useEffect(() => { headingRef.current?.focus(); }, [detail.run.id, detail.run.status]);
+
+  // P10.1 background refresh: while the run is non-terminal, poll
+  // authoritative state. When the background runner completes the job, the
+  // UI picks it up even though the originating invoke already returned.
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => {
+      getWorkflowRun(projectRootPath, detail.run.id)
+        .then((next) => {
+          setError(null);
+          onChange(next);
+        })
+        .catch(() => {
+          /* transient read failures keep the last known state */
+        });
+    }, RUN_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [projectRootPath, detail.run.id, active, onChange]);
 
   async function run(action: () => Promise<WorkflowRunDetail>) { setPending(true); setError(null); try { onChange(await action()); setConfirming(null); } catch (reason) { setError(describeError(reason)); } finally { setPending(false); } }
 
@@ -62,9 +90,20 @@ export function WorkflowRunView({ projectRootPath, detail, onChange }: { project
         </div>
       ) : null}
       {detail.run.status === "running" && executionStep ? (
-        <div className="workflow-execution">
+        <div className="workflow-execution" aria-live="polite">
           <h3>Generating…</h3>
-          <p>The AI is working. You can cancel — it stops here and nothing is saved.</p>
+          <p>
+            {backgroundRunning && latestExecution
+              ? `${latestExecution.providerId}${latestExecution.modelId ? ` · ${latestExecution.modelId}` : ""} is working in the background. You can leave this page — the generation keeps running, and the result appears here when it's done.`
+              : "The AI is working. You can cancel — it stops here and nothing is saved."}
+          </p>
+          {backgroundRunning && latestExecution ? (
+            <p>
+              <span>Attempt {latestExecution.attemptNumber}</span>
+              {latestExecution.status === "running" ? <span> · running</span> : null}
+              {latestExecution.providerJobId ? <span> · job {latestExecution.providerJobId}</span> : null}
+            </p>
+          ) : null}
           <button className="workflow-danger" type="button" disabled={pending} onClick={() => run(() => cancelWorkflowExecution(projectRootPath, detail.run.id, executionStep.stepDefinitionId))}>Cancel generation</button>
         </div>
       ) : null}

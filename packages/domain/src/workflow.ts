@@ -402,3 +402,23 @@ export interface ProviderExecutionSummary {
   startedAt: string;
   completedAt: string | null;
 }
+
+/** P10.1: a durable background provider job as seen by the Jobs panel. */
+export interface ProviderJobView {
+  id: string;
+  providerId: string;
+  providerJobId: string;
+  status: "submitted" | "polling" | "completed" | "failed" | "cancelled";
+  progressPercent: number | null;
+  submittedAt: string;
+  updatedAt: string;
+  lastPolledAt: string | null;
+  executionId: string;
+  workflowRunId: string;
+  stepDefinitionId: string;
+  attemptNumber: number;
+  modelId: string;
+  attemptStatus: ProviderLifecycle;
+  operationId: string;
+  runStatus: WorkflowRunStatus;
+}

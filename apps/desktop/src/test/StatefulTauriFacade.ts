@@ -150,6 +150,9 @@ export class StatefulTauriFacade {
       throw { code: "ASSET_VERSION_NOT_FOUND", message: "version not found" };
     });
 
+    // --- P10.1 durable background provider jobs (observed, never executed here) ---
+    this.handlers.set("list_provider_jobs", () => []);
+
     // --- generation ---
     this.handlers.set("list_generation_results", (args) => {
       const runId = args.workflowRunId as string | undefined;
