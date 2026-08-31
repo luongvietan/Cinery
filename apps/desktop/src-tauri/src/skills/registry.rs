@@ -192,6 +192,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             | "world.create_plate"
             | "scene.create_keyframe"
             | "scene.generate_video"
+            | "shot.image_to_video"
     ) && step_types
         != [
             "validate_input",
@@ -237,6 +238,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "world_plate_context"
                         | "scene_keyframe_context"
                         | "scene_video_context"
+                        | "shot_image_to_video_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -254,6 +256,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "world_plate_v1"
                         | "scene_keyframe_v1"
                         | "scene_video_v1"
+                        | "shot_image_to_video_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(

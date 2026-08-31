@@ -75,7 +75,7 @@ export interface AssetSnapshotRef {
   assetVersionId: string;
   assetType: string;
   versionNumber: number;
-  status: "canonical";
+  status: "canonical" | "pinned";
   path: string;
 }
 
@@ -122,7 +122,7 @@ const assetSnapshotRefSchema = z
     assetVersionId: z.string().min(1),
     assetType: z.enum(ASSET_TYPES),
     versionNumber: z.number().int().positive(),
-    status: z.literal("canonical"),
+    status: z.enum(["canonical", "pinned"]),
     path: z.string().min(1),
   })
   .strict();

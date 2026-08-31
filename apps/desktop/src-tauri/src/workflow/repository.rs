@@ -24,10 +24,40 @@ impl WorkflowRepository {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| AppError::Database(error.to_string()))?;
+        let run_id = Self::create_run_in_transaction(
+            &transaction,
+            project_id,
+            skill_id,
+            skill_version,
+            operation_id,
+            &input,
+            prerequisite_report,
+            steps,
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(run_id)
+    }
+
+    /// Inserts one workflow run plus its pending steps inside an already-open
+    /// transaction, so callers that must atomically enrich or deduplicate the
+    /// run input (e.g. the shot image-to-video keyframe freeze) can share the
+    /// same immediate transaction as the insert itself.
+    pub(crate) fn create_run_in_transaction(
+        transaction: &Transaction<'_>,
+        project_id: &str,
+        skill_id: &str,
+        skill_version: &str,
+        operation_id: &str,
+        input: &Value,
+        prerequisite_report: &PrerequisiteReport,
+        steps: &[WorkflowStepDefinition],
+    ) -> Result<String, AppError> {
         let run_id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
         let input_json =
-            serde_json::to_string(&input).map_err(|error| AppError::Database(error.to_string()))?;
+            serde_json::to_string(input).map_err(|error| AppError::Database(error.to_string()))?;
         let prerequisite_report_json = serde_json::to_string(prerequisite_report)
             .map_err(|error| AppError::Database(error.to_string()))?;
 
@@ -71,10 +101,7 @@ impl WorkflowRepository {
                 .map_err(|error| AppError::Database(error.to_string()))?;
         }
 
-        append_event_in_transaction(&transaction, &run_id, "run_created", None, None, &now)?;
-        transaction
-            .commit()
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        append_event_in_transaction(transaction, &run_id, "run_created", None, None, &now)?;
         Ok(run_id)
     }
 

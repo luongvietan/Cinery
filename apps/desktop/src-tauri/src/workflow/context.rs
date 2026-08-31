@@ -854,6 +854,100 @@ pub fn resolve_scene_video_context(
     Ok(snapshot)
 }
 
+/// Context for the shot-scoped image-to-video run. Reads ONLY the frozen
+/// `sourceAssetVersionId` written at run creation -- it never re-derives the
+/// shot's current keyframe -- and validates the exact version, its project,
+/// its asset type, and its MIME type. The pinned version stays valid even
+/// after a newer canonical version supersedes it.
+pub fn resolve_shot_image_to_video_context(
+    conn: &Connection,
+    project_id: &str,
+    skill_id: &str,
+    skill_version: &str,
+    operation_id: &str,
+    input: &Value,
+    prerequisite_report: PrerequisiteReport,
+) -> Result<WorkflowContextSnapshot, AppError> {
+    let source_asset_version_id = input
+        .get("sourceAssetVersionId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::WorkflowRunInconsistent(
+                "sourceAssetVersionId was not frozen into the run input".into(),
+            )
+        })?;
+
+    let row: Option<(String, String, i64, String, String)> = conn
+        .query_row(
+            "SELECT av.asset_id, a.type, av.version_number, av.mime_type, av.file_path \
+             FROM asset_versions av JOIN assets a ON a.id = av.asset_id \
+             WHERE av.id = ?1 AND a.project_id = ?2",
+            params![source_asset_version_id, project_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    // Missing version or a version from another project.
+    let (asset_id, asset_type_str, version_number, mime_type, file_path) =
+        row.ok_or(AppError::AssetVersionNotFound)?;
+    let asset_type = match asset_type_str.as_str() {
+        "shot_keyframe" => AssetType::ShotKeyframe,
+        "image" => AssetType::Image,
+        _ => return Err(AppError::SourceMediaTypeUnsupported),
+    };
+    if !matches!(mime_type.as_str(), "image/png" | "image/jpeg" | "image/webp") {
+        return Err(AppError::SourceMediaTypeUnsupported);
+    }
+    if file_path.trim().is_empty() {
+        return Err(AppError::SceneReferenceBroken(format!(
+            "source keyframe version {source_asset_version_id} has no stored file path"
+        )));
+    }
+
+    Ok(WorkflowContextSnapshot {
+        snapshot_version: 1,
+        project: WorkflowProjectRef {
+            project_id: project_id.to_string(),
+        },
+        skill: WorkflowSkillRef {
+            skill_id: skill_id.to_string(),
+            skill_version: skill_version.to_string(),
+            operation_id: operation_id.to_string(),
+        },
+        input: input.clone(),
+        prerequisite_report,
+        canon: Vec::new(),
+        assets: vec![crate::workflow::model::AssetSnapshotRef {
+            asset_id,
+            asset_version_id: source_asset_version_id.to_string(),
+            asset_type,
+            version_number,
+            status: crate::workflow::model::AssetSnapshotStatus::Pinned,
+            path: file_path,
+        }],
+        protected_tbds: Vec::new(),
+        resolved_context: serde_json::json!({
+            "source": {
+                "sourceAssetVersionId": source_asset_version_id,
+            },
+            "provider": {
+                "providerId": input.get("providerId").cloned().unwrap_or(Value::Null),
+                "modelId": input.get("modelId").cloned().unwrap_or(Value::Null),
+            },
+        }),
+        captured_at: Utc::now().to_rfc3339(),
+    })
+}
+
 pub fn resolve_scene_keyframe_context(
     conn: &Connection,
     project_id: &str,

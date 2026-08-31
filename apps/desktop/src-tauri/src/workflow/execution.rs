@@ -30,6 +30,73 @@ mod tests {
         assert!(value.get("provider").is_none());
         assert!(value.get("model").is_none());
     }
+    fn test_video_output() -> crate::skills::model::ExpectedOutputDefinition {
+        crate::skills::model::ExpectedOutputDefinition {
+            asset_type: crate::skills::model::AssetType::Video,
+            media_type: crate::skills::model::OutputMediaType::Video,
+            desired_status: crate::skills::model::DesiredOutputStatus::Candidate,
+            owner_entity_input_ref: Some("sceneId".to_string()),
+        }
+    }
+
+    fn test_provenance() -> ExecutionProvenance {
+        ExecutionProvenance {
+            workflow_run_id: "run-1".to_string(),
+            skill_id: "scene-builder".to_string(),
+            skill_version: "1.0.0".to_string(),
+            operation_id: "shot.image_to_video".to_string(),
+        }
+    }
+
+    fn shot_i2v_request(version_id: &str) -> ExecutionRequest {
+        ExecutionRequest {
+            request_version: 1,
+            task: ExecutionTask::ShotImageToVideo,
+            media_type: ExecutionMediaType::Video,
+            prompt: "move".to_string(),
+            references: vec![ExecutionReference {
+                reference_type: ExecutionReferenceType::AssetVersion,
+                reference: version_id.to_string(),
+                description: "Shot source keyframe".to_string(),
+                role: Some(ReferenceRole::SourceImage),
+            }],
+            constraints: Vec::new(),
+            expected_output: test_video_output(),
+            provenance: test_provenance(),
+            generation_parameters: ExecutionGenerationParameters {
+                duration_seconds: Some(4.0),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn old_execution_request_defaults_generation_parameters() {
+        let request: ExecutionRequest = serde_json::from_value(serde_json::json!({
+            "requestVersion": 1,
+            "task": "scene_video",
+            "mediaType": "video",
+            "prompt": "move",
+            "references": [],
+            "constraints": [],
+            "expectedOutput": test_video_output(),
+            "provenance": test_provenance()
+        }))
+        .unwrap();
+        assert_eq!(
+            request.generation_parameters,
+            ExecutionGenerationParameters::default()
+        );
+    }
+
+    #[test]
+    fn shot_i2v_request_preserves_source_role_and_parameters() {
+        let request = shot_i2v_request("version-exact");
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["task"], "shot_image_to_video");
+        assert_eq!(value["references"][0]["role"], "source_image");
+        assert_eq!(value["generationParameters"]["durationSeconds"], 4.0);
+    }
 
     #[test]
     fn execution_request_rejects_provider_fields_and_invalid_output_values() {
@@ -106,6 +173,7 @@ pub enum ExecutionTask {
     WorldPlate,
     ShotKeyframe,
     SceneVideo,
+    ShotImageToVideo,
     VisualRepair,
 }
 
@@ -136,6 +204,18 @@ pub enum ReferenceRole {
     CharacterLook,
     CharacterSheet,
     Prop,
+    SourceImage,
+}
+
+/// Provider-neutral generation knobs for a request. Optional on the wire so
+/// requests persisted before this field existed keep deserializing.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExecutionGenerationParameters {
+    pub aspect_ratio: Option<String>,
+    pub duration_seconds: Option<f32>,
+    pub fps: Option<u32>,
+    pub seed: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,6 +269,8 @@ pub struct ExecutionRequest {
     pub constraints: Vec<ExecutionConstraint>,
     pub expected_output: ExpectedOutputDefinition,
     pub provenance: ExecutionProvenance,
+    #[serde(default)]
+    pub generation_parameters: ExecutionGenerationParameters,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

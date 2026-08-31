@@ -96,6 +96,9 @@ pub enum CanonSnapshotStatus {
 #[serde(rename_all = "snake_case")]
 pub enum AssetSnapshotStatus {
     Canonical,
+    /// An exact, immutable version pinned at run creation; it stays valid
+    /// even after a newer canonical version supersedes it.
+    Pinned,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

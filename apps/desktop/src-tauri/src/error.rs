@@ -288,6 +288,15 @@ pub enum AppError {
 
     #[error("Provider capability is not satisfied: {0}")]
     ProviderCapabilityUnsatisfied(String),
+
+    #[error("this Shot has no source keyframe")]
+    SourceKeyframeMissing,
+    #[error("the source keyframe is not an image")]
+    SourceMediaTypeUnsupported,
+    #[error("the selected AI service or model does not support image-to-video")]
+    ImageToVideoUnsupported,
+    #[error("the Shot video changed before promotion completed")]
+    PromotionConflict,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

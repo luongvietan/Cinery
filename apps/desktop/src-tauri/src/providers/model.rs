@@ -561,6 +561,7 @@ mod tests {
                 skill_version: "1.0.0".into(),
                 operation_id: "character.create_face_lock".into(),
             },
+            generation_parameters: Default::default(),
         }
     }
 

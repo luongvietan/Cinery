@@ -68,6 +68,7 @@ impl WorkflowRuntime {
             "create_world_plate" => validate_world_plate_input(&input)?,
             "create_scene_keyframe" => validate_scene_keyframe_input(&input)?,
             "generate_scene_video" => validate_scene_keyframe_input(&input)?,
+            "generate_shot_video" => validate_shot_image_to_video_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -113,6 +114,18 @@ impl WorkflowRuntime {
                 &decisions,
             )?;
         }
+        if operation.id == "shot.image_to_video" {
+            return Self::create_shot_i2v_run(
+                &mut conn,
+                &project.id,
+                skill_id,
+                skill_version,
+                operation_id,
+                input,
+                operation,
+                &report,
+            );
+        }
         let run_id = WorkflowRepository::create_run(
             &mut conn,
             &project.id,
@@ -124,6 +137,100 @@ impl WorkflowRuntime {
             &operation.workflow,
         )?;
         WorkflowRepository::get_run(&conn, &project.id, &run_id)
+    }
+
+    /// P10.2: atomically freezes the shot's exact source keyframe. Inside one
+    /// immediate transaction the scoped shot lookup pins
+    /// `sourceAssetVersionId` and the shot duration into the persisted input,
+    /// an active run with the same normalized input is reused, and the run is
+    /// inserted -- so the frozen keyframe can never drift between lookup and
+    /// insert.
+    fn create_shot_i2v_run(
+        conn: &mut Connection,
+        project_id: &str,
+        skill_id: &str,
+        skill_version: &str,
+        operation_id: &str,
+        input: Value,
+        operation: &crate::skills::model::SkillOperation,
+        report: &crate::workflow::model::PrerequisiteReport,
+    ) -> Result<WorkflowRunDetail, AppError> {
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let scene_id = input
+            .get("sceneId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let shot_id = input
+            .get("shotId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let (duration_seconds, keyframe_version_id): (f64, Option<String>) = transaction
+            .query_row(
+                "SELECT s.duration_seconds, s.keyframe_asset_version_id
+                 FROM scene_shots s
+                 JOIN world_scenes ws ON ws.id = s.scene_id
+                 WHERE s.id = ?1 AND s.scene_id = ?2 AND ws.project_id = ?3",
+                params![shot_id, scene_id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or(AppError::ShotNotFound)?;
+        let source_asset_version_id =
+            keyframe_version_id.ok_or(AppError::SourceKeyframeMissing)?;
+
+        let mut frozen = input.clone();
+        if let Some(object) = frozen.as_object_mut() {
+            object.insert(
+                "sourceAssetVersionId".into(),
+                Value::String(source_asset_version_id),
+            );
+            object.insert(
+                "generationParameters".into(),
+                serde_json::json!({ "durationSeconds": duration_seconds }),
+            );
+        }
+        let input_json = serde_json::to_string(&frozen)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        // Deduplicate: reuse an existing active run only when the operation
+        // and the normalized input JSON match exactly.
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM workflow_runs
+                 WHERE project_id = ?1 AND skill_id = ?2 AND skill_version = ?3
+                   AND operation_id = ?4 AND input_json = ?5
+                   AND status IN ('created', 'running', 'waiting_for_approval',
+                                  'ready_for_execution')
+                 ORDER BY created_at DESC LIMIT 1",
+                params![project_id, skill_id, skill_version, operation_id, input_json],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if let Some(run_id) = existing {
+            transaction
+                .rollback()
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return WorkflowRepository::get_run(conn, project_id, &run_id);
+        }
+
+        let run_id = WorkflowRepository::create_run_in_transaction(
+            &transaction,
+            project_id,
+            skill_id,
+            skill_version,
+            operation_id,
+            &frozen,
+            report,
+            &operation.workflow,
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        WorkflowRepository::get_run(conn, project_id, &run_id)
     }
 
     pub fn advance_run(
@@ -377,6 +484,33 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "shot_image_to_video_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail.run.prerequisite_report_json.as_deref().ok_or_else(
+                                        || {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        },
+                                    )?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context =
+                                crate::workflow::context::resolve_shot_image_to_video_context(
+                                    &conn,
+                                    &project.id,
+                                    &detail.run.skill_id,
+                                    &detail.run.skill_version,
+                                    &detail.run.operation_id,
+                                    &input,
+                                    report,
+                                )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
                     };
                     complete_context_step(
@@ -501,6 +635,22 @@ impl WorkflowRuntime {
                                 operation,
                                 &context,
                             )?;
+                            write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "shot_image_to_video_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request =
+                                crate::workflow::compiler::ShotImageToVideoCompiler.compile(
+                                    workflow_run_id,
+                                    skill,
+                                    operation,
+                                    &context,
+                                )?;
                             write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
                             serde_json::to_string(&request)
                                 .map_err(|error| AppError::Database(error.to_string()))?
@@ -2909,6 +3059,29 @@ fn validate_scene_keyframe_input(input: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_shot_image_to_video_input(input: &Value) -> Result<(), AppError> {
+    for key in ["sceneId", "shotId", "providerId", "modelId", "prompt"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    for forbidden in ["apiKey", "bearerToken", "credential", "secret"] {
+        if input.get(forbidden).is_some() {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{forbidden} must not be stored in workflow input"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -3878,5 +4051,269 @@ mod tests {
                     .to_string_lossy()
                     .contains("generations")
         );
+    }
+
+    // -- P10.2: shot-scoped image-to-video ------------------------------
+
+    struct ShotI2vFixture {
+        _temp: tempfile::TempDir,
+        root: std::path::PathBuf,
+        scene_id: String,
+        shot_id: String,
+        first_keyframe_version_id: String,
+        second_keyframe_version_id: String,
+    }
+
+    fn shot_i2v_fixture() -> ShotI2vFixture {
+        use crate::cinema::service::CinemaService;
+        use crate::scenes::service::SceneService;
+
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("shot-i2v");
+        ProjectService::create(&root, "Shot I2V").unwrap();
+        let scene =
+            SceneService::create_scene(&root, "Test Scene", "A test summary for i2v").unwrap();
+        let shot = CinemaService::create_shot(&root, &scene.id, None, 4.0, "Push in", None, None)
+            .unwrap();
+
+        let tmp = root.join("tmp_keyframes");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let keyframe_asset = crate::assets::service::AssetService::create_asset(
+            &root,
+            "shot_keyframe",
+            "KEYFRAME-SHOT",
+            None,
+        )
+        .unwrap();
+        let first = {
+            let p = tmp.join("kf_v01.png");
+            let img: image::RgbaImage =
+                image::ImageBuffer::from_pixel(32, 32, image::Rgba([10, 10, 10, 255]));
+            img.save(&p).unwrap();
+            crate::assets::service::AssetService::import_asset_version(
+                &root,
+                &keyframe_asset.id,
+                &p,
+                None,
+            )
+            .unwrap()
+        };
+        crate::assets::service::AssetService::promote_asset_version(&root, &first.id).unwrap();
+        CinemaService::set_shot_keyframe(&root, &shot.id, Some(&first.id)).unwrap();
+        let second = {
+            let p = tmp.join("kf_v02.png");
+            let img: image::RgbaImage =
+                image::ImageBuffer::from_pixel(32, 32, image::Rgba([20, 20, 20, 255]));
+            img.save(&p).unwrap();
+            crate::assets::service::AssetService::import_asset_version(
+                &root,
+                &keyframe_asset.id,
+                &p,
+                Some(first.id.clone()),
+            )
+            .unwrap()
+        };
+        crate::assets::service::AssetService::promote_asset_version(&root, &second.id).unwrap();
+
+        ShotI2vFixture {
+            _temp: temp,
+            root,
+            scene_id: scene.id,
+            shot_id: shot.id,
+            first_keyframe_version_id: first.id,
+            second_keyframe_version_id: second.id,
+        }
+    }
+
+    fn shot_i2v_input(fixture: &ShotI2vFixture, prompt: &str) -> Value {
+        serde_json::json!({
+            "sceneId": fixture.scene_id,
+            "shotId": fixture.shot_id,
+            "providerId": "fake_async_video",
+            "modelId": "fake-video-v1",
+            "prompt": prompt
+        })
+    }
+
+    fn compiled_request(
+        detail: &WorkflowRunDetail,
+    ) -> crate::workflow::execution::ExecutionRequest {
+        let request_json = detail
+            .steps
+            .iter()
+            .find(|step| step.step_type == "compile_request")
+            .and_then(|step| step.output_json.as_deref())
+            .expect("compile request step output");
+        serde_json::from_str(request_json).unwrap()
+    }
+
+    #[test]
+    fn shot_i2v_run_freezes_keyframe_before_context_resolution() {
+        let fixture = shot_i2v_fixture();
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        let frozen: serde_json::Value = serde_json::from_str(&run.run.input_json).unwrap();
+        assert_eq!(
+            frozen["sourceAssetVersionId"],
+            fixture.first_keyframe_version_id
+        );
+        assert_eq!(frozen["generationParameters"]["durationSeconds"], 4.0);
+
+        crate::cinema::service::CinemaService::set_shot_keyframe(
+            &fixture.root,
+            &fixture.shot_id,
+            Some(&fixture.second_keyframe_version_id),
+        )
+        .unwrap();
+        let waiting = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap();
+        assert_eq!(waiting.run.status, "waiting_for_approval");
+        let request = compiled_request(&waiting);
+        assert_eq!(
+            request.references[0].reference,
+            fixture.first_keyframe_version_id
+        );
+        assert_eq!(
+            request.references[0].role,
+            Some(crate::workflow::execution::ReferenceRole::SourceImage)
+        );
+        assert_eq!(
+            request.task,
+            crate::workflow::execution::ExecutionTask::ShotImageToVideo
+        );
+        assert_eq!(
+            request.media_type,
+            crate::workflow::execution::ExecutionMediaType::Video
+        );
+    }
+
+    #[test]
+    fn shot_i2v_rejects_unknown_shot_and_missing_keyframe() {
+        let fixture = shot_i2v_fixture();
+
+        let error = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            serde_json::json!({
+                "sceneId": fixture.scene_id,
+                "shotId": "missing-shot",
+                "providerId": "fake_async_video",
+                "modelId": "fake-video-v1",
+                "prompt": "A measured push-in"
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::ShotNotFound));
+
+        let bare = crate::cinema::service::CinemaService::create_shot(
+            &fixture.root,
+            &fixture.scene_id,
+            None,
+            4.0,
+            "Bare shot",
+            None,
+            None,
+        )
+        .unwrap();
+        let error = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            serde_json::json!({
+                "sceneId": fixture.scene_id,
+                "shotId": bare.id,
+                "providerId": "fake_async_video",
+                "modelId": "fake-video-v1",
+                "prompt": "A measured push-in"
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::SourceKeyframeMissing));
+    }
+
+    #[test]
+    fn shot_i2v_rejects_missing_version_and_non_image_mime() {
+        let fixture = shot_i2v_fixture();
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+
+        // Missing version: the frozen run input no longer resolves to a row.
+        {
+            let conn = open_project(&fixture.root).unwrap();
+            conn.execute(
+                "UPDATE workflow_runs SET input_json = json_set(input_json, '$.sourceAssetVersionId', 'ghost-version') WHERE id = ?1",
+                [&run.run.id],
+            )
+            .unwrap();
+        }
+        let error = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap_err();
+        assert!(matches!(error, AppError::AssetVersionNotFound));
+
+        // Non-image MIME on the frozen version.
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        {
+            let conn = open_project(&fixture.root).unwrap();
+            conn.execute("PRAGMA ignore_check_constraints = ON", []).unwrap();
+            conn.execute(
+                "UPDATE asset_versions SET mime_type = 'video/mp4' WHERE id = ?1",
+                [&fixture.first_keyframe_version_id],
+            )
+            .unwrap();
+        }
+        let error = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap_err();
+        assert!(matches!(error, AppError::SourceMediaTypeUnsupported));
+    }
+
+    #[test]
+    fn shot_i2v_reuses_active_run_for_identical_input() {
+        let fixture = shot_i2v_fixture();
+        let first = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        let second = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        assert_eq!(first.run.id, second.run.id);
+
+        let third = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A different push-in"),
+        )
+        .unwrap();
+        assert_ne!(first.run.id, third.run.id);
     }
 }
