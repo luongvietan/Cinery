@@ -251,16 +251,25 @@ mod tests {
     use crate::db::migrations::run_migrations;
     use rusqlite::Connection;
 
+    /// Where a TBD hangs: optionally scoped to an entity section.
+    struct TbdLocator<'a> {
+        entity_id: Option<&'a str>,
+        section_key: Option<&'a str>,
+    }
+
     fn test_tbd(
         id: &str,
         project_id: &str,
-        entity_id: Option<&str>,
-        section_key: Option<&str>,
+        locator: TbdLocator<'_>,
         topic: &str,
         note: Option<&str>,
         protected: bool,
         status: &str,
     ) -> CanonTbdRecord {
+        let TbdLocator {
+            entity_id,
+            section_key,
+        } = locator;
         CanonTbdRecord {
             id: id.to_string(),
             project_id: project_id.to_string(),
@@ -298,8 +307,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-1",
             "proj-1",
-            Some("loc-1"),
-            None,
+            TbdLocator {
+                entity_id: Some("loc-1"),
+                section_key: None,
+            },
             "What is behind the red door?",
             Some("Do not reveal"),
             true,
@@ -332,8 +343,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-2",
             "proj-1",
-            Some("loc-1"),
-            Some("description"),
+            TbdLocator {
+                entity_id: Some("loc-1"),
+                section_key: Some("description"),
+            },
             "Unknown geography detail",
             None,
             true,
@@ -364,8 +377,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-3",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Global unknown",
             None,
             true,
@@ -380,8 +395,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-4",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Global unknown",
             None,
             true,
@@ -413,8 +430,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-5",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Global unknown",
             Some("note"),
             true,
@@ -435,8 +454,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-6",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Global unknown",
             None,
             true,
@@ -457,8 +478,10 @@ mod tests {
         let open_tbd = test_tbd(
             "tbd-7",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Open unknown",
             None,
             true,
@@ -467,8 +490,10 @@ mod tests {
         let resolved_tbd = test_tbd(
             "tbd-8",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Resolved unknown",
             None,
             true,
@@ -494,8 +519,10 @@ mod tests {
         let unprotected = test_tbd(
             "tbd-9",
             "proj-1",
-            Some("loc-1"),
-            None,
+            TbdLocator {
+                entity_id: Some("loc-1"),
+                section_key: None,
+            },
             "Unprotected detail",
             None,
             false,
@@ -541,7 +568,16 @@ mod tests {
     #[test]
     fn missing_decision_error_code_is_tbd_decision_required() {
         let tbd = test_tbd(
-            "tbd-11", "proj-1", None, None, "Missing", None, true, "open",
+            "tbd-11",
+            "proj-1",
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
+            "Missing",
+            None,
+            true,
+            "open",
         );
         let err = validate_tbd_decisions(&[tbd], &[]).unwrap_err();
         assert_eq!(err.code(), "TBD_DECISION_REQUIRED");
@@ -553,8 +589,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-12",
             "proj-1",
-            Some("loc-1"),
-            None,
+            TbdLocator {
+                entity_id: Some("loc-1"),
+                section_key: None,
+            },
             "Location secret",
             None,
             true,
@@ -576,8 +614,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-13",
             "proj-1",
-            None,
-            None,
+            TbdLocator {
+                entity_id: None,
+                section_key: None,
+            },
             "Project unknown",
             None,
             true,
@@ -599,8 +639,10 @@ mod tests {
         let tbd = test_tbd(
             "tbd-14",
             "proj-1",
-            Some("loc-1"),
-            None,
+            TbdLocator {
+                entity_id: Some("loc-1"),
+                section_key: None,
+            },
             "Exact topic",
             Some("Exact note for preservation"),
             true,

@@ -353,13 +353,19 @@ pub fn retry_workflow_execution(
     let retry_number = super::repository::next_attempt_number(&tx, &workflow_run_id, &step_id)?;
     super::repository::create_attempt(
         &tx,
-        &workflow_run_id,
-        &step_id,
-        retry_number,
-        &previous.compiled_request_id,
-        &previous.provider_id,
-        &previous.model_id,
-        &ProviderService::idempotency_key(&workflow_run_id, &step_id, retry_number),
+        super::repository::NewExecutionAttempt {
+            workflow_run_id: &workflow_run_id,
+            step_definition_id: &step_id,
+            attempt_number: retry_number,
+            compiled_request_id: &previous.compiled_request_id,
+            provider_id: &previous.provider_id,
+            model_id: &previous.model_id,
+            idempotency_key: &ProviderService::idempotency_key(
+                &workflow_run_id,
+                &step_id,
+                retry_number,
+            ),
+        },
     )?;
     tx.execute(
         "UPDATE workflow_runs SET status = 'ready_for_execution', failure_code = NULL,

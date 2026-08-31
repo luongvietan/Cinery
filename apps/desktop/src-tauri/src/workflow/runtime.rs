@@ -3,9 +3,9 @@ use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::providers::repository::{
     append_audit_event, create_attempt, latest_attempt, next_attempt_number,
-    persist_job_with_operation, update_artifact_ids, update_attempt_status,
+    persist_job_with_operation, update_artifact_ids, update_attempt_status, NewExecutionAttempt,
 };
-use crate::providers::service::ProviderService;
+use crate::providers::service::{ProviderService, ProviderSubmitRequest};
 use crate::skills::registry::SkillRegistry;
 use crate::workflow::artifacts::{workflow_artifact_dir, write_run_artifacts};
 use crate::workflow::compiler::{
@@ -21,7 +21,9 @@ use crate::workflow::model::{
     WorkflowCharacterOption, WorkflowContextSnapshot, WorkflowRunDetail, WorkflowRunRecord,
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
-use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
+use crate::workflow::repository::{
+    append_event_in_transaction, NewWorkflowRun, RunIdentity, WorkflowRepository,
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
@@ -116,10 +118,12 @@ impl WorkflowRuntime {
         if operation.id == "shot.image_to_video" {
             return Self::create_shot_i2v_run(
                 &mut conn,
-                &project.id,
-                skill_id,
-                skill_version,
-                operation_id,
+                RunIdentity {
+                    project_id: &project.id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
                 input,
                 operation,
                 &report,
@@ -127,13 +131,17 @@ impl WorkflowRuntime {
         }
         let run_id = WorkflowRepository::create_run(
             &mut conn,
-            &project.id,
-            skill_id,
-            skill_version,
-            operation_id,
-            input.clone(),
-            &report,
-            &operation.workflow,
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: &project.id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input: &input,
+                prerequisite_report: &report,
+                steps: &operation.workflow,
+            },
         )?;
         WorkflowRepository::get_run(&conn, &project.id, &run_id)
     }
@@ -146,14 +154,17 @@ impl WorkflowRuntime {
     /// insert.
     fn create_shot_i2v_run(
         conn: &mut Connection,
-        project_id: &str,
-        skill_id: &str,
-        skill_version: &str,
-        operation_id: &str,
+        identity: RunIdentity<'_>,
         input: Value,
         operation: &crate::skills::model::SkillOperation,
         report: &crate::workflow::model::PrerequisiteReport,
     ) -> Result<WorkflowRunDetail, AppError> {
+        let RunIdentity {
+            project_id,
+            skill_id,
+            skill_version,
+            operation_id,
+        } = identity;
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| AppError::Database(error.to_string()))?;
@@ -227,13 +238,17 @@ impl WorkflowRuntime {
 
         let run_id = WorkflowRepository::create_run_in_transaction(
             &transaction,
-            project_id,
-            skill_id,
-            skill_version,
-            operation_id,
-            &frozen,
-            report,
-            &operation.workflow,
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input: &frozen,
+                prerequisite_report: report,
+                steps: &operation.workflow,
+            },
         )?;
         transaction
             .commit()
@@ -1070,13 +1085,15 @@ fn execute_visual_repair_ready(
         ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
     let attempt = create_attempt(
         conn,
-        &detail.run.id,
-        execute_step_id,
-        attempt_number,
-        &compiled_hash,
-        provider_id,
-        model_id,
-        &idempotency_key,
+        NewExecutionAttempt {
+            workflow_run_id: &detail.run.id,
+            step_definition_id: execute_step_id,
+            attempt_number,
+            compiled_request_id: &compiled_hash,
+            provider_id,
+            model_id,
+            idempotency_key: &idempotency_key,
+        },
     )?;
     append_audit_event(
         conn,
@@ -1093,15 +1110,17 @@ fn execute_visual_repair_ready(
     let reference_attachments =
         crate::workflow::execution::resolve_reference_attachments(project_root, &request)?;
     let submission = match ProviderService::submit_provider_request(
-        &request,
+        ProviderSubmitRequest {
+            request: &request,
+            project_root: Some(project_root),
+            step_id: execute_step_id,
+            compiled_request_id: &compiled_hash,
+            provider_id,
+            model_id,
+            attempt_number,
+        },
         reference_attachments,
-        Some(project_root),
         None,
-        execute_step_id,
-        &compiled_hash,
-        provider_id,
-        model_id,
-        attempt_number,
     ) {
         Ok(submission) => submission,
         Err(error) => {
@@ -1488,13 +1507,15 @@ fn execute_scene_keyframe_ready(
             ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
             conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
+            NewExecutionAttempt {
+                workflow_run_id: &detail.run.id,
+                step_definition_id: execute_step_id,
+                attempt_number,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                idempotency_key: &idempotency_key,
+            },
         )?;
         append_audit_event(
             conn,
@@ -1505,15 +1526,15 @@ fn execute_scene_keyframe_ready(
                 &serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number}),
             ),
         )?;
-        let submission = match ProviderService::submit_compiled_request(
-            &request,
-            Some(project_root),
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
+        let submission = match ProviderService::submit_compiled_request(ProviderSubmitRequest {
+            request: &request,
+            project_root: Some(project_root),
+            step_id: execute_step_id,
+            compiled_request_id: &compiled_hash,
+            provider_id: &provider_id,
+            model_id: &model_id,
             attempt_number,
-        ) {
+        }) {
             Ok(submission) => submission,
             Err(error) => {
                 let error_json = serde_json::json!({"message": error.to_string()}).to_string();
@@ -1933,13 +1954,15 @@ fn execute_scene_video_ready(
                 );
                 create_attempt(
                     conn,
-                    &detail.run.id,
-                    execute_step_id,
-                    attempt_number,
-                    &compiled_hash,
-                    &provider_id,
-                    &model_id,
-                    &idempotency_key,
+                    NewExecutionAttempt {
+                        workflow_run_id: &detail.run.id,
+                        step_definition_id: execute_step_id,
+                        attempt_number,
+                        compiled_request_id: &compiled_hash,
+                        provider_id: &provider_id,
+                        model_id: &model_id,
+                        idempotency_key: &idempotency_key,
+                    },
                 )?
             }
         };
@@ -1971,15 +1994,17 @@ fn execute_scene_video_ready(
                 }
             };
         let submission = match ProviderService::submit_provider_request(
-            &request,
+            ProviderSubmitRequest {
+                request: &request,
+                project_root: Some(project_root),
+                step_id: execute_step_id,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                attempt_number,
+            },
             reference_attachments,
-            Some(project_root),
             None,
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            attempt_number,
         ) {
             Ok(submission) => submission,
             Err(error) => {
@@ -2371,13 +2396,15 @@ fn execute_ready(
             ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
             conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
+            NewExecutionAttempt {
+                workflow_run_id: &detail.run.id,
+                step_definition_id: execute_step_id,
+                attempt_number,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                idempotency_key: &idempotency_key,
+            },
         )?;
         append_audit_event(
             conn,
@@ -2406,15 +2433,17 @@ fn execute_ready(
                 }
             };
         let submission = match ProviderService::submit_provider_request(
-            &request,
+            ProviderSubmitRequest {
+                request: &request,
+                project_root: Some(project_root),
+                step_id: execute_step_id,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                attempt_number,
+            },
             reference_attachments,
-            Some(project_root),
             None,
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            attempt_number,
         ) {
             Ok(submission) => submission,
             Err(error) => {

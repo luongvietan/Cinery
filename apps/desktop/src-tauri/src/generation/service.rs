@@ -147,17 +147,17 @@ impl GenerationService {
                         "provider returned a payload that is not a valid MP4 video".into(),
                     ));
                 }
-                super::storage::materialize_media(
+                super::storage::materialize_media(super::storage::MaterializeMediaRequest {
                     project_root,
-                    &input.workflow_run_id,
-                    &input.provider_attempt_id,
+                    workflow_run_id: &input.workflow_run_id,
+                    provider_attempt_id: &input.provider_attempt_id,
                     ordinal,
-                    &bytes,
-                    &output.mime_type,
-                    "mp4",
-                    None,
-                    None,
-                )
+                    bytes: &bytes,
+                    mime_type: &output.mime_type,
+                    extension: "mp4",
+                    width: None,
+                    height: None,
+                })
             } else {
                 super::storage::materialize_image(
                     project_root,

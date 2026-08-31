@@ -76,6 +76,19 @@ pub struct ProviderSubmissionHandle {
     pub submission: ProviderSubmission,
 }
 
+/// Everything the provider submission path needs to route one compiled
+/// execution request to its adapter. Field order mirrors the previous
+/// positional arguments of `submit_provider_request`.
+pub struct ProviderSubmitRequest<'a> {
+    pub request: &'a ExecutionRequest,
+    pub project_root: Option<&'a Path>,
+    pub step_id: &'a str,
+    pub compiled_request_id: &'a str,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub attempt_number: i64,
+}
+
 pub struct ProviderService;
 
 impl ProviderService {
@@ -798,23 +811,9 @@ impl ProviderService {
     }
 
     pub fn execute_compiled_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
+        submit: ProviderSubmitRequest<'_>,
     ) -> Result<ProviderExecutionOutcome, AppError> {
-        let handle = Self::submit_compiled_request(
-            request,
-            project_root,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )?;
+        let handle = Self::submit_compiled_request(submit)?;
         let (status, result) = Self::finish_submission(&handle)?;
         Ok(ProviderExecutionOutcome {
             provider_id: handle.provider_id,
@@ -826,65 +825,37 @@ impl ProviderService {
     }
 
     pub fn submit_compiled_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
+        submit: ProviderSubmitRequest<'_>,
     ) -> Result<ProviderSubmissionHandle, AppError> {
-        Self::submit_prepared_request(
-            request,
-            project_root,
-            None,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )
+        Self::submit_prepared_request(submit, None)
     }
 
     /// Submission with attachments already resolved by the caller (the
     /// workflow runtime owns project-root access). The secret is resolved
     /// from the vault when the caller supplies a credential store.
     pub fn submit_prepared_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
+        submit: ProviderSubmitRequest<'_>,
         credentials: Option<&dyn CredentialStore>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
-        Self::submit_provider_request(
-            request,
-            Vec::new(),
-            project_root,
-            credentials,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )
+        Self::submit_provider_request(submit, Vec::new(), credentials)
     }
 
     /// Full submission path: caller-supplied verified attachments plus an
     /// optional credential store.
     pub fn submit_provider_request(
-        request: &ExecutionRequest,
+        submit: ProviderSubmitRequest<'_>,
         reference_attachments: Vec<ProviderReferenceAttachment>,
-        project_root: Option<&Path>,
         credentials: Option<&dyn CredentialStore>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
+        let ProviderSubmitRequest {
+            request,
+            project_root,
+            step_id,
+            compiled_request_id,
+            provider_id,
+            model_id,
+            attempt_number,
+        } = submit;
         if request.task == crate::workflow::execution::ExecutionTask::ShotImageToVideo {
             let root = project_root.ok_or(AppError::ImageToVideoUnsupported)?;
             Self::validate_image_to_video_selection(root, provider_id, model_id)?;
@@ -1318,10 +1289,13 @@ mod connection_tests {
     use std::net::TcpListener;
     use std::sync::Mutex;
 
+    /// Recorded request: (url, body, headers).
+    type RecordedRequest = (String, String, Vec<(String, String)>);
+
     /// Deterministic executor: records requests, returns a scripted status.
     #[derive(Default, Clone)]
     struct RecordingExecutor {
-        requests: std::sync::Arc<Mutex<Vec<(String, String, Vec<(String, String)>)>>>,
+        requests: std::sync::Arc<Mutex<Vec<RecordedRequest>>>,
         status: u16,
         body: String,
     }

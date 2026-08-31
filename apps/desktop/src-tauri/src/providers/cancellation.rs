@@ -6,13 +6,19 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-fn registry() -> &'static Mutex<HashMap<(String, String), Arc<AtomicBool>>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<(String, String), Arc<AtomicBool>>>> = OnceLock::new();
+/// Cancellation token keyed by `(provider_id, provider_job_id)`.
+pub type CancellationToken = Arc<AtomicBool>;
+
+/// Process-wide registry mapping a job key to its cancellation token.
+pub type TokenRegistry = HashMap<(String, String), CancellationToken>;
+
+fn registry() -> &'static Mutex<TokenRegistry> {
+    static REGISTRY: OnceLock<Mutex<TokenRegistry>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Registers (or returns the existing) cancellation token for a job.
-pub fn register(provider_id: &str, provider_job_id: &str) -> Arc<AtomicBool> {
+pub fn register(provider_id: &str, provider_job_id: &str) -> CancellationToken {
     registry()
         .lock()
         .unwrap()

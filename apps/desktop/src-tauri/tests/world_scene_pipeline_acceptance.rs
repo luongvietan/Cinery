@@ -950,8 +950,10 @@ fn world_scene_pipeline_red_door_acceptance() {
     );
 
     // 34. Append-only reference event records V01 -> V02
+    /// Reference event row: (id, kind, action, from_version, to_version).
+    type ReferenceEventRow = (String, String, String, Option<String>, Option<String>);
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
-    let events_after: Vec<(String, String, String, Option<String>, Option<String>)> = {
+    let events_after: Vec<ReferenceEventRow> = {
         let mut stmt = conn
             .prepare("SELECT id, reference_kind, action, from_version_id, to_version_id FROM scene_reference_events WHERE scene_id = ?1 ORDER BY created_at ASC, id ASC")
             .unwrap();

@@ -10,30 +10,31 @@ use ulid::Ulid;
 
 pub struct WorkflowRepository;
 
+/// Identity of the run being created: which project owns it and which
+/// skill operation it executes. Grouped so the repository APIs stay
+/// readable as the persisted shape grows.
+pub struct RunIdentity<'a> {
+    pub project_id: &'a str,
+    pub skill_id: &'a str,
+    pub skill_version: &'a str,
+    pub operation_id: &'a str,
+}
+
+/// Everything needed to insert one workflow run plus its pending steps.
+/// Field order mirrors the previous positional arguments of `create_run`.
+pub struct NewWorkflowRun<'a> {
+    pub identity: RunIdentity<'a>,
+    pub input: &'a Value,
+    pub prerequisite_report: &'a PrerequisiteReport,
+    pub steps: &'a [WorkflowStepDefinition],
+}
+
 impl WorkflowRepository {
-    pub fn create_run(
-        conn: &mut Connection,
-        project_id: &str,
-        skill_id: &str,
-        skill_version: &str,
-        operation_id: &str,
-        input: Value,
-        prerequisite_report: &PrerequisiteReport,
-        steps: &[WorkflowStepDefinition],
-    ) -> Result<String, AppError> {
+    pub fn create_run(conn: &mut Connection, run: NewWorkflowRun<'_>) -> Result<String, AppError> {
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| AppError::Database(error.to_string()))?;
-        let run_id = Self::create_run_in_transaction(
-            &transaction,
-            project_id,
-            skill_id,
-            skill_version,
-            operation_id,
-            &input,
-            prerequisite_report,
-            steps,
-        )?;
+        let run_id = Self::create_run_in_transaction(&transaction, run)?;
         transaction
             .commit()
             .map_err(|error| AppError::Database(error.to_string()))?;
@@ -46,14 +47,20 @@ impl WorkflowRepository {
     /// same immediate transaction as the insert itself.
     pub(crate) fn create_run_in_transaction(
         transaction: &Transaction<'_>,
-        project_id: &str,
-        skill_id: &str,
-        skill_version: &str,
-        operation_id: &str,
-        input: &Value,
-        prerequisite_report: &PrerequisiteReport,
-        steps: &[WorkflowStepDefinition],
+        run: NewWorkflowRun<'_>,
     ) -> Result<String, AppError> {
+        let NewWorkflowRun {
+            identity:
+                RunIdentity {
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+            input,
+            prerequisite_report,
+            steps,
+        } = run;
         let run_id = Ulid::new().to_string();
         let now = Utc::now().to_rfc3339();
         let input_json =
@@ -356,13 +363,17 @@ mod tests {
         let mut conn = connection_with_projects();
         let run_id = WorkflowRepository::create_run(
             &mut conn,
-            "project-1",
-            "character-builder",
-            "1.0.0",
-            "character.create_face_lock",
-            serde_json::json!({"characterEntityId": "character-1"}),
-            &report(),
-            &steps(),
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: "project-1",
+                    skill_id: "character-builder",
+                    skill_version: "1.0.0",
+                    operation_id: "character.create_face_lock",
+                },
+                input: &serde_json::json!({"characterEntityId": "character-1"}),
+                prerequisite_report: &report(),
+                steps: &steps(),
+            },
         )
         .unwrap();
 
@@ -380,13 +391,17 @@ mod tests {
         let mut conn = connection_with_projects();
         let run_id = WorkflowRepository::create_run(
             &mut conn,
-            "project-1",
-            "character-builder",
-            "1.0.0",
-            "character.create_face_lock",
-            serde_json::json!({}),
-            &report(),
-            &steps(),
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: "project-1",
+                    skill_id: "character-builder",
+                    skill_version: "1.0.0",
+                    operation_id: "character.create_face_lock",
+                },
+                input: &serde_json::json!({}),
+                prerequisite_report: &report(),
+                steps: &steps(),
+            },
         )
         .unwrap();
 
@@ -417,13 +432,17 @@ mod tests {
         let mut conn = connection_with_projects();
         let run_id = WorkflowRepository::create_run(
             &mut conn,
-            "project-1",
-            "character-builder",
-            "1.0.0",
-            "character.create_face_lock",
-            serde_json::json!({}),
-            &report(),
-            &steps(),
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: "project-1",
+                    skill_id: "character-builder",
+                    skill_version: "1.0.0",
+                    operation_id: "character.create_face_lock",
+                },
+                input: &serde_json::json!({}),
+                prerequisite_report: &report(),
+                steps: &steps(),
+            },
         )
         .unwrap();
 
@@ -449,24 +468,32 @@ mod tests {
         let mut conn = connection_with_projects();
         WorkflowRepository::create_run(
             &mut conn,
-            "project-1",
-            "character-builder",
-            "1.0.0",
-            "character.create_face_lock",
-            serde_json::json!({}),
-            &report(),
-            &steps(),
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: "project-1",
+                    skill_id: "character-builder",
+                    skill_version: "1.0.0",
+                    operation_id: "character.create_face_lock",
+                },
+                input: &serde_json::json!({}),
+                prerequisite_report: &report(),
+                steps: &steps(),
+            },
         )
         .unwrap();
         WorkflowRepository::create_run(
             &mut conn,
-            "project-2",
-            "character-builder",
-            "1.0.0",
-            "character.create_face_lock",
-            serde_json::json!({}),
-            &report(),
-            &steps(),
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: "project-2",
+                    skill_id: "character-builder",
+                    skill_version: "1.0.0",
+                    operation_id: "character.create_face_lock",
+                },
+                input: &serde_json::json!({}),
+                prerequisite_report: &report(),
+                steps: &steps(),
+            },
         )
         .unwrap();
 
