@@ -84,6 +84,52 @@ fn approved_mock_execution_persists_attempt_job_and_candidate_artifact() {
     assert_eq!(audit_event_count, 8);
 }
 
+/// P10.1 regression: a synchronous provider completes inline, so its
+/// durable provider_jobs row must be terminal too — never a lingering
+/// 'submitted' ghost row that pollutes the Jobs panel or the runner's
+/// discovery set.
+#[test]
+fn inline_sync_completion_terminal_sets_the_provider_job_row() {
+    let (_temp, root) = fixture();
+    let created = WorkflowRuntime::create_run(
+        &root,
+        "character-builder",
+        "1.1.0",
+        "character.create_face_lock",
+        json!({
+            "projectRootPath": root.to_string_lossy(),
+            "characterEntityId": "mara",
+            "visualSpec": {"head":"oval","eyes":"brown","brows":"straight","nose":"narrow","lips":"neutral","skin":"olive","hair":"black","build":"athletic","expression":"neutral"},
+            "baselineWardrobe": "charcoal crew neck",
+            "providerId": "mock",
+            "modelId": "mock-image-v1"
+        }),
+    ).unwrap();
+    let waiting = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+    assert_eq!(waiting.run.status, "waiting_for_approval");
+    WorkflowRuntime::approve_run_step(&root, &created.run.id, "approve-request", None).unwrap();
+
+    let completed = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+    assert_eq!(completed.run.status, "completed");
+
+    let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
+    let (job_status, job_operation): (String, Option<String>) = conn
+        .query_row(
+            "SELECT status, operation FROM provider_jobs",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        job_status, "completed",
+        "an inline-completed sync job must terminal-set its provider_jobs row"
+    );
+    assert_eq!(
+        job_operation, None,
+        "the sync mock adapter has no async operation identity"
+    );
+}
+
 #[test]
 fn recovery_preserves_a_durable_remote_job_for_reconciliation() {
     let (_temp, root) = fixture();
