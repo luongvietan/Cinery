@@ -108,6 +108,39 @@ interface (`submit` / `poll` / `cancel` / `fetch_result`):
   `video.imageToVideo`, `validate`), sync or async jobs, bearer/header/
   query auth, per-operation polling, and secret redaction throughout.
 
+## Background execution (P10.1)
+
+Long-running provider work is **durable and background**:
+
+- The workflow runtime owns **submission**: create attempt → submit →
+  persist the `provider_jobs` row → return. Synchronous adapters (whose
+  first poll already succeeds) complete inline exactly as before; the
+  decision comes from provider submission semantics, never the media
+  type.
+- `workflow/background.rs` owns everything after submission: a
+  per-project daemon thread ticks `run_pending_jobs`, which derives its
+  work from persisted state (`workflow_step_executions` ⋈ `provider_jobs`),
+  claims each job atomically, polls with no DB handle held across network
+  calls, persists progress (`provider_jobs.progress_percent`,
+  `last_polled_at`), enforces the per-job wall-clock deadline (distinct
+  from per-HTTP timeouts), and on completion captures the artifact
+  through the shared `workflow/completion.rs` path before transitioning
+  attempt → succeeded, step → completed, run → completed. Async
+  declarative adapters persist the creating operation on the durable job
+  row (`provider_jobs.operation`), so a rehydrated adapter instance can
+  poll after a restart without any in-memory job state.
+- All terminal transitions are compare-and-set: a cancel racing a
+  completion can never flip a terminal state. Cancellation is durable
+  (`cancellation_requested` on the attempt), resolved by the runner
+  (`provider.cancel` when supported, truthful persistence always).
+- Restart resumes: recovery preserves runs with durable non-terminal
+  jobs, the runner re-attaches at project open, rehydrates adapters
+  (credential resolved from the vault again), and resumes polling — no
+  duplicate submit, no new attempt. Repeated completion handling is
+  idempotent (result-set lookup by provider attempt id + sha256 dedup).
+- The UI observes: `WorkflowRunView` re-reads authoritative state while a
+  run is non-terminal; `list_provider_jobs` powers the Jobs panel.
+
 ## Python AI worker (master plan §5.5)
 
 `services/ai-worker/` is a placeholder Python 3.12 sidecar speaking
