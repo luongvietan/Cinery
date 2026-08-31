@@ -1,9 +1,10 @@
 # 2026-08-30 P10.1 Durable Background Video Jobs — Release Evidence
 
-**Status: MVP RELEASE CANDIDATE (background execution reconciled; automated
+**Status: MVP RELEASE CANDIDATE (P10.1 committed at `cbf9e64`; automated
 gates pass; manual GUI + clean-install gates remain NOT PERFORMED).**
 
-- Branch: `master` (working tree; P10.0 baseline `4909069`)
+- Branch: `master` (P10.0 baseline `4909069` → P10.1 commits `9d59187`,
+  `339d798`, `0e12571`, `2bae8a7`, `cbf9e64`)
 - Scope: convert long-running provider execution (video-first, all async
   providers) from a blocking Tauri invoke into a durable, resumable,
   in-process background job model. No queue system, no server, no external
@@ -65,17 +66,21 @@ TEXT.
 - All terminal transitions are compare-and-set
   (`WHERE status NOT IN (terminal)`); terminal states never flip.
 
-## Automated gates (2026-08-30)
+## Automated gates (2026-08-30, after final-review fixes, committed master HEAD)
 
 | Gate | Result |
 | --- | --- |
 | `pnpm -r test` | domain 51/51, desktop 151/151 (45 files) — all pass |
-| `cargo test` (all targets) | 482 passed / 0 failed (333 lib unit; new `background_video_job_acceptance` 6 tests) |
+| `cargo test` (all targets) | 488 passed / 0 failed (336 lib unit; `background_video_job_acceptance` 8 tests; new migration 0022 + rehydration coverage) |
 | `tsc --noEmit` | pass |
 | `vite build` (production) | pass |
-| `cargo clippy --all-targets` | 0 errors (pre-existing style warnings only) |
-| `tauri build` | MSI + NSIS bundles produced |
+| `cargo clippy --all-targets` | 109 warnings — exactly the pre-P10.1 baseline count (0 new) |
+| `tauri build` | MSI + NSIS bundles produced (`AI Cinematic Production OS_0.0.0`) |
 | `git diff --check` | clean |
+
+**P10.1 checkpoint HEAD: `cbf9e64`** (commits `9d59187` runner →
+`339d798` retry/list command → `0e12571` UI observation → `2bae8a7` tests
+→ `cbf9e64` docs; working tree clean).
 
 ## Final review fixes (pre-commit audit)
 
