@@ -45,6 +45,20 @@ pub struct CinemaCompileInput {
     pub shot_count: Option<usize>,
 }
 
+/// Display-only projection of a Shot's exact pinned keyframe for the I2V
+/// panel: the frozen source the generation run will use. Run creation
+/// independently revalidates and freezes the authoritative source.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShotImageToVideoSource {
+    pub asset_id: String,
+    pub asset_version_id: String,
+    pub version_number: i64,
+    pub file_path: String,
+    pub thumbnail_path: Option<String>,
+    pub mime_type: String,
+}
+
 /// Locked behavioral canon for one character, interpolated into every
 /// compiled prompt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

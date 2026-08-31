@@ -225,6 +225,51 @@ fn invalid_mutations_return_stable_error_codes_not_panics() {
 }
 
 #[test]
+fn shot_i2v_source_returns_the_exact_pinned_version_not_latest() {
+    use cinematic_desktop_lib::cinema::service::CinemaService;
+    use cinematic_desktop_lib::scenes::service::SceneService;
+
+    let f = fixture();
+    let root = std::path::Path::new(&f.root);
+    let scene = scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into())
+        .unwrap();
+    let shot = create_shot(
+        f.root.clone(),
+        scene.id.clone(),
+        None,
+        4.0,
+        "Establish".into(),
+        None,
+        None,
+    )
+    .unwrap();
+
+    // No keyframe yet -> typed missing-source error.
+    let error = get_shot_image_to_video_source(f.root.clone(), shot.id.clone()).unwrap_err();
+    assert_eq!(error.code, "SOURCE_KEYFRAME_MISSING");
+
+    let keyframe_asset = SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
+    let first_source = image_file(root, "kf-first.png", [10, 10, 10, 255]);
+    let first_version =
+        AssetService::import_asset_version(root, &keyframe_asset.id, &first_source, None).unwrap();
+    AssetService::promote_asset_version(root, &first_version.id).unwrap();
+    set_shot_keyframe(f.root.clone(), shot.id.clone(), Some(first_version.id.clone())).unwrap();
+
+    let second_source = image_file(root, "kf-second.png", [200, 200, 200, 255]);
+    let second_version =
+        AssetService::import_asset_version(root, &keyframe_asset.id, &second_source, None).unwrap();
+    AssetService::promote_asset_version(root, &second_version.id).unwrap();
+
+    // The projection must return the exact pinned version, not the newest.
+    let source = CinemaService::get_shot_image_to_video_source(root, &shot.id).unwrap();
+    assert_eq!(source.asset_version_id, first_version.id);
+    assert_eq!(source.asset_id, keyframe_asset.id);
+    assert_eq!(source.version_number, 1);
+    assert_eq!(source.mime_type, "image/png");
+    assert!(source.thumbnail_path.is_some());
+}
+
+#[test]
 fn promote_shot_video_candidate_command_pins_and_conflicts() {
     use cinematic_desktop_lib::cinema::service::CinemaService;
     use cinematic_desktop_lib::generation::service::{

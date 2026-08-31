@@ -1,5 +1,5 @@
 import { invokeCommand } from "../../lib/tauri";
-import type { ShotVideoPromotionResult } from "@cinematic/domain";
+import type { ShotImageToVideoSource, ShotVideoPromotionResult } from "@cinematic/domain";
 import type {
   ResolvedSceneReference,
   ResolvedSceneReferences,
@@ -316,6 +316,18 @@ export function setShotVideo(
     projectRootPath,
     shotId,
     videoAssetVersionId,
+  });
+}
+
+/** Display-only projection of the Shot's exact pinned keyframe — the frozen
+ * source an image-to-video run will use. */
+export function getShotImageToVideoSource(
+  projectRootPath: string,
+  shotId: string,
+): Promise<ShotImageToVideoSource> {
+  return invokeCommand<ShotImageToVideoSource>("get_shot_image_to_video_source", {
+    projectRootPath,
+    shotId,
   });
 }
 

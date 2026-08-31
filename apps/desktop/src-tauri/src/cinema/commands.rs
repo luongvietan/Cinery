@@ -151,6 +151,17 @@ pub fn set_shot_video(
     .map_err(AppCommandError::from)
 }
 
+/// Display-only projection of the Shot's exact pinned keyframe — the frozen
+/// source an image-to-video run will use.
+#[tauri::command]
+pub fn get_shot_image_to_video_source(
+    project_root_path: String,
+    shot_id: String,
+) -> Result<crate::cinema::model::ShotImageToVideoSource, AppCommandError> {
+    CinemaService::get_shot_image_to_video_source(root_path(&project_root_path)?, &shot_id)
+        .map_err(AppCommandError::from)
+}
+
 /// Promotes one exact captured `shot.image_to_video` candidate onto the
 /// Shot's video pin under explicit human review. Conflict-safe: a stale
 /// expected pin returns `PROMOTION_CONFLICT` without overwriting the winner.
