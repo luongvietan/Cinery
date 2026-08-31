@@ -323,7 +323,7 @@ describe("ShotImageToVideo", () => {
     expect(listGenerationResults).toHaveBeenCalledWith("C:/project", "run-1");
   });
 
-  it.each(["completed", "cancelled", "failed"] as const)(
+  it.each(["completed", "cancelled", "failed", "rejected"] as const)(
     "allows a new generation after a %s run",
     async (status) => {
       const persisted = runWithStatus(status);

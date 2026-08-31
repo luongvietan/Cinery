@@ -28,7 +28,7 @@ interface ResultState {
 }
 
 function isActiveRun(run: ResultState | null): boolean {
-  return run !== null && !["completed", "cancelled", "failed"].includes(run.detail.run.status);
+  return run !== null && !["completed", "cancelled", "failed", "rejected"].includes(run.detail.run.status);
 }
 
 /**
