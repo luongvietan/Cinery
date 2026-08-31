@@ -259,7 +259,19 @@ pub fn cancel_workflow_execution(
     if let Some(attempt) =
         super::repository::find_active_attempt(&conn, &workflow_run_id, &step_id)?
     {
-        if let Some(provider_job_id) = attempt.provider_job_id {
+        // Is there a durable provider_jobs row the runner owns? When there
+        // is, cancellation is requested durably and the runner resolves it
+        // (asking the provider to cancel, persisting truthful state). When
+        // there is not, no runner will ever observe a request, so the
+        // cancellation resolves here exactly as before.
+        let durable_job_exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM provider_jobs WHERE execution_id = ?1)",
+                rusqlite::params![attempt.id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if let Some(provider_job_id) = attempt.provider_job_id.clone() {
             let job = super::model::ProviderJobRef {
                 provider_id: attempt.provider_id.clone(),
                 provider_job_id,
@@ -267,14 +279,36 @@ pub fn cancel_workflow_execution(
                 step_id: step_id.clone(),
                 submission_id: attempt.idempotency_key.clone(),
                 submitted_at: attempt.started_at.clone(),
+                operation: None,
             };
-            let _ = ProviderService::cancel_job(&attempt.provider_id, &job)?;
-            // Wake an in-flight polling loop so the wait ends immediately.
+            // Wake any in-flight legacy polling loop so the wait ends
+            // immediately.
             super::cancellation::signal(&attempt.provider_id, &job.provider_job_id);
+            if !durable_job_exists {
+                let _ = ProviderService::cancel_job(&attempt.provider_id, &job)?;
+            }
         }
-        super::repository::update_attempt_status(&conn, &attempt.id, "cancelled", None)?;
+        if durable_job_exists {
+            // P10.1 durable cancellation: mark the request durably so the
+            // background runner observes it on its next tick, asks the
+            // provider to cancel when it can, and persists truthful
+            // terminal state. Terminal-state safe: a completion that
+            // landed first keeps its terminal status and this request
+            // becomes a no-op.
+            super::repository::request_attempt_cancellation(&conn, &attempt.id)?;
+        } else {
+            super::repository::update_attempt_status(&conn, &attempt.id, "cancelled", None)?;
+        }
+        super::repository::append_audit_event(
+            &conn,
+            Some(&attempt.id),
+            &workflow_run_id,
+            "provider.execution.cancel_requested",
+            None,
+        )?;
     }
     drop(conn);
+    crate::workflow::background::wake_runner(&root);
     WorkflowRuntime::cancel_run(&root, &workflow_run_id).map_err(Into::into)
 }
 

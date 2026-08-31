@@ -118,6 +118,7 @@ mod tests {
                     step_id: "step".into(),
                     submission_id: "submission".into(),
                     submitted_at: "now".into(),
+                    operation: None,
                 })
                 .unwrap()
                 .lifecycle,

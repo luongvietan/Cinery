@@ -25,6 +25,9 @@ pub fn create_project(
     let summary = ProjectService::create(&root, &name)?;
     record_recent(&app, &summary);
     allow_asset_protocol_access(&app, &root);
+    // P10.1: the local background job runner attaches to the project for
+    // the whole session; durable provider jobs (if any) resume polling.
+    crate::workflow::background::attach_runner(&root)?;
     Ok(summary)
 }
 
@@ -82,6 +85,10 @@ pub fn open_project(
     let summary = ProjectService::open(&root)?;
     record_recent(&app, &summary);
     allow_asset_protocol_access(&app, &root);
+    // P10.1: attach the local background job runner. Any durable provider
+    // jobs preserved by recovery resume polling here — no duplicate
+    // submission, no new attempt.
+    crate::workflow::background::attach_runner(&root)?;
     Ok(summary)
 }
 

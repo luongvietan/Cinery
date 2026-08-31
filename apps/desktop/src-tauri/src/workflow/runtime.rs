@@ -2,7 +2,8 @@ use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::providers::repository::{
-    append_audit_event, create_attempt, next_attempt_number, persist_job, update_artifact_ids,
+    append_audit_event, create_attempt, next_attempt_number, persist_job_with_operation,
+    update_artifact_ids,
     update_attempt_status,
 };
 use crate::providers::service::ProviderService;
@@ -152,6 +153,18 @@ impl WorkflowRuntime {
         }
         if detail.run.status == "waiting_for_approval" {
             return Err(AppError::WorkflowApprovalRequired);
+        }
+        // P10.1: a run whose execute step is owned by the background runner
+        // ignores further advance calls (double-click protection). The
+        // durable provider job keeps executing; re-advancing must never
+        // fail or duplicate the run's work.
+        if detail.run.status == "running"
+            && crate::workflow::background::run_has_active_provider_job(
+                &conn,
+                workflow_run_id,
+            )?
+        {
+            return Ok(detail);
         }
         let (skill, operation) = registry.find_operation(
             &detail.run.skill_id,
@@ -954,12 +967,13 @@ fn execute_visual_repair_ready(
             return Err(error);
         }
     };
-    persist_job(
+    persist_job_with_operation(
         conn,
         &attempt.id,
         provider_id,
         &submission.submission.job.provider_job_id,
         "submitted",
+        submission.submission.job.operation.as_deref(),
     )?;
     let (status, provider_result) = match ProviderService::finish_submission(&submission) {
         Ok(result) => result,
@@ -1364,12 +1378,13 @@ fn execute_scene_keyframe_ready(
                 return Err(error);
             }
         };
-        persist_job(
+        persist_job_with_operation(
             conn,
             &attempt.id,
             &provider_id,
             &submission.submission.job.provider_job_id,
             "submitted",
+            submission.submission.job.operation.as_deref(),
         )?;
         append_audit_event(
             conn,
@@ -1378,6 +1393,12 @@ fn execute_scene_keyframe_ready(
             "provider.execution.submitted",
             Some(&serde_json::json!({"providerJobId": submission.submission.job.provider_job_id})),
         )?;
+        // P10.1: durable hand-off to the background runner for async
+        // providers (see the video path for the full rationale).
+        if !submission_resolved_immediately(&submission)? {
+            hand_off_to_background(conn, &detail.run.id, &attempt.id)?;
+            return WorkflowRepository::get_run(conn, project_id, &detail.run.id);
+        }
         let (status, provider_result) = match ProviderService::finish_submission(&submission) {
             Ok(result) => result,
             Err(error) => {
@@ -1783,12 +1804,13 @@ fn execute_scene_video_ready(
                 return Err(error);
             }
         };
-        persist_job(
+        persist_job_with_operation(
             conn,
             &attempt.id,
             &provider_id,
             &submission.submission.job.provider_job_id,
             "submitted",
+            submission.submission.job.operation.as_deref(),
         )?;
         append_audit_event(
             conn,
@@ -1797,6 +1819,15 @@ fn execute_scene_video_ready(
             "provider.execution.submitted",
             Some(&serde_json::json!({"providerJobId": submission.submission.job.provider_job_id})),
         )?;
+        // P10.1: the durable ProviderJob row exists, so ownership can
+        // transfer to the background runner. Synchronous providers (mock,
+        // declarative sync ops) complete inline as before; genuinely async
+        // providers return control to the UI here with the attempt running
+        // durably in the background.
+        if !submission_resolved_immediately(&submission)? {
+            hand_off_to_background(conn, &detail.run.id, &attempt.id)?;
+            return WorkflowRepository::get_run(conn, project_id, &detail.run.id);
+        }
         let (status, provider_result) = match ProviderService::finish_submission(&submission) {
             Ok(result) => result,
             Err(error) => {
@@ -2205,12 +2236,13 @@ fn execute_ready(
                 return Err(error);
             }
         };
-        persist_job(
+        persist_job_with_operation(
             conn,
             &attempt.id,
             &provider_id,
             &submission.submission.job.provider_job_id,
             "submitted",
+            submission.submission.job.operation.as_deref(),
         )?;
         append_audit_event(
             conn,
@@ -2219,6 +2251,12 @@ fn execute_ready(
             "provider.execution.submitted",
             Some(&serde_json::json!({"providerJobId": submission.submission.job.provider_job_id})),
         )?;
+        // P10.1: durable hand-off to the background runner for async
+        // providers (see the video path for the full rationale).
+        if !submission_resolved_immediately(&submission)? {
+            hand_off_to_background(conn, &detail.run.id, &attempt.id)?;
+            return WorkflowRepository::get_run(conn, project_id, &detail.run.id);
+        }
         let (status, provider_result) = match ProviderService::finish_submission(&submission) {
             Ok(result) => result,
             Err(error) => {
@@ -2414,6 +2452,69 @@ fn compiled_request_id(request_json: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(request_json.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// One immediate probe poll decides execution ownership: synchronous
+/// adapters (mock, declarative sync operations) resolve on the first poll,
+/// so the runtime keeps its existing inline completion; genuinely async
+/// providers still show an in-progress lifecycle, so the durable job is
+/// handed to the background runner instead of blocking the invoke. The
+/// decision is made from provider submission/result semantics, never from
+/// the media type. A *retryable* probe failure (rate limit, transient
+/// network) means the job is genuinely async — the durable runner retries
+/// the poll on its own cadence instead of failing the run here.
+fn submission_resolved_immediately(
+    submission: &crate::providers::service::ProviderSubmissionHandle,
+) -> Result<bool, AppError> {
+    let status = match submission.provider.poll(&submission.submission.job) {
+        Ok(status) => status,
+        Err(error) if error.kind.retryable() => return Ok(false),
+        Err(error) => {
+            return Err(AppError::ProviderExecution(error.display_text()));
+        }
+    };
+    Ok(matches!(
+        status.lifecycle,
+        crate::providers::model::ProviderLifecycle::Succeeded
+    ))
+}
+
+/// Transfers execution ownership to the background runner after the durable
+/// ProviderJob row exists: marks the attempt `running`, records the
+/// hand-off in the audit trail, and wakes the runner. The invoke returns
+/// immediately after this — never before ProviderJob persistence succeeded.
+fn hand_off_to_background(
+    conn: &mut Connection,
+    run_id: &str,
+    attempt_id: &str,
+) -> Result<(), AppError> {
+    let attempt_status: Option<String> = conn
+        .query_row(
+            "SELECT status FROM workflow_step_executions WHERE id = ?1",
+            params![attempt_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?;
+    if matches!(
+        attempt_status.as_deref(),
+        Some("succeeded" | "failed" | "cancelled")
+    ) {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE workflow_step_executions SET status = 'running' WHERE id = ?1",
+        params![attempt_id],
+    )
+    .map_err(db_error)?;
+    append_audit_event(
+        conn,
+        Some(attempt_id),
+        run_id,
+        "provider.execution.background_started",
+        None,
+    )?;
+    Ok(())
 }
 
 fn sha256_json<T: serde::Serialize>(value: &T) -> String {

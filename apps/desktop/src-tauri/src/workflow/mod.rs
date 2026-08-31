@@ -1,5 +1,8 @@
 pub mod artifacts;
+pub mod background;
+pub mod background_failures;
 pub mod commands;
+pub mod completion;
 pub mod compiler;
 pub mod context;
 pub mod execution;

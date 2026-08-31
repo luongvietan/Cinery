@@ -378,6 +378,13 @@ pub struct ProviderJobRef {
     pub step_id: String,
     pub submission_id: String,
     pub submitted_at: String,
+    /// The provider operation that created this job (e.g.
+    /// `video.generate`). Async declarative adapters persist it with the
+    /// durable job so a rehydrated adapter instance can poll/fetch without
+    /// its in-memory job→operation map. `None` for adapters that do not
+    /// distinguish operations per job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

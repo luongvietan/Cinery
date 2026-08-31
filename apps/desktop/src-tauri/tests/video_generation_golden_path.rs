@@ -122,10 +122,28 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
         .unwrap()
         .contains("CINEMA PRODUCTION PROMPT"));
 
-    // --- Approve and execute against the fake async video provider. ---
+    // --- Approve and start execution against the fake async video
+    // provider. P10.1: the execution advance returns as soon as the
+    // durable ProviderJob exists; the background runner owns polling and
+    // completion. ---
     WorkflowRuntime::approve_run_step(root, &run.run.id, "approve-request", None).unwrap();
-    let completed = WorkflowRuntime::advance_run(root, &run.run.id).unwrap();
-    assert_eq!(completed.run.status, "completed");
+    let started = WorkflowRuntime::advance_run(root, &run.run.id).unwrap();
+    assert_eq!(
+        started.run.status, "running",
+        "P10.1: the invoke must return before the async provider completes"
+    );
+    let mut completed_detail = started;
+    for _ in 0..6 {
+        let tick = cinematic_desktop_lib::workflow::background::run_pending_jobs(root).unwrap();
+        if tick.completed > 0 {
+            completed_detail = WorkflowRuntime::get_run(root, &run.run.id).unwrap();
+            break;
+        }
+    }
+    assert_eq!(
+        completed_detail.run.status, "completed",
+        "the background runner must complete the durable job"
+    );
 
     // The provider job + attempt are durable.
     {

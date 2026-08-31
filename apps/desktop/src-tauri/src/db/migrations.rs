@@ -79,6 +79,10 @@ pub const MIGRATIONS: &[Migration] = &[
         21,
         include_str!("../../migrations/0021_shot_video_pin.sql"),
     ),
+    Migration::new(
+        22,
+        include_str!("../../migrations/0022_background_provider_jobs.sql"),
+    ),
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -1247,5 +1251,85 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn migration_0022_adds_durable_background_job_bookkeeping() {
+        let (conn, _, _) = video_ready_conn();
+        // The video_ready_conn helper already runs every migration, so the
+        // fresh schema includes 0022. Seed one durable provider job row
+        // shaped like the runtime's (a workflow attempt + provider job).
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, \
+             status, input_json, created_at, updated_at) \
+             VALUES ('run-0022', 'p1', 'scene-builder', '1.0.0', 'scene.generate_video', \
+             'running', '{}', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, \
+             attempt_number, compiled_request_id, provider_id, model_id, adapter_version, \
+             idempotency_key, status, started_at) \
+             VALUES ('attempt-0022', 'run-0022', 'execute', 2, ?, 'loopback_video', 'loop-v1', 1, \
+             'run-0022:execute:2', 'running', 'now')",
+            rusqlite::params!["a".repeat(64)],
+        )
+        .unwrap();
+
+        // progress NULL = unknown; bounds enforced by the CHECK.
+        conn.execute(
+            "INSERT INTO provider_jobs (id, execution_id, provider_id, provider_job_id, \
+             status, submitted_at, updated_at, progress_percent, operation) \
+             VALUES ('pj-0022', 'attempt-0022', 'loopback_video', 'loop-job-1', 'submitted', \
+             'now', 'now', NULL, 'video.generate')",
+            [],
+        )
+        .unwrap();
+        let (progress, last_polled, operation): (Option<i64>, Option<String>, Option<String>) =
+            conn.query_row(
+                "SELECT progress_percent, last_polled_at, operation FROM provider_jobs \
+                 WHERE id = 'pj-0022'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(progress, None, "NULL progress means unknown progress");
+        assert_eq!(last_polled, None);
+        assert_eq!(operation.as_deref(), Some("video.generate"));
+
+        // Bounds: 0 and 100 are valid; out-of-range values are rejected.
+        conn.execute(
+            "UPDATE provider_jobs SET progress_percent = 100 WHERE id = 'pj-0022'",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "UPDATE provider_jobs SET progress_percent = 101 WHERE id = 'pj-0022'",
+                [],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "UPDATE provider_jobs SET progress_percent = -1 WHERE id = 'pj-0022'",
+                [],
+            )
+            .is_err());
+
+        // Additive: existing 0006 columns are untouched.
+        let columns: Vec<String> = {
+            let mut statement = conn
+                .prepare("SELECT name FROM pragma_table_info('provider_jobs') ORDER BY name")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        for original in ["id", "execution_id", "provider_id", "provider_job_id", "status"] {
+            assert!(columns.iter().any(|column| column == original));
+        }
     }
 

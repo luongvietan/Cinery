@@ -790,6 +790,16 @@ impl ProviderService {
         error.retryable()
     }
 
+    /// Credential resolution used by the background runner when it
+    /// rehydrates the builtin OpenAI adapter after a restart. The secret is
+    /// resolved from the project's keyring entry (or developer environment
+    /// fallback) and never persisted.
+    pub fn resolve_openai_execution_token(
+        project_root: &Path,
+    ) -> Result<String, AppError> {
+        Self::resolve_openai_token(Some(project_root), None)
+    }
+
     pub fn execute_compiled_request(
         request: &ExecutionRequest,
         project_root: Option<&Path>,
@@ -934,7 +944,7 @@ impl ProviderService {
     /// Built-in "openai" credential resolution: the project's OS-keyring
     /// secret first, then the developer-time OPENAI_API_KEY environment
     /// variable. Raw secrets never leave this function.
-    fn resolve_openai_token(
+    pub fn resolve_openai_token(
         project_root: Option<&Path>,
         credentials: Option<&dyn CredentialStore>,
     ) -> Result<String, AppError> {
@@ -985,8 +995,10 @@ impl ProviderService {
 
     /// Builds a real HTTP execution adapter for a user-defined AI service
     /// from its stored declarative definition. `require_credential` is false
-    /// when only capabilities are needed.
-    fn custom_execution_adapter(
+    /// when only capabilities are needed. Public because the background
+    /// runner rehydrates adapters after a restart and must resolve the
+    /// credential from the vault again (never persisted anywhere).
+    pub fn custom_execution_adapter(
         project_root: &Path,
         credentials: Option<&dyn CredentialStore>,
         provider_id: &str,

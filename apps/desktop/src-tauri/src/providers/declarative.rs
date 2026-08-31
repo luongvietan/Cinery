@@ -875,6 +875,10 @@ impl GenerationProvider for DeclarativeProvider {
                         step_id: request.step_id.clone(),
                         submission_id: request.idempotency_key.clone(),
                         submitted_at: Utc::now().to_rfc3339(),
+                        // Durable operation identity: a rehydrated adapter
+                        // (background runner after a restart) polls without
+                        // its in-memory job→operation map.
+                        operation: Some(operation.clone()),
                     },
                     lifecycle: ProviderLifecycle::Submitted,
                 })
@@ -906,6 +910,7 @@ impl GenerationProvider for DeclarativeProvider {
                         step_id: request.step_id.clone(),
                         submission_id: request.idempotency_key.clone(),
                         submitted_at: Utc::now().to_rfc3339(),
+                        operation: None,
                     },
                     lifecycle: ProviderLifecycle::Submitted,
                 })
@@ -946,6 +951,7 @@ impl GenerationProvider for DeclarativeProvider {
                         step_id: request.step_id.clone(),
                         submission_id: request.idempotency_key.clone(),
                         submitted_at: Utc::now().to_rfc3339(),
+                        operation: None,
                     },
                     lifecycle: ProviderLifecycle::Submitted,
                 })
@@ -954,12 +960,19 @@ impl GenerationProvider for DeclarativeProvider {
     }
 
     fn poll(&self, job: &ProviderJobRef) -> Result<ProviderJobStatus, ProviderError> {
-        let operation = self
-            .job_operations
-            .lock()
-            .unwrap()
-            .get(&job.provider_job_id)
-            .cloned();
+        // The operation comes from the durable job ref first (a rehydrated
+        // adapter has no in-memory job→operation map), then from the map
+        // populated by this instance's own submissions.
+        let operation = job
+            .operation
+            .clone()
+            .or_else(|| {
+                self.job_operations
+                    .lock()
+                    .unwrap()
+                    .get(&job.provider_job_id)
+                    .cloned()
+            });
         if let Some(operation) = &operation {
             let endpoint = self.config.operations.get(operation).ok_or_else(|| {
                 self.error(
@@ -1001,12 +1014,17 @@ impl GenerationProvider for DeclarativeProvider {
     }
 
     fn fetch_result(&self, job: &ProviderJobRef) -> Result<ProviderResult, ProviderError> {
-        let operation = self
-            .job_operations
-            .lock()
-            .unwrap()
-            .get(&job.provider_job_id)
-            .cloned();
+        // Same durable-first operation resolution as `poll`.
+        let operation = job
+            .operation
+            .clone()
+            .or_else(|| {
+                self.job_operations
+                    .lock()
+                    .unwrap()
+                    .get(&job.provider_job_id)
+                    .cloned()
+            });
         if let Some(operation) = &operation {
             let endpoint = self.config.operations.get(operation).ok_or_else(|| {
                 self.error(
@@ -1797,6 +1815,95 @@ mod tests {
         let status = provider.poll(&submission.job).unwrap();
         assert_eq!(status.lifecycle, ProviderLifecycle::Failed);
         assert_eq!(status.diagnostic.as_deref(), Some("content policy violation"));
+    }
+
+    /// P10.1 regression: the background runner rehydrates a *fresh*
+    /// adapter instance after a restart. The submitted job carries its
+    /// operation in the durable `ProviderJobRef` (persisted in the
+    /// `provider_jobs` row), so the rehydrated instance must be able to
+    /// poll and fetch the job without the in-memory job→operation map.
+    #[test]
+    fn rehydrated_adapter_polls_an_async_job_from_the_durable_ref() {
+        let transport = FakeTransport::with_responses(vec![
+            FakeResponse {
+                url_contains: "/submit".into(),
+                status: 200,
+                body: r#"{"result":{"task_id":"task-rehydrated"}}"#.into(),
+            },
+            FakeResponse {
+                url_contains: "/tasks/task-rehydrated".into(),
+                status: 200,
+                body: r#"{"result":{"status":"running","percent":25}}"#.into(),
+            },
+            FakeResponse {
+                url_contains: "/tasks/task-rehydrated".into(),
+                status: 200,
+                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#.into(),
+            },
+            FakeResponse {
+                url_contains: "/tasks/task-rehydrated".into(),
+                status: 200,
+                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#.into(),
+            },
+        ]);
+        let submitting = async_video_provider(async_video_config(1, 10_000), transport.clone());
+        let submission = submitting.submit(&video_request()).unwrap();
+        assert_eq!(
+            submission.job.operation.as_deref(),
+            Some(OPERATION_VIDEO_GENERATE),
+            "the durable job ref must carry the async operation"
+        );
+
+        // A brand-new adapter instance (same declarative config, empty
+        // in-memory maps) — exactly what the runner rehydrates.
+        let rehydrated = async_video_provider(async_video_config(1, 10_000), transport.clone());
+        assert!(
+            rehydrated.job_operations.lock().unwrap().is_empty(),
+            "the rehydrated instance must start with no in-memory job map"
+        );
+        let running = rehydrated.poll(&submission.job).unwrap();
+        assert_eq!(running.lifecycle, ProviderLifecycle::Running);
+        assert_eq!(running.progress_percent, Some(25));
+        let done = rehydrated.poll(&submission.job).unwrap();
+        assert_eq!(done.lifecycle, ProviderLifecycle::Succeeded);
+        let result = rehydrated.fetch_result(&submission.job).unwrap();
+        assert_eq!(result.outputs[0].uri, "https://cdn.example/r.mp4");
+    }
+
+    /// P10.1 regression: a rehydrated adapter must not misinterpret a
+    /// *synchronous* job (operation `None`) as an async poll — it falls
+    /// back to the in-memory result map exactly as before.
+    #[test]
+    fn rehydrated_adapter_keeps_sync_jobs_on_the_result_path() {
+        let mut operations = BTreeMap::new();
+        operations.insert(
+            OPERATION_IMAGE_GENERATE.to_string(),
+            EndpointConfig {
+                path_template: "/generate".into(),
+                request_mapping: Some(serde_json::json!({"prompt": "{{prompt}}"})),
+                response: ResponseMapping {
+                    url_path: Some("data_url".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let config = ProviderRuntimeConfig {
+            auth: AuthConfig::default(),
+            operations,
+            ..Default::default()
+        };
+        let transport = FakeTransport::with_responses(vec![FakeResponse {
+            url_contains: "/generate".into(),
+            status: 200,
+            body: r#"{"data_url":"data:image/png;base64,aGVsbG8="}"#.into(),
+        }]);
+        let provider = async_video_provider(config, transport);
+        let submission = provider.submit(&provider_request(ExecutionMediaType::Image, "vid-1")).unwrap();
+        assert_eq!(submission.job.operation, None);
+        // First poll sees the in-memory result → Succeeded (sync semantics).
+        let status = provider.poll(&submission.job).unwrap();
+        assert_eq!(status.lifecycle, ProviderLifecycle::Succeeded);
     }
 
     #[test]

@@ -87,6 +87,7 @@ impl GenerationProvider for FakeAsyncVideoProvider {
                 step_id: request.step_id.clone(),
                 submission_id: request.idempotency_key.clone(),
                 submitted_at: Utc::now().to_rfc3339(),
+                operation: None,
             },
             lifecycle: ProviderLifecycle::Submitted,
         })

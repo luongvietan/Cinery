@@ -518,18 +518,33 @@ pub fn persist_job(
     provider_job_id: &str,
     status: &str,
 ) -> Result<(), AppError> {
+    persist_job_with_operation(conn, execution_id, provider_id, provider_job_id, status, None)
+}
+
+/// Persists the durable provider job row including the provider operation
+/// that created it (P10.1). Async declarative adapters re-read the operation
+/// after a restart to poll a job from a rehydrated adapter instance.
+pub fn persist_job_with_operation(
+    conn: &Connection,
+    execution_id: &str,
+    provider_id: &str,
+    provider_job_id: &str,
+    status: &str,
+    operation: Option<&str>,
+) -> Result<(), AppError> {
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO provider_jobs
-         (id, execution_id, provider_id, provider_job_id, status, submitted_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+         (id, execution_id, provider_id, provider_job_id, status, submitted_at, updated_at, operation)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
         params![
             ulid::Ulid::new().to_string(),
             execution_id,
             provider_id,
             provider_job_id,
             status,
-            now
+            now,
+            operation,
         ],
     )
     .map_err(db_error)?;
@@ -592,7 +607,43 @@ pub fn update_attempt_status(
         params![status, normalized_error_json, completed_at, execution_id],
     )
     .map_err(db_error)?;
+    // P10.1: an inline (synchronous) terminal attempt also terminal-sets its
+    // durable provider_jobs row, so a job completed inline never lingers as
+    // a ghost 'submitted' row in the Jobs panel or the runner's discovery
+    // set. Compare-and-set: an already-terminal job row never flips.
+    if matches!(status, "succeeded" | "failed" | "cancelled") {
+        let job_status = match status {
+            "succeeded" => "completed",
+            other => other,
+        };
+        conn.execute(
+            "UPDATE provider_jobs SET status = ?1, updated_at = ?2
+             WHERE execution_id = ?3 AND status NOT IN ('completed', 'failed', 'cancelled')",
+            params![job_status, completed_at, execution_id],
+        )
+        .map_err(db_error)?;
+    }
     Ok(())
+}
+
+/// Durably requests cancellation of a non-terminal attempt. Terminal-state
+/// safe: an attempt that already reached succeeded/failed/cancelled (the
+/// background runner completed it first) is never flipped back, so terminal
+/// states cannot change once written. Returns true when the request landed.
+pub fn request_attempt_cancellation(
+    conn: &Connection,
+    execution_id: &str,
+) -> Result<bool, AppError> {
+    let updated = conn
+        .execute(
+            "UPDATE workflow_step_executions
+             SET status = 'cancellation_requested'
+             WHERE id = ?1 AND status NOT IN ('succeeded', 'failed', 'cancelled')",
+            params![execution_id],
+        )
+        .map_err(db_error)?
+        > 0;
+    Ok(updated)
 }
 
 pub fn update_artifact_ids(

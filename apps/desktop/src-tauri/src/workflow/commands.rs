@@ -26,8 +26,14 @@ pub fn advance_workflow_run(
     project_root_path: String,
     workflow_run_id: String,
 ) -> Result<WorkflowRunDetail, AppCommandError> {
-    WorkflowRuntime::advance_run(std::path::Path::new(&project_root_path), &workflow_run_id)
-        .map_err(Into::into)
+    let root = std::path::PathBuf::from(&project_root_path);
+    let detail =
+        WorkflowRuntime::advance_run(std::path::Path::new(&project_root_path), &workflow_run_id)
+            .map_err(AppCommandError::from)?;
+    // P10.1: if this advance handed a provider job to the background
+    // runner, wake it so polling starts immediately.
+    crate::workflow::background::wake_runner(&root);
+    Ok(detail)
 }
 
 #[tauri::command]
