@@ -72,6 +72,7 @@ pub fn run() {
             providers::commands::suggest_visual_spec,
             providers::commands::cancel_workflow_execution,
             providers::commands::retry_workflow_execution,
+            providers::commands::list_provider_jobs,
             router::commands::route_production_intent,
             generation::commands::list_generation_results,
             generation::commands::get_generated_artifact,

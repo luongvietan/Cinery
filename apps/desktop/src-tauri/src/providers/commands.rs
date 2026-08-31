@@ -247,6 +247,15 @@ pub fn list_provider_models(
 }
 
 #[tauri::command]
+pub fn list_provider_jobs(
+    project_root_path: String,
+) -> Result<Vec<crate::workflow::background::ProviderJobView>, AppCommandError> {
+    validate_root_path(&project_root_path)?;
+    crate::workflow::background::list_provider_jobs(&PathBuf::from(project_root_path))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
 pub fn cancel_workflow_execution(
     project_root_path: String,
     workflow_run_id: String,
@@ -320,10 +329,19 @@ pub fn retry_workflow_execution(
 ) -> Result<WorkflowRunDetail, AppCommandError> {
     validate_root_path(&project_root_path)?;
     let root = PathBuf::from(project_root_path);
-    let conn = db::open_existing_connection(&root.join("project.db"))?;
+    let mut conn = db::open_existing_connection(&root.join("project.db"))?;
     let project = read_project(&conn)?;
-    let previous = super::repository::latest_attempt(&conn, &workflow_run_id, &step_id)?
-        .ok_or_else(|| {
+    // P10.1: the whole retry (guard + attempt creation + run/step reset)
+    // happens in one Immediate transaction so two rapid clicks cannot
+    // create conflicting attempt numbers or surface raw SQLite errors:
+    // the second click's guard sees the run already reset and fails
+    // cleanly.
+    let now = chrono::Utc::now().to_rfc3339();
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|error| crate::error::AppError::Database(error.to_string()))?;
+    let previous =
+        super::repository::latest_attempt(&tx, &workflow_run_id, &step_id)?.ok_or_else(|| {
             crate::error::AppError::ProviderExecution("no execution attempt exists".into())
         })?;
     if previous.status != "failed" {
@@ -332,9 +350,9 @@ pub fn retry_workflow_execution(
         )
         .into());
     }
-    let retry_number = super::repository::next_attempt_number(&conn, &workflow_run_id, &step_id)?;
+    let retry_number = super::repository::next_attempt_number(&tx, &workflow_run_id, &step_id)?;
     super::repository::create_attempt(
-        &conn,
+        &tx,
         &workflow_run_id,
         &step_id,
         retry_number,
@@ -343,7 +361,20 @@ pub fn retry_workflow_execution(
         &previous.model_id,
         &ProviderService::idempotency_key(&workflow_run_id, &step_id, retry_number),
     )?;
-    conn.execute("UPDATE workflow_runs SET status = 'ready_for_execution', failure_code = NULL, failure_message = NULL, completed_at = NULL, updated_at = ?1 WHERE id = ?2", rusqlite::params![chrono::Utc::now().to_rfc3339(), workflow_run_id]).map_err(|error| crate::error::AppError::Database(error.to_string()))?;
-    conn.execute("UPDATE workflow_steps SET status = 'pending', completed_at = NULL, output_json = NULL WHERE workflow_run_id = ?1 AND step_definition_id = ?2", rusqlite::params![workflow_run_id, step_id]).map_err(|error| crate::error::AppError::Database(error.to_string()))?;
+    tx.execute(
+        "UPDATE workflow_runs SET status = 'ready_for_execution', failure_code = NULL,
+           failure_message = NULL, completed_at = NULL, updated_at = ?1
+         WHERE id = ?2 AND status = 'failed'",
+        rusqlite::params![now, workflow_run_id],
+    )
+    .map_err(|error| crate::error::AppError::Database(error.to_string()))?;
+    tx.execute(
+        "UPDATE workflow_steps SET status = 'pending', completed_at = NULL, output_json = NULL
+         WHERE workflow_run_id = ?1 AND step_definition_id = ?2 AND status = 'failed'",
+        rusqlite::params![workflow_run_id, step_id],
+    )
+    .map_err(|error| crate::error::AppError::Database(error.to_string()))?;
+    tx.commit()
+        .map_err(|error| crate::error::AppError::Database(error.to_string()))?;
     WorkflowRepository::get_run(&conn, &project.id, &workflow_run_id).map_err(Into::into)
 }
