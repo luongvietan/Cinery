@@ -1,4 +1,5 @@
 import { invokeCommand } from "../../lib/tauri";
+import type { ShotVideoPromotionResult } from "@cinematic/domain";
 import type {
   ResolvedSceneReference,
   ResolvedSceneReferences,
@@ -315,6 +316,23 @@ export function setShotVideo(
     projectRootPath,
     shotId,
     videoAssetVersionId,
+  });
+}
+
+/** Promotes one exact captured `shot.image_to_video` candidate onto the
+ * Shot's video pin under explicit human review. Conflict-safe: a stale
+ * expected pin rejects with PROMOTION_CONFLICT. */
+export function promoteShotVideoCandidate(
+  projectRootPath: string,
+  shotId: string,
+  artifactId: string,
+  expectedCurrentVideoAssetVersionId: string | null,
+): Promise<ShotVideoPromotionResult> {
+  return invokeCommand<ShotVideoPromotionResult>("promote_shot_video_candidate", {
+    projectRootPath,
+    shotId,
+    artifactId,
+    expectedCurrentVideoAssetVersionId,
   });
 }
 

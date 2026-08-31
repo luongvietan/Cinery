@@ -151,6 +151,25 @@ pub fn set_shot_video(
     .map_err(AppCommandError::from)
 }
 
+/// Promotes one exact captured `shot.image_to_video` candidate onto the
+/// Shot's video pin under explicit human review. Conflict-safe: a stale
+/// expected pin returns `PROMOTION_CONFLICT` without overwriting the winner.
+#[tauri::command]
+pub fn promote_shot_video_candidate(
+    project_root_path: String,
+    shot_id: String,
+    artifact_id: String,
+    expected_current_video_asset_version_id: Option<String>,
+) -> Result<crate::cinema::promotion::ShotVideoPromotionResult, AppCommandError> {
+    crate::cinema::promotion::promote_shot_video_candidate(
+        root_path(&project_root_path)?,
+        &shot_id,
+        &artifact_id,
+        expected_current_video_asset_version_id.as_deref(),
+    )
+    .map_err(AppCommandError::from)
+}
+
 #[tauri::command]
 pub fn get_scene_readiness(
     project_root_path: String,

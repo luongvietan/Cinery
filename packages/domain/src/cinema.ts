@@ -113,6 +113,14 @@ export interface SceneDetail {
   shots: ShotRecord[];
 }
 
+/** Result of pinning one exact promoted I2V candidate version onto a Shot. */
+export interface ShotVideoPromotionResult {
+  shotId: string;
+  artifactId: string;
+  assetVersionId: string;
+  previousAssetVersionId: string | null;
+}
+
 export interface CinemaCompilationRecord {
   id: string;
   projectId: string;

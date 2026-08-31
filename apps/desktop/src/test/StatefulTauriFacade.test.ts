@@ -57,4 +57,29 @@ describe("StatefulTauriFacade", () => {
     const shots = await facade.invoke<Array<{ id: string; generatedVideoAssetVersionId: string | null }>>("list_shots", { sceneId: scene.id });
     expect(shots.find((candidate) => candidate.id === shot.id)?.generatedVideoAssetVersionId).toBe("video-v1");
   });
+
+  it("promotes the shot video candidate conflict-safely against the expected pin", async () => {
+    const facade = new StatefulTauriFacade();
+    const scene = await facade.invoke<{ id: string }>("create_world_scene", { title: "S", summary: "" });
+    const shot = await facade.invoke<{ id: string }>("create_shot", { sceneId: scene.id, durationSeconds: 4, intent: "Establish" });
+
+    const promoted = await facade.invoke<{ shotId: string; artifactId: string; assetVersionId: string; previousAssetVersionId: string | null }>(
+      "promote_shot_video_candidate",
+      { shotId: shot.id, artifactId: "artifact-1", expectedCurrentVideoAssetVersionId: null },
+    );
+    expect(promoted).toMatchObject({ shotId: shot.id, artifactId: "artifact-1", previousAssetVersionId: null });
+    expect(promoted.assetVersionId).toBe("video-version-artifact-1");
+
+    // Replay with the matching expected pin is idempotent.
+    const replayed = await facade.invoke<{ assetVersionId: string }>(
+      "promote_shot_video_candidate",
+      { shotId: shot.id, artifactId: "artifact-1", expectedCurrentVideoAssetVersionId: promoted.assetVersionId },
+    );
+    expect(replayed.assetVersionId).toBe(promoted.assetVersionId);
+
+    // A stale expected pin conflicts without overwriting the winner.
+    await expect(
+      facade.invoke("promote_shot_video_candidate", { shotId: shot.id, artifactId: "artifact-2", expectedCurrentVideoAssetVersionId: null }),
+    ).rejects.toMatchObject({ code: "PROMOTION_CONFLICT" });
+  });
 });
