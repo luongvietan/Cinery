@@ -185,10 +185,14 @@ impl WorkflowRuntime {
                 "sourceAssetVersionId".into(),
                 Value::String(source_asset_version_id),
             );
-            object.insert(
-                "generationParameters".into(),
-                serde_json::json!({ "durationSeconds": duration_seconds }),
-            );
+            let generation_parameters = object
+                .entry("generationParameters")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Some(parameters) = generation_parameters.as_object_mut() {
+                parameters
+                    .entry("durationSeconds")
+                    .or_insert_with(|| serde_json::json!(duration_seconds));
+            }
         }
         let input_json = serde_json::to_string(&frozen)
             .map_err(|error| AppError::Database(error.to_string()))?;
@@ -4230,6 +4234,71 @@ mod tests {
             request.media_type,
             crate::workflow::execution::ExecutionMediaType::Video
         );
+    }
+
+    #[test]
+    fn shot_i2v_run_preserves_supplied_generation_parameters() {
+        let fixture = shot_i2v_fixture();
+        let mut input = shot_i2v_input(&fixture, "A measured push-in");
+        input["generationParameters"] = serde_json::json!({
+            "durationSeconds": 7.5,
+            "aspectRatio": "9:16",
+            "fps": 24,
+            "seed": 314159
+        });
+
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            input,
+        )
+        .unwrap();
+        let frozen: serde_json::Value = serde_json::from_str(&run.run.input_json).unwrap();
+
+        assert_eq!(
+            frozen["generationParameters"],
+            serde_json::json!({
+                "durationSeconds": 7.5,
+                "aspectRatio": "9:16",
+                "fps": 24,
+                "seed": 314159
+            })
+        );
+    }
+
+    #[test]
+    fn shot_i2v_dedupe_distinguishes_supplied_generation_parameters() {
+        let fixture = shot_i2v_fixture();
+        let mut first_input = shot_i2v_input(&fixture, "A measured push-in");
+        first_input["generationParameters"] = serde_json::json!({
+            "durationSeconds": 6.0,
+            "aspectRatio": "16:9",
+            "fps": 24,
+            "seed": 7
+        });
+        let mut second_input = first_input.clone();
+        second_input["generationParameters"]["seed"] = serde_json::json!(8);
+
+        let first = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            first_input,
+        )
+        .unwrap();
+        let second = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            second_input,
+        )
+        .unwrap();
+
+        assert_ne!(first.run.id, second.run.id);
     }
 
     #[test]

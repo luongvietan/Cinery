@@ -150,6 +150,19 @@ pub fn complete_attempt(
     // terminal transitions) must not duplicate artifacts. ---
     if let Some(existing) = existing_result_set(&conn, &attempt.id)? {
         let artifact_ids = existing_artifact_ids(&conn, &existing)?;
+        if matches!(
+            context.operation_id.as_str(),
+            "scene.generate_video" | "shot.image_to_video"
+        ) {
+            if let Some(artifact_id) = artifact_ids.first() {
+                let artifact = crate::generation::service::GenerationService::get_artifact_detail(
+                    project_root,
+                    artifact_id,
+                )?
+                .artifact;
+                import_scene_video_candidate(project_root, &conn, &attempt, &context, &artifact)?;
+            }
+        }
         return Ok(CompletionOutcome::Captured {
             result_set_id: Some(existing),
             artifact_ids,

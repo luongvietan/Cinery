@@ -55,16 +55,77 @@ pub fn set_shot_video_if_current(
     Ok(updated > 0)
 }
 
+fn promote_candidate_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    asset_id: &str,
+    asset_version_id: &str,
+) -> Result<(), AppError> {
+    let target = crate::assets::repository::get_asset_version_by_id(tx, asset_version_id)?
+        .filter(|version| version.asset_id == asset_id)
+        .ok_or(AppError::GenerationArtifactNotPromotable)?;
+    let asset = crate::assets::repository::get_asset(tx, asset_id)?;
+
+    if asset.canonical_version_id.as_deref() != Some(target.id.as_str()) {
+        if let Some(current_id) = &asset.canonical_version_id {
+            tx.execute(
+                "UPDATE asset_versions SET status = 'superseded' WHERE id = ?1",
+                params![current_id],
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        }
+        tx.execute(
+            "UPDATE asset_versions SET status = 'canonical' WHERE id = ?1",
+            params![target.id],
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+        tx.execute(
+            "UPDATE assets SET canonical_version_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![target.id, chrono::Utc::now().to_rfc3339(), asset_id],
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    }
+
+    let canonical_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM asset_versions WHERE asset_id = ?1 AND status = 'canonical'",
+            params![asset_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let canonical_id: Option<String> = tx
+        .query_row(
+            "SELECT canonical_version_id FROM assets WHERE id = ?1",
+            params![asset_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let target_status: String = tx
+        .query_row(
+            "SELECT status FROM asset_versions WHERE id = ?1",
+            params![asset_version_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    if canonical_count != 1
+        || canonical_id.as_deref() != Some(asset_version_id)
+        || target_status != "canonical"
+    {
+        return Err(AppError::Database(format!(
+            "canonical-promotion invariant violated for asset {asset_id}"
+        )));
+    }
+    Ok(())
+}
+
 /// Promotes one exact captured I2V candidate onto the Shot's video pin.
 ///
 /// Validation order per design: artifact availability/kind, lineage, the
 /// producing run's operation + input Shot/Scene, the exact frozen source
-/// keyframe, the scene-owned video asset, then a preflight of the caller's
-/// expected pin. Artifact/version promotion itself is idempotent
-/// (content-deduped import), so a crash between phases replays safely; the
-/// pin update is a nullable compare-and-set inside one immediate
-/// transaction, and the `shot.video.promoted` audit event is appended only
-/// when the pin actually changed.
+/// keyframe, and the scene-owned video asset. Same-artifact replay is checked
+/// before expected-pin validation. Candidate canonicalization, promotion
+/// bookkeeping, nullable Shot compare-and-set, and audit writes then share one
+/// immediate transaction, so a losing CAS rolls every candidate-side effect
+/// back and a winning replay returns the same exact version.
 pub fn promote_shot_video_candidate(
     project_root: &Path,
     shot_id: &str,
@@ -75,7 +136,7 @@ pub fn promote_shot_video_candidate(
     let project_id = project.id.clone();
 
     // The initiating Shot must exist in this project.
-    let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+    let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
     let shot_scene_id: String = conn
         .query_row(
             "SELECT ss.scene_id FROM scene_shots ss \
@@ -99,6 +160,11 @@ pub fn promote_shot_video_candidate(
     let lineage = detail
         .lineage
         .ok_or(AppError::GenerationLineageIncomplete)?;
+    crate::generation::storage::read_and_verify(
+        project_root,
+        &detail.artifact.storage_path,
+        &detail.artifact.sha256,
+    )?;
 
     // The producing run must be the I2V run naming this exact Shot/Scene.
     let (operation_id, input_json): (String, String) = conn
@@ -139,23 +205,16 @@ pub fn promote_shot_video_candidate(
         return Err(AppError::GenerationArtifactNotPromotable);
     }
 
-    // Preflight the caller's expected pin before doing any work: a stale
-    // or conflicting expectation loses immediately, without importing or
-    // promoting anything.
-    let current_pin: Option<String> = conn
-        .query_row(
-            "SELECT generated_video_asset_version_id FROM scene_shots WHERE id = ?1",
-            params![shot_id],
-            |row| row.get(0),
-        )
+    // Serialize the expected-pin read, candidate canonicalization, artifact
+    // promotion record, and Shot compare-and-set under one write lock. A CAS
+    // loser therefore rolls back every candidate-side effect.
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| AppError::Database(error.to_string()))?;
-    if current_pin.as_deref() != expected_current_video_asset_version_id {
-        return Err(AppError::PromotionConflict);
-    }
 
     // Resolve the scene-owned video asset (find semantics: one video asset
     // per scene holds every run — matches completion-time import).
-    let video_asset_id: String = conn
+    let video_asset_id: String = tx
         .query_row(
             "SELECT id FROM assets \
              WHERE project_id = ?1 AND type = 'video' AND owner_entity_id = ?2 \
@@ -167,37 +226,66 @@ pub fn promote_shot_video_candidate(
         .map_err(|error| AppError::Database(error.to_string()))?
         .ok_or(AppError::AssetNotFound)?;
 
-    // Idempotent artifact -> AssetVersion promotion (content-deduped import
-    // returns the exact already-imported candidate version).
-    let promoted = GenerationService::promote_generated_artifact(
-        project_root,
-        artifact_id,
-        &video_asset_id,
-        true,
-    )?;
-
-    let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|error| AppError::Database(error.to_string()))?;
-
-    // Crash reconciliation: the pin may already hold the promoted version.
-    let pin_in_tx: Option<String> = tx
+    let existing_promotion = crate::generation::repository::find_promotion(&tx, artifact_id)?;
+    if let Some(existing) = &existing_promotion {
+        if existing.asset_id != video_asset_id {
+            return Err(AppError::GenerationArtifactNotPromotable);
+        }
+    }
+    let current_pin: Option<String> = tx
         .query_row(
             "SELECT generated_video_asset_version_id FROM scene_shots WHERE id = ?1",
             params![shot_id],
             |row| row.get(0),
         )
         .map_err(|error| AppError::Database(error.to_string()))?;
-    if pin_in_tx.as_deref() == Some(promoted.id.as_str()) {
-        tx.commit()
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        return Ok(ShotVideoPromotionResult {
-            shot_id: shot_id.to_string(),
-            artifact_id: artifact_id.to_string(),
-            asset_version_id: promoted.id.clone(),
-            previous_asset_version_id: expected_current_video_asset_version_id.map(str::to_string),
-        });
+
+    // True same-artifact replay wins before stale-pin validation, including
+    // when the caller retries with the original expected pin.
+    if let Some(existing) = &existing_promotion {
+        if current_pin.as_deref() == Some(existing.asset_version_id.as_str()) {
+            let asset_version_id = existing.asset_version_id.clone();
+            tx.commit()
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return Ok(ShotVideoPromotionResult {
+                shot_id: shot_id.to_string(),
+                artifact_id: artifact_id.to_string(),
+                asset_version_id,
+                previous_asset_version_id: expected_current_video_asset_version_id
+                    .map(str::to_string),
+            });
+        }
+    }
+    if current_pin.as_deref() != expected_current_video_asset_version_id {
+        return Err(AppError::PromotionConflict);
+    }
+
+    let asset_version_id = if let Some(existing) = &existing_promotion {
+        existing.asset_version_id.clone()
+    } else {
+        crate::assets::repository::find_version_by_hash(
+            &tx,
+            &video_asset_id,
+            &detail.artifact.sha256,
+        )?
+        .ok_or(AppError::GenerationArtifactNotPromotable)?
+        .id
+    };
+
+    promote_candidate_in_transaction(&tx, &video_asset_id, &asset_version_id)?;
+
+    if existing_promotion.is_none() {
+        crate::generation::repository::insert_promotion(
+            &tx,
+            &crate::generation::model::ArtifactPromotion {
+                id: ulid::Ulid::new().to_string(),
+                artifact_id: artifact_id.to_string(),
+                asset_id: video_asset_id.clone(),
+                asset_version_id: asset_version_id.clone(),
+                set_canonical: true,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            },
+        )?;
     }
 
     let changed = set_shot_video_if_current(
@@ -205,10 +293,32 @@ pub fn promote_shot_video_candidate(
         &project_id,
         shot_id,
         expected_current_video_asset_version_id,
-        &promoted.id,
+        &asset_version_id,
     )?;
     if !changed {
         return Err(AppError::PromotionConflict);
+    }
+    if existing_promotion.is_none() {
+        crate::providers::repository::append_audit_event(
+            &tx,
+            Some(&lineage.provider_attempt_id),
+            &lineage.workflow_run_id,
+            "generation.artifact.promoted",
+            Some(&serde_json::json!({
+                "artifactId": artifact_id,
+                "assetVersionId": asset_version_id,
+            })),
+        )?;
+        crate::providers::repository::append_audit_event(
+            &tx,
+            Some(&lineage.provider_attempt_id),
+            &lineage.workflow_run_id,
+            "generation.artifact.canonicalized",
+            Some(&serde_json::json!({
+                "artifactId": artifact_id,
+                "assetVersionId": asset_version_id,
+            })),
+        )?;
     }
     crate::providers::repository::append_audit_event(
         &tx,
@@ -222,7 +332,7 @@ pub fn promote_shot_video_candidate(
             "workflowRunId": lineage.workflow_run_id,
             "providerAttemptId": lineage.provider_attempt_id,
             "artifactId": artifact_id,
-            "assetVersionId": promoted.id,
+            "assetVersionId": asset_version_id,
             "previousAssetVersionId": expected_current_video_asset_version_id,
         })),
     )?;
@@ -232,7 +342,7 @@ pub fn promote_shot_video_candidate(
     Ok(ShotVideoPromotionResult {
         shot_id: shot_id.to_string(),
         artifact_id: artifact_id.to_string(),
-        asset_version_id: promoted.id,
+        asset_version_id,
         previous_asset_version_id: expected_current_video_asset_version_id.map(str::to_string),
     })
 }
@@ -243,7 +353,6 @@ mod tests {
     use crate::assets::service::AssetService;
     use crate::cinema::model::ShotRecord;
     use crate::cinema::service::CinemaService;
-    use crate::generation::model::GeneratedArtifact;
     use crate::generation::service::{GenerationCaptureInput, GenerationService};
     use crate::providers::model::{ProviderOutput, ProviderResult};
     use rusqlite::params;
@@ -684,13 +793,11 @@ mod tests {
     }
 
     #[test]
-    fn replaying_the_winning_promotion_is_idempotent() {
+    fn replaying_the_winning_promotion_with_the_original_expected_pin_is_idempotent() {
         let fixture = completed_shot_i2v_fixture();
         let first = fixture.promote(None).unwrap();
 
-        let replay = fixture
-            .promote_with(&fixture.artifact_id, Some(&first.asset_version_id))
-            .unwrap();
+        let replay = fixture.promote_with(&fixture.artifact_id, None).unwrap();
         assert_eq!(replay.asset_version_id, first.asset_version_id);
         assert_eq!(
             fixture.shot().generated_video_asset_version_id,
@@ -700,6 +807,78 @@ mod tests {
         assert_eq!(
             audit_payloads(&fixture.root, "shot.video.promoted").len(),
             1
+        );
+    }
+
+    #[test]
+    fn failed_shot_cas_rolls_back_candidate_canonicalization() {
+        let fixture = completed_shot_i2v_fixture();
+        let losing_artifact = fixture.capture_extra_video_artifact("attempt-i2v-2", 11);
+        let losing_detail =
+            GenerationService::get_artifact_detail(&fixture.root, &losing_artifact).unwrap();
+        let losing_version = AssetService::import_media_version(
+            &fixture.root,
+            &fixture.video_asset_id,
+            &fixture.root.join(&losing_detail.artifact.storage_path),
+            None,
+        )
+        .unwrap();
+        let winning_version =
+            AssetService::get_asset_with_versions(&fixture.root, &fixture.video_asset_id)
+                .unwrap()
+                .versions
+                .into_iter()
+                .find(|version| version.sha256 == fixture_artifact_sha(&fixture))
+                .unwrap();
+        AssetService::promote_asset_version(&fixture.root, &winning_version.id).unwrap();
+
+        // Deterministically simulate a compare-and-set loser after its
+        // preflight read. The pin write is ignored, so every canonical and
+        // promotion side effect must be in the same transaction and roll
+        // back with the failed CAS.
+        let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TRIGGER reject_losing_shot_pin
+             BEFORE UPDATE OF generated_video_asset_version_id ON scene_shots
+             WHEN NEW.generated_video_asset_version_id = '{}'
+             BEGIN
+               SELECT RAISE(IGNORE);
+             END;",
+            losing_version.id
+        ))
+        .unwrap();
+
+        let error = fixture.promote_with(&losing_artifact, None).unwrap_err();
+        assert!(matches!(error, AppError::PromotionConflict));
+
+        let asset =
+            AssetService::get_asset_with_versions(&fixture.root, &fixture.video_asset_id).unwrap();
+        assert_eq!(
+            asset.asset.canonical_version_id.as_deref(),
+            Some(winning_version.id.as_str())
+        );
+        assert_eq!(
+            asset
+                .versions
+                .iter()
+                .find(|version| version.id == winning_version.id)
+                .unwrap()
+                .status,
+            "canonical"
+        );
+        assert_eq!(
+            asset
+                .versions
+                .iter()
+                .find(|version| version.id == losing_version.id)
+                .unwrap()
+                .status,
+            "candidate"
+        );
+        assert!(
+            crate::generation::repository::find_promotion(&conn, &losing_artifact)
+                .unwrap()
+                .is_none()
         );
     }
 

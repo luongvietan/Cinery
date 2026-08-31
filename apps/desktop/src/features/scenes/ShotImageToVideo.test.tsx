@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { ShotVideoPromotionResult, WorkflowRunDetail } from "@cinematic/domain";
+import type { GenerationResultSetDetail, ShotVideoPromotionResult, WorkflowRunDetail } from "@cinematic/domain";
 import { ShotImageToVideo } from "./ShotImageToVideo";
 import type { Shot } from "./api";
 import { advanceWorkflowRun, createWorkflowRun, getProviderCapabilities, getProviderConfigurationStatus, getWorkflowRun, listCustomProviders, listProviderModels, listProviders, listWorkflowRuns } from "../workflows/api";
@@ -48,15 +48,18 @@ function shot(overrides: Partial<Shot> = {}): Shot {
   };
 }
 
-function completedRun(): WorkflowRunDetail {
+function runWithStatus(
+  status: WorkflowRunDetail["run"]["status"],
+  id = "run-1",
+): WorkflowRunDetail {
   return {
     run: {
-      id: "run-1",
+      id,
       projectId: "project-1",
       skillId: "scene-builder",
       skillVersion: "1.0.0",
       operationId: "shot.image_to_video",
-      status: "completed",
+      status,
       inputJson: JSON.stringify({ sceneId: "scene-1", shotId: "shot-1" }),
       prerequisiteReportJson: null,
       contextSnapshotJson: null,
@@ -65,11 +68,69 @@ function completedRun(): WorkflowRunDetail {
       failureMessage: null,
       createdAt: "now",
       updatedAt: "now",
-      completedAt: "now",
+      completedAt: status === "completed" || status === "cancelled" || status === "failed" ? "now" : null,
     },
     steps: [],
     events: [],
   };
+}
+
+function completedRun(): WorkflowRunDetail {
+  return runWithStatus("completed");
+}
+
+function generationResults(): GenerationResultSetDetail[] {
+  return [
+    {
+      resultSet: {
+        id: "rs-1",
+        projectId: "project-1",
+        workflowRunId: "run-1",
+        workflowStepKey: "execute",
+        providerAttemptId: "attempt-1",
+        mediaKind: "video",
+        requestedOutputCount: 1,
+        createdAt: "now",
+      },
+      artifacts: [
+        {
+          artifact: {
+            id: "artifact-1",
+            resultSetId: "rs-1",
+            ordinal: 1,
+            mediaKind: "video",
+            mimeType: "video/mp4",
+            width: null,
+            height: null,
+            byteSize: 24,
+            sha256: "a".repeat(64),
+            storagePath: "generations/run-1/a.mp4",
+            captureStatus: "available",
+            captureErrorCode: null,
+            createdAt: "now",
+          },
+          lineage: {
+            artifactId: "artifact-1",
+            workflowRunId: "run-1",
+            workflowStepKey: "execute",
+            workflowDefinitionId: "scene-builder",
+            workflowVersion: "1.0.0",
+            skillId: "scene-builder",
+            skillVersion: "1.0.0",
+            compiledExecutionArtifactId: "c",
+            compiledRequestSha256: "b".repeat(64),
+            canonSnapshotId: null,
+            canonSnapshotSha256: null,
+            providerAttemptId: "attempt-1",
+            providerId: "i2v",
+            modelId: "motion-v1",
+            sourceAssetVersionIds: ["kf-v1"],
+            createdAt: "now",
+          },
+        },
+      ],
+    },
+  ];
 }
 
 function runningDetail(id: string): WorkflowRunDetail {
@@ -111,6 +172,7 @@ function runningDetail(id: string): WorkflowRunDetail {
 
 describe("ShotImageToVideo", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     vi.mocked(getShotImageToVideoSource).mockResolvedValue(keyframeSource);
     vi.mocked(createWorkflowRun).mockResolvedValue(completedRun());
     vi.mocked(advanceWorkflowRun).mockResolvedValue(completedRun());
@@ -122,7 +184,7 @@ describe("ShotImageToVideo", () => {
     vi.mocked(listProviderModels).mockResolvedValue(["motion-v1"]);
     vi.mocked(getProviderCapabilities).mockResolvedValue({
       mediaTypes: ["video"], supportsSeed: false, supportsNegativePrompt: false,
-      supportsReferenceImage: false, supportsImageEdit: false, supportsMultipleReferenceImages: false,
+      supportsReferenceImage: true, supportsImageEdit: false, supportsMultipleReferenceImages: false,
       supportsImageToVideo: true, supportsCancel: false, supportsProgress: false,
       supportedAspectRatios: [], supportedModels: ["motion-v1"],
     });
@@ -151,6 +213,10 @@ describe("ShotImageToVideo", () => {
   });
 
   it("creates the exact Shot I2V payload once on rapid clicks", async () => {
+    let resolveCreation!: (detail: WorkflowRunDetail) => void;
+    vi.mocked(createWorkflowRun).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreation = resolve; }),
+    );
     const user = userEvent.setup();
     render(
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
@@ -158,8 +224,10 @@ describe("ShotImageToVideo", () => {
     await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
     const button = await screen.findByRole("button", { name: "Generate Video" });
     await waitFor(() => expect(button).toBeEnabled());
-    await Promise.all([user.click(button), user.click(button)]);
+    const clicks = Promise.all([user.click(button), user.click(button)]);
     await waitFor(() => expect(createWorkflowRun).toHaveBeenCalledTimes(1));
+    resolveCreation(completedRun());
+    await clicks;
     expect(createWorkflowRun).toHaveBeenCalledWith("C:/project", "scene-builder", "1.0.0", "shot.image_to_video", {
       sceneId: "scene-1",
       shotId: "shot-1",
@@ -171,57 +239,7 @@ describe("ShotImageToVideo", () => {
   });
 
   it("promotes the exact candidate with the current pin as the expected value", async () => {
-    vi.mocked(listGenerationResults).mockResolvedValue([
-      {
-        resultSet: {
-          id: "rs-1",
-          projectId: "project-1",
-          workflowRunId: "run-1",
-          workflowStepKey: "execute",
-          providerAttemptId: "attempt-1",
-          mediaKind: "video",
-          requestedOutputCount: 1,
-          createdAt: "now",
-        },
-        artifacts: [
-          {
-            artifact: {
-              id: "artifact-1",
-              resultSetId: "rs-1",
-              ordinal: 1,
-              mediaKind: "video",
-              mimeType: "video/mp4",
-              width: null,
-              height: null,
-              byteSize: 24,
-              sha256: "a".repeat(64),
-              storagePath: "generations/run-1/a.mp4",
-              captureStatus: "available",
-              captureErrorCode: null,
-              createdAt: "now",
-            },
-            lineage: {
-              artifactId: "artifact-1",
-              workflowRunId: "run-1",
-              workflowStepKey: "execute",
-              workflowDefinitionId: "scene-builder",
-              workflowVersion: "1.0.0",
-              skillId: "scene-builder",
-              skillVersion: "1.0.0",
-              compiledExecutionArtifactId: "c",
-              compiledRequestSha256: "b".repeat(64),
-              canonSnapshotId: null,
-              canonSnapshotSha256: null,
-              providerAttemptId: "attempt-1",
-              providerId: "i2v",
-              modelId: "motion-v1",
-              sourceAssetVersionIds: ["kf-v1"],
-              createdAt: "now",
-            },
-          },
-        ],
-      },
-    ]);
+    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
     const onShotChanged = vi.fn();
     const user = userEvent.setup();
     render(
@@ -291,6 +309,57 @@ describe("ShotImageToVideo", () => {
     expect(getWorkflowRun).toHaveBeenCalledWith("C:/project", "mine");
   });
 
+  it("restores persisted candidates for a completed run", async () => {
+    const persisted = completedRun();
+    vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
+    vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
+    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
+
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Use for Shot" })).toBeInTheDocument();
+    expect(listGenerationResults).toHaveBeenCalledWith("C:/project", "run-1");
+  });
+
+  it.each(["completed", "cancelled", "failed"] as const)(
+    "allows a new generation after a %s run",
+    async (status) => {
+      const persisted = runWithStatus(status);
+      vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
+      vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
+      const user = userEvent.setup();
+
+      render(
+        <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+      );
+      await waitFor(() => expect(getWorkflowRun).toHaveBeenCalledWith("C:/project", "run-1"));
+      const button = await screen.findByRole("button", { name: "Generate Video" });
+      await waitFor(() => expect(button).toBeEnabled());
+      await user.click(button);
+
+      await waitFor(() => expect(createWorkflowRun).toHaveBeenCalledTimes(1));
+    },
+  );
+
+  it("requires providers to accept the source reference image", async () => {
+    vi.mocked(getProviderCapabilities).mockResolvedValue({
+      mediaTypes: ["video"], supportsSeed: false, supportsNegativePrompt: false,
+      supportsReferenceImage: false, supportsImageEdit: false, supportsMultipleReferenceImages: false,
+      supportsImageToVideo: true, supportsCancel: false, supportsProgress: false,
+      supportedAspectRatios: [], supportedModels: ["motion-v1"],
+    });
+
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    const option = await screen.findByRole("option", { name: /i2v/ });
+    expect(option).toBeDisabled();
+    expect(option).toHaveTextContent("cannot accept reference images");
+  });
+
   it("keeps the last valid run across a transient read failure", async () => {
     vi.mocked(listWorkflowRuns).mockResolvedValue([
       {
@@ -316,10 +385,10 @@ describe("ShotImageToVideo", () => {
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
     );
     expect(await screen.findByText("Generating…")).toBeInTheDocument();
-    // Remount: restoration re-reads, the read fails, the panel must keep the
-    // previous detail rather than crashing or clearing.
+    // A project-context refresh re-reads, the read fails, and the panel must
+    // keep the previous detail rather than crashing or clearing.
     rerender(
-      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+      <ShotImageToVideo projectRootPath="C:/project-refreshed" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
     );
     await waitFor(() => expect(getWorkflowRun).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Generating…")).toBeInTheDocument();

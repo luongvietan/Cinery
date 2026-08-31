@@ -27,6 +27,10 @@ interface ResultState {
   artifacts: GeneratedArtifactDetail[];
 }
 
+function isActiveRun(run: ResultState | null): boolean {
+  return run !== null && !["completed", "cancelled", "failed"].includes(run.detail.run.status);
+}
+
 /**
  * Shot-local image-to-video panel: pick an I2V-capable AI service, animate
  * the shot's exact pinned keyframe, review the video candidates, then pin
@@ -90,8 +94,9 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
         return latest ? getWorkflowRun(projectRootPath, latest.id) : null;
       })
-      .then((detail) => {
-        if (!cancelled && detail) setRun({ detail, artifacts: [] });
+      .then((detail) => detail ? resolveRun(detail) : null)
+      .then((restored) => {
+        if (!cancelled && restored) setRun(restored);
       })
       .catch(() => {
         // Keep any previously-restored run; never surface a transient read
@@ -111,9 +116,9 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
 
   async function handleGenerate() {
     // Synchronous double-click guard: while a creation is in flight (ref)
-    // or a run is already being reviewed (state), further clicks never
-    // create a second payload.
-    if (creatingRef.current || run !== null || !source || !selection.providerId || !selection.modelId) return;
+    // or a run is active (state), further clicks never create a second
+    // payload. Terminal runs stay visible but do not block a new generation.
+    if (creatingRef.current || isActiveRun(run) || !source || !selection.providerId || !selection.modelId) return;
     creatingRef.current = true;
     setCreating(true);
     setError(null);
@@ -127,7 +132,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         generationParameters: { durationSeconds: Number(duration) || shot.durationSeconds },
       });
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
-      await applyRun(waiting);
+      setRun(await resolveRun(waiting));
     } catch (caught: unknown) {
       setError(describeError(caught));
     } finally {
@@ -137,10 +142,9 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
 
   /** Resolve candidates once a run completes so the user reviews actual
    * videos before pinning. */
-  async function applyRun(detail: WorkflowRunDetail) {
+  async function resolveRun(detail: WorkflowRunDetail): Promise<ResultState> {
     if (detail.run.status !== "completed") {
-      setRun({ detail, artifacts: [] });
-      return;
+      return { detail, artifacts: [] };
     }
     let artifacts: GeneratedArtifactDetail[] = [];
     try {
@@ -149,13 +153,13 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     } catch {
       // The run view still shows the completed run without candidates.
     }
-    setRun({ detail, artifacts });
+    return { detail, artifacts };
   }
 
   function handleRunChange(next: WorkflowRunDetail) {
     if (!run) return;
     if (next.run.status === "completed") {
-      void applyRun(next);
+      void resolveRun(next).then(setRun);
       return;
     }
     setRun({ ...run, detail: next });
@@ -180,7 +184,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     }
   }
 
-  const runActive = run !== null && run.detail.run.status !== "completed";
+  const runActive = isActiveRun(run);
 
   return (
     <div className="shot-i2v" style={{ display: "grid", gap: "var(--space-8)", marginTop: "var(--space-8)" }}>
@@ -217,7 +221,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
             projectRootPath={projectRootPath}
             value={selection}
             mediaType="video"
-            requiresReferences={false}
+            requiresReferences={true}
             requiredOperation="video.imageToVideo"
             onChange={setSelection}
           />
@@ -245,16 +249,14 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         </>
       ) : null}
 
-      <button type="button" onClick={() => void handleGenerate()} disabled={!source || creating || !selection.providerId || !selection.modelId}>
+      <button type="button" onClick={() => void handleGenerate()} disabled={!source || creating || runActive || !selection.providerId || !selection.modelId}>
         {creating ? "Generating…" : "Generate Video"}
       </button>
 
       {error ? <p role="alert">{error}</p> : null}
 
       {run ? (
-        runActive ? (
-          <WorkflowRunView projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
-        ) : (
+        run.detail.run.status === "completed" ? (
           <div style={{ display: "grid", gap: "var(--space-8)" }}>
             {run.artifacts.length === 0 ? (
               <p role="status" style={{ margin: 0, color: "var(--c-muted)" }}>
@@ -287,6 +289,8 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
               ))
             )}
           </div>
+        ) : (
+          <WorkflowRunView projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
         )
       ) : null}
     </div>

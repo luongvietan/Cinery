@@ -11,13 +11,14 @@
 mod support;
 
 use cinematic_desktop_lib::cinema::service::CinemaService;
-use cinematic_desktop_lib::generation::service::GenerationService;
+use cinematic_desktop_lib::generation::service::{GenerationCaptureInput, GenerationService};
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::providers::commands::{
     cancel_workflow_execution, retry_workflow_execution,
 };
-use cinematic_desktop_lib::workflow::background;
+use cinematic_desktop_lib::providers::model::{ProviderOutput, ProviderResult};
 use cinematic_desktop_lib::workflow::runtime::WorkflowRuntime;
+use cinematic_desktop_lib::workflow::{background, completion};
 use rusqlite::OptionalExtension;
 use std::path::Path;
 
@@ -1514,6 +1515,122 @@ fn shot_i2v_resumes_through_rehydrated_declarative_adapter_without_resubmit() {
         shots[0].generated_video_asset_version_id, None,
         "completion must never auto-pin the Shot video"
     );
+}
+
+#[test]
+fn shot_i2v_completion_replay_imports_a_missing_candidate_without_duplicate_capture() {
+    let _guard = background_test_guard();
+    background::reset_provider_cache_for_tests();
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    let (source_version_id, _) = pin_shot_keyframe(root, &scene.id, &shot.id);
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
+    let pending = {
+        let conn = open_db(root);
+        background::discover_pending_jobs(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|job| job.workflow_run_id == running.run.id)
+            .unwrap()
+    };
+    let project_id: String = open_db(root)
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
+    let result = ProviderResult {
+        outputs: vec![ProviderOutput {
+            uri: "data:video/mp4;base64,AAAAGGZ0eXBtcDQyAAAAAW1wNDJpc29t".into(),
+            mime_type: "video/mp4".into(),
+            filename: Some("replayed-shot.mp4".into()),
+        }],
+        provider_reported_model: Some("fake-video-v1".into()),
+        metadata: serde_json::json!({}),
+    };
+    let captured = GenerationService::capture_provider_result(
+        root,
+        &GenerationCaptureInput {
+            project_id,
+            workflow_run_id: running.run.id.clone(),
+            workflow_step_key: pending.step_definition_id.clone(),
+            workflow_definition_id: "shot.image_to_video".into(),
+            workflow_version: "1.0.0".into(),
+            skill_id: "scene-builder".into(),
+            skill_version: "1.0.0".into(),
+            compiled_execution_artifact_id: "compiled-shot-i2v".into(),
+            compiled_request_sha256: "a".repeat(64),
+            canon_snapshot_id: None,
+            canon_snapshot_sha256: None,
+            provider_attempt_id: pending.execution_id.clone(),
+            provider_id: pending.provider_id.clone(),
+            model_id: pending.model_id.clone(),
+            source_asset_version_ids: vec![source_version_id],
+            requested_output_count: 1,
+            media_kind: "video".into(),
+        },
+        &result,
+    )
+    .unwrap();
+
+    let count_rows = || {
+        let conn = open_db(root);
+        let result_sets = conn
+            .query_row(
+                "SELECT COUNT(*) FROM generation_result_sets WHERE workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let artifacts = conn
+            .query_row(
+                "SELECT COUNT(*) FROM generated_artifacts ga
+                 JOIN generation_result_sets grs ON grs.id = ga.result_set_id
+                 WHERE grs.workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let lineages = conn
+            .query_row(
+                "SELECT COUNT(*) FROM artifact_lineage al
+                 JOIN generated_artifacts ga ON ga.id = al.artifact_id
+                 JOIN generation_result_sets grs ON grs.id = ga.result_set_id
+                 WHERE grs.workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let video_versions = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_versions av
+                 JOIN assets a ON a.id = av.asset_id
+                 WHERE a.type = 'video' AND a.owner_entity_id = ?1",
+                [&scene.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        (result_sets, artifacts, lineages, video_versions)
+    };
+    assert_eq!(count_rows(), (1, 1, 1, 0));
+
+    let first_replay = completion::complete_attempt(root, &pending, &result).unwrap();
+    assert_eq!(
+        first_replay,
+        completion::CompletionOutcome::Captured {
+            result_set_id: Some(captured.result_set.id.clone()),
+            artifact_ids: vec![captured.artifacts[0].id.clone()],
+        }
+    );
+    assert_eq!(count_rows(), (1, 1, 1, 1));
+
+    completion::complete_attempt(root, &pending, &result).unwrap();
+    assert_eq!(count_rows(), (1, 1, 1, 1));
 }
 
 #[test]
