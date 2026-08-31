@@ -58,11 +58,19 @@ fn scene_with_character(keys: &[&str]) -> (TempDir, PathBuf, String, String) {
         AssetService::import_asset_version(&root, &look_asset.id, &look_source, None).unwrap();
     AssetService::promote_asset_version(&root, &look_version.id).unwrap();
     let look = look_version.id;
-    let scene =
-        cinematic_desktop_lib::scenes::service::SceneService::create_scene(&root, "Scene 001", "A test scene")
-            .unwrap();
+    let scene = cinematic_desktop_lib::scenes::service::SceneService::create_scene(
+        &root,
+        "Scene 001",
+        "A test scene",
+    )
+    .unwrap();
     cinematic_desktop_lib::scenes::service::SceneService::add_scene_character(
-        &root, &scene.id, &character.id, &look, None, None,
+        &root,
+        &scene.id,
+        &character.id,
+        &look,
+        None,
+        None,
     )
     .unwrap();
     CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None).unwrap();

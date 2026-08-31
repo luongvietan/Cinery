@@ -105,7 +105,9 @@ impl CustomProviderDefinition {
             }
             for capability in &model.capabilities {
                 if !super::config::is_known_operation(capability) {
-                    return Err(format!("model capability {capability} is not a known operation"));
+                    return Err(format!(
+                        "model capability {capability} is not a known operation"
+                    ));
                 }
             }
         }
@@ -132,7 +134,8 @@ impl CustomProviderDefinition {
         }
         // LLM-purpose providers stay purpose-based (chat completions live in
         // the LLM surface); every other provider needs declarative operations.
-        if self.purpose != CustomProviderPurpose::Llm && self.purpose != CustomProviderPurpose::Legacy
+        if self.purpose != CustomProviderPurpose::Llm
+            && self.purpose != CustomProviderPurpose::Legacy
         {
             self.runtime.validate()?;
         }
@@ -628,17 +631,19 @@ mod tests {
     }
 
     #[test]
-    fn shot_image_to_video_requires_image_to_video_capability_and_preserves_generation_parameters() {
+    fn shot_image_to_video_requires_image_to_video_capability_and_preserves_generation_parameters()
+    {
         let mut execution = execution_request();
         execution.task = ExecutionTask::ShotImageToVideo;
         execution.media_type = ExecutionMediaType::Video;
         execution.references[0].role = Some(crate::workflow::execution::ReferenceRole::SourceImage);
-        execution.generation_parameters = crate::workflow::execution::ExecutionGenerationParameters {
-            aspect_ratio: Some("2.39:1".into()),
-            duration_seconds: Some(4.5),
-            fps: Some(24),
-            seed: Some(42),
-        };
+        execution.generation_parameters =
+            crate::workflow::execution::ExecutionGenerationParameters {
+                aspect_ratio: Some("2.39:1".into()),
+                duration_seconds: Some(4.5),
+                fps: Some(24),
+                seed: Some(42),
+            };
         let request = ProviderExecutionRequest::from_execution_request(
             "run-1",
             "execute",

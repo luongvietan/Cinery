@@ -48,13 +48,20 @@ fn fixture() -> Fixture {
 }
 
 fn scene_with_world(f: &Fixture) -> (String, String) {
-    let location =
-        CanonService::create_entity(std::path::Path::new(&f.root), CanonEntityType::Location, "The Station")
-            .unwrap();
+    let location = CanonService::create_entity(
+        std::path::Path::new(&f.root),
+        CanonEntityType::Location,
+        "The Station",
+    )
+    .unwrap();
     let world = WorldService::create_world(std::path::Path::new(&f.root), &location.id).unwrap();
     {
         // Canonicalize the World's plate asset so the scene can pin it.
-        let source = image_file(std::path::Path::new(&f.root), "world-plate.png", [10, 20, 30, 255]);
+        let source = image_file(
+            std::path::Path::new(&f.root),
+            "world-plate.png",
+            [10, 20, 30, 255],
+        );
         let version = AssetService::import_asset_version(
             std::path::Path::new(&f.root),
             &world.world_plate_asset_id,
@@ -70,8 +77,7 @@ fn scene_with_world(f: &Fixture) -> (String, String) {
         "Ops room stand-off".into(),
     )
     .unwrap();
-    scene_commands::assign_scene_world(f.root.clone(), scene.id.clone(), world.id.clone())
-        .unwrap();
+    scene_commands::assign_scene_world(f.root.clone(), scene.id.clone(), world.id.clone()).unwrap();
     (scene.id, world.id)
 }
 
@@ -79,12 +85,9 @@ fn scene_with_world(f: &Fixture) -> (String, String) {
 fn scene_commands_round_trip_with_stable_error_codes() {
     let f = fixture();
 
-    let scene = scene_commands::create_world_scene(
-        f.root.clone(),
-        "Scene 001".into(),
-        "Summary".into(),
-    )
-    .unwrap();
+    let scene =
+        scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "Summary".into())
+            .unwrap();
     let renamed = scene_commands::update_scene_details(
         f.root.clone(),
         scene.id.clone(),
@@ -190,9 +193,13 @@ fn invalid_mutations_return_stable_error_codes_not_panics() {
     let f = fixture();
     let (scene_id, _world_id) = scene_with_world(&f);
 
-    let error =
-        scene_commands::update_scene_details(f.root.clone(), scene_id.clone(), String::new(), String::new())
-            .unwrap_err();
+    let error = scene_commands::update_scene_details(
+        f.root.clone(),
+        scene_id.clone(),
+        String::new(),
+        String::new(),
+    )
+    .unwrap_err();
     assert_eq!(error.code, "INVALID_SCENE_TITLE");
 
     let error = create_shot(
@@ -231,8 +238,8 @@ fn shot_i2v_source_returns_the_exact_pinned_version_not_latest() {
 
     let f = fixture();
     let root = std::path::Path::new(&f.root);
-    let scene = scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into())
-        .unwrap();
+    let scene =
+        scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into()).unwrap();
     let shot = create_shot(
         f.root.clone(),
         scene.id.clone(),
@@ -253,7 +260,12 @@ fn shot_i2v_source_returns_the_exact_pinned_version_not_latest() {
     let first_version =
         AssetService::import_asset_version(root, &keyframe_asset.id, &first_source, None).unwrap();
     AssetService::promote_asset_version(root, &first_version.id).unwrap();
-    set_shot_keyframe(f.root.clone(), shot.id.clone(), Some(first_version.id.clone())).unwrap();
+    set_shot_keyframe(
+        f.root.clone(),
+        shot.id.clone(),
+        Some(first_version.id.clone()),
+    )
+    .unwrap();
 
     let second_source = image_file(root, "kf-second.png", [200, 200, 200, 255]);
     let second_version =
@@ -272,9 +284,7 @@ fn shot_i2v_source_returns_the_exact_pinned_version_not_latest() {
 #[test]
 fn promote_shot_video_candidate_command_pins_and_conflicts() {
     use cinematic_desktop_lib::cinema::service::CinemaService;
-    use cinematic_desktop_lib::generation::service::{
-        GenerationCaptureInput, GenerationService,
-    };
+    use cinematic_desktop_lib::generation::service::{GenerationCaptureInput, GenerationService};
     use cinematic_desktop_lib::providers::model::{ProviderOutput, ProviderResult};
     use cinematic_desktop_lib::scenes::service::SceneService;
     use serde_json::json;
@@ -282,8 +292,8 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     let f = fixture();
     let root = std::path::Path::new(&f.root);
 
-    let scene = scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into())
-        .unwrap();
+    let scene =
+        scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into()).unwrap();
     let shot = create_shot(
         f.root.clone(),
         scene.id.clone(),
@@ -299,14 +309,22 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     let keyframe_asset = SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
     let keyframe_source = image_file(root, "kf.png", [29, 47, 83, 255]);
     let keyframe_version =
-        AssetService::import_asset_version(root, &keyframe_asset.id, &keyframe_source, None).unwrap();
+        AssetService::import_asset_version(root, &keyframe_asset.id, &keyframe_source, None)
+            .unwrap();
     AssetService::promote_asset_version(root, &keyframe_version.id).unwrap();
-    set_shot_keyframe(f.root.clone(), shot.id.clone(), Some(keyframe_version.id.clone())).unwrap();
+    set_shot_keyframe(
+        f.root.clone(),
+        shot.id.clone(),
+        Some(keyframe_version.id.clone()),
+    )
+    .unwrap();
 
     // Durable run + attempt for the completed shot.image_to_video run.
-    let conn = cinematic_desktop_lib::db::open_existing_connection(&root.join("project.db")).unwrap();
-    let project_id: String =
-        conn.query_row("SELECT id FROM projects", [], |row| row.get(0)).unwrap();
+    let conn =
+        cinematic_desktop_lib::db::open_existing_connection(&root.join("project.db")).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
     let input = json!({
         "sceneId": scene.id,
         "shotId": shot.id,
@@ -400,13 +418,9 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     assert_eq!(error.code, "PROMOTION_CONFLICT");
 
     // Promote with the real (null) expected pin.
-    let promoted = promote_shot_video_candidate(
-        f.root.clone(),
-        shot.id.clone(),
-        artifact_id.clone(),
-        None,
-    )
-    .unwrap();
+    let promoted =
+        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id.clone(), None)
+            .unwrap();
     assert_eq!(promoted.shot_id, shot.id);
     assert_eq!(promoted.artifact_id, artifact_id);
     assert_eq!(promoted.previous_asset_version_id, None);
@@ -435,12 +449,7 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
 
-    let error = promote_shot_video_candidate(
-        f.root.clone(),
-        shot.id.clone(),
-        artifact_id,
-        None,
-    )
-    .unwrap_err();
+    let error = promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None)
+        .unwrap_err();
     assert_eq!(error.code, "PROMOTION_CONFLICT");
 }

@@ -119,8 +119,7 @@ pub fn compile_request(
             skill_version: "1.0.0".into(),
             operation_id: "asset.repair_failed_qa".into(),
         },
-        generation_parameters:
-            crate::workflow::execution::ExecutionGenerationParameters::default(),
+        generation_parameters: crate::workflow::execution::ExecutionGenerationParameters::default(),
     })
 }
 

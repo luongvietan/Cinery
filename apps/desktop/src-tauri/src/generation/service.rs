@@ -349,11 +349,9 @@ impl GenerationService {
                     target.asset.canonical_version_id.clone(),
                 ) {
                     Ok(version) => version,
-                    Err(AppError::DuplicateAssetVersion) => find_version_by_sha(
-                        project_root,
-                        target_asset_id,
-                        &artifact.sha256,
-                    )?,
+                    Err(AppError::DuplicateAssetVersion) => {
+                        find_version_by_sha(project_root, target_asset_id, &artifact.sha256)?
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -365,11 +363,9 @@ impl GenerationService {
                     target.asset.canonical_version_id.clone(),
                 ) {
                     Ok(version) => version,
-                    Err(AppError::DuplicateAssetVersion) => find_version_by_sha(
-                        project_root,
-                        target_asset_id,
-                        &artifact.sha256,
-                    )?,
+                    Err(AppError::DuplicateAssetVersion) => {
+                        find_version_by_sha(project_root, target_asset_id, &artifact.sha256)?
+                    }
                     Err(error) => return Err(error),
                 }
             }
@@ -470,8 +466,8 @@ fn provider_output_bytes(output: &ProviderOutput, max_bytes: usize) -> Result<Ve
     }
     if output.uri.starts_with("https://") || output.uri.starts_with("http://") {
         return download_bytes(&output.uri, max_bytes).map_err(|_| {
-                AppError::GenerationArtifactCaptureFailed("provider output download failed".into())
-            });
+            AppError::GenerationArtifactCaptureFailed("provider output download failed".into())
+        });
     }
     Err(AppError::GenerationArtifactCaptureFailed(
         "provider returned a non-durable output reference".into(),

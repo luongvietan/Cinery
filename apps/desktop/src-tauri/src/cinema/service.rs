@@ -187,7 +187,13 @@ impl CinemaService {
         project_root: &Path,
         project_id: &str,
         scene_id: &str,
-    ) -> Result<(crate::scenes::model::Scene, Vec<crate::scenes::model::SceneCharacterAssignment>), AppError> {
+    ) -> Result<
+        (
+            crate::scenes::model::Scene,
+            Vec<crate::scenes::model::SceneCharacterAssignment>,
+        ),
+        AppError,
+    > {
         let scene = load_scene(conn, project_id, scene_id)?;
 
         let characters = repository::list_scene_cast(conn, &scene.id)?;
@@ -235,8 +241,12 @@ impl CinemaService {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
 
-        let (scene, characters) =
-            Self::validate_scene_for_compilation(&conn, project_root, &project.id, &input.scene_id)?;
+        let (scene, characters) = Self::validate_scene_for_compilation(
+            &conn,
+            project_root,
+            &project.id,
+            &input.scene_id,
+        )?;
         tbd_guard::check_tbd_firewall(&conn, &project.id, &scene.id)?;
 
         // Collect the topics of every open TBD so their text is scrubbed

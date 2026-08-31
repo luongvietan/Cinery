@@ -114,11 +114,9 @@ fn inline_sync_completion_terminal_sets_the_provider_job_row() {
 
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     let (job_status, job_operation): (String, Option<String>) = conn
-        .query_row(
-            "SELECT status, operation FROM provider_jobs",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+        .query_row("SELECT status, operation FROM provider_jobs", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .unwrap();
     assert_eq!(
         job_status, "completed",
@@ -249,7 +247,8 @@ fn cancellation_marks_remote_attempt_cancelled_and_run_terminal() {
 fn list_providers_includes_builtin_registry_ids_for_a_project() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("provider-list");
-    cinematic_desktop_lib::project::service::ProjectService::create(&root, "Provider List").unwrap();
+    cinematic_desktop_lib::project::service::ProjectService::create(&root, "Provider List")
+        .unwrap();
 
     let providers = cinematic_desktop_lib::providers::commands::list_providers(Some(
         root.to_string_lossy().to_string(),

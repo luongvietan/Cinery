@@ -622,8 +622,8 @@ mod tests {
 
         // P10.0: `video` is a supported asset type; the scene video
         // workflow find-or-creates one per scene.
-        let asset = AssetService::create_asset(&fixture.root, "video", "SCENE 001 — Video", None)
-            .unwrap();
+        let asset =
+            AssetService::create_asset(&fixture.root, "video", "SCENE 001 — Video", None).unwrap();
         assert_eq!(asset.asset_type, "video");
     }
 

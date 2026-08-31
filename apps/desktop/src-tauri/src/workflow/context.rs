@@ -842,14 +842,14 @@ pub fn resolve_scene_video_context(
         .as_object_mut()
         .expect("checked object")
         .insert(
-        "compilation".into(),
-        serde_json::json!({
-            "compilationId": compilation.get("compilationId"),
-            "providerPrompt": compilation.get("providerPrompt"),
-            "totalDurationSeconds": compilation.get("totalDurationSeconds"),
-            "lastFrame": compilation.get("lastFrame"),
-            "audioInstructions": compilation.get("audioInstructions"),
-        }),
+            "compilation".into(),
+            serde_json::json!({
+                "compilationId": compilation.get("compilationId"),
+                "providerPrompt": compilation.get("providerPrompt"),
+                "totalDurationSeconds": compilation.get("totalDurationSeconds"),
+                "lastFrame": compilation.get("lastFrame"),
+                "audioInstructions": compilation.get("audioInstructions"),
+            }),
         );
     Ok(snapshot)
 }
@@ -904,7 +904,10 @@ pub fn resolve_shot_image_to_video_context(
         "image" => AssetType::Image,
         _ => return Err(AppError::SourceMediaTypeUnsupported),
     };
-    if !matches!(mime_type.as_str(), "image/png" | "image/jpeg" | "image/webp") {
+    if !matches!(
+        mime_type.as_str(),
+        "image/png" | "image/jpeg" | "image/webp"
+    ) {
         return Err(AppError::SourceMediaTypeUnsupported);
     }
     if file_path.trim().is_empty() {

@@ -7,8 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 fn registry() -> &'static Mutex<HashMap<(String, String), Arc<AtomicBool>>> {
-    static REGISTRY: OnceLock<Mutex<HashMap<(String, String), Arc<AtomicBool>>>> =
-        OnceLock::new();
+    static REGISTRY: OnceLock<Mutex<HashMap<(String, String), Arc<AtomicBool>>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

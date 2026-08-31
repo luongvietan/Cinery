@@ -14,10 +14,10 @@ use cinematic_desktop_lib::cinema::service::CinemaService;
 use cinematic_desktop_lib::generation::commands::promote_generated_artifact;
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::scenes::service::SceneService;
-use cinematic_desktop_lib::worlds::service::WorldService;
 use cinematic_desktop_lib::workflow::commands::{
     advance_workflow_run, approve_workflow_step, create_workflow_run,
 };
+use cinematic_desktop_lib::worlds::service::WorldService;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use tempfile::{tempdir, TempDir};
@@ -29,7 +29,13 @@ fn write_png(root: &Path, name: &str, pixel: [u8; 4]) -> PathBuf {
     path
 }
 
-fn canonical_owned_version(root: &Path, asset_type: &str, label: &str, owner: Option<String>, pixel: [u8; 4]) -> String {
+fn canonical_owned_version(
+    root: &Path,
+    asset_type: &str,
+    label: &str,
+    owner: Option<String>,
+    pixel: [u8; 4],
+) -> String {
     let asset = AssetService::create_asset(root, asset_type, label, owner).unwrap();
     let source = write_png(root, &format!("{label}.png"), pixel);
     let version = AssetService::import_asset_version(root, &asset.id, &source, None).unwrap();
@@ -44,7 +50,8 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
     ProjectService::create(&root, "Golden Path").unwrap();
 
     // ── Canon: character with locked behavioral + visual canon ──
-    let mara = CanonService::create_entity(&root, CanonEntityType::Character, "Mara Keene").unwrap();
+    let mara =
+        CanonService::create_entity(&root, CanonEntityType::Character, "Mara Keene").unwrap();
     for key in ["speech", "movement", "stillness"] {
         let section = CanonService::upsert_section(
             &root,
@@ -68,16 +75,13 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
     .unwrap();
 
     // ── World with a canonical plate ──
-    let location = CanonService::create_entity(&root, CanonEntityType::Location, "The Station").unwrap();
+    let location =
+        CanonService::create_entity(&root, CanonEntityType::Location, "The Station").unwrap();
     let world = WorldService::create_world(&root, &location.id).unwrap();
     let plate_source = write_png(&root, "plate.png", [10, 11, 12, 255]);
-    let plate_version = AssetService::import_asset_version(
-        &root,
-        &world.world_plate_asset_id,
-        &plate_source,
-        None,
-    )
-    .unwrap();
+    let plate_version =
+        AssetService::import_asset_version(&root, &world.world_plate_asset_id, &plate_source, None)
+            .unwrap();
     AssetService::promote_asset_version(&root, &plate_version.id).unwrap();
 
     // ── Scene assembly with exact references ──
@@ -93,19 +97,42 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
     );
     SceneService::add_scene_character(&root, &scene.id, &mara.id, &look_version, None, None)
         .unwrap();
-    let prop_version = canonical_owned_version(&root, "prop_plate", "Console", None, [30, 31, 32, 255]);
+    let prop_version =
+        canonical_owned_version(&root, "prop_plate", "Console", None, [30, 31, 32, 255]);
     SceneService::add_scene_prop(&root, &scene.id, &prop_version, Some("Ops console"), None)
         .unwrap();
 
     // ── Shot CRUD: create, edit, reorder ──
-    let shot_a = CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish the ops room", Some("Mara scans the console".into()), Some("wide".into())).unwrap();
-    let shot_b = CinemaService::create_shot(&root, &scene.id, None, 4.0, "Close on the console", Some("Mara leans in".into()), Some("medium".into())).unwrap();
+    let shot_a = CinemaService::create_shot(
+        &root,
+        &scene.id,
+        None,
+        4.0,
+        "Establish the ops room",
+        Some("Mara scans the console".into()),
+        Some("wide".into()),
+    )
+    .unwrap();
+    let shot_b = CinemaService::create_shot(
+        &root,
+        &scene.id,
+        None,
+        4.0,
+        "Close on the console",
+        Some("Mara leans in".into()),
+        Some("medium".into()),
+    )
+    .unwrap();
     assert_eq!(shot_a.ordering, 0);
     assert_eq!(shot_b.ordering, 1);
 
-    let reordered = CinemaService::reorder_shots(&root, &scene.id, &[shot_b.id.clone(), shot_a.id.clone()]).unwrap();
+    let reordered =
+        CinemaService::reorder_shots(&root, &scene.id, &[shot_b.id.clone(), shot_a.id.clone()])
+            .unwrap();
     assert_eq!(reordered[0].id, shot_b.id);
-    let reordered = CinemaService::reorder_shots(&root, &scene.id, &[shot_a.id.clone(), shot_b.id.clone()]).unwrap();
+    let reordered =
+        CinemaService::reorder_shots(&root, &scene.id, &[shot_a.id.clone(), shot_b.id.clone()])
+            .unwrap();
     assert_eq!(reordered[0].id, shot_a.id);
 
     let edited = CinemaService::update_shot(
@@ -135,7 +162,11 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
     // Keyframes are optional in compile readiness; reference/state blockers
     // must be empty at this point.
     let early_readiness = CinemaService::scene_readiness(&root, &scene.id).unwrap();
-    assert!(early_readiness.ready, "unexpected blockers: {:?}", early_readiness.blockers);
+    assert!(
+        early_readiness.ready,
+        "unexpected blockers: {:?}",
+        early_readiness.blockers
+    );
 
     // ── Keyframe workflow for shot A via the existing runtime (mock) ──
     let keyframe_asset = SceneService::ensure_scene_keyframe_asset(&root, &scene.id).unwrap();
@@ -147,7 +178,8 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
         json!({ "sceneId": scene.id, "providerId": "mock", "modelId": "mock-image-v1" }),
     )
     .unwrap();
-    let waiting = advance_workflow_run(root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
+    let waiting =
+        advance_workflow_run(root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
     assert_eq!(waiting.run.status, "waiting_for_approval");
     approve_workflow_step(
         root.to_string_lossy().to_string(),
@@ -156,16 +188,16 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
         None,
     )
     .unwrap();
-    let completed = advance_workflow_run(root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
+    let completed =
+        advance_workflow_run(root.to_string_lossy().to_string(), created.run.id.clone()).unwrap();
     assert_eq!(completed.run.status, "completed");
 
     // ── Review: the run captured a result set; promote the artifact canonically ──
-    let results =
-        cinematic_desktop_lib::generation::commands::list_generation_results(
-            root.to_string_lossy().to_string(),
-            Some(created.run.id.clone()),
-        )
-        .unwrap();
+    let results = cinematic_desktop_lib::generation::commands::list_generation_results(
+        root.to_string_lossy().to_string(),
+        Some(created.run.id.clone()),
+    )
+    .unwrap();
     assert_eq!(results.len(), 1, "keyframe run must capture one result set");
     let artifact_id = results[0].artifacts[0].artifact.id.clone();
     let artifact_a = artifact_id.clone();
@@ -204,12 +236,11 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
         advance_workflow_run(root.to_string_lossy().to_string(), created_b.run.id.clone()).unwrap();
     assert_eq!(completed_b.run.status, "completed");
 
-    let results_b =
-        cinematic_desktop_lib::generation::commands::list_generation_results(
-            root.to_string_lossy().to_string(),
-            Some(created_b.run.id.clone()),
-        )
-        .unwrap();
+    let results_b = cinematic_desktop_lib::generation::commands::list_generation_results(
+        root.to_string_lossy().to_string(),
+        Some(created_b.run.id.clone()),
+    )
+    .unwrap();
     let artifact_b = results_b[0].artifacts[0].artifact.id.clone();
     assert_ne!(artifact_a, artifact_b, "each run yields its own candidate");
     let promoted_b = promote_generated_artifact(
@@ -238,7 +269,11 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
 
     // Canonical drift does not make the scene unready.
     let readiness = CinemaService::scene_readiness(&root, &scene.id).unwrap();
-    assert!(readiness.ready, "unexpected blockers: {:?}", readiness.blockers);
+    assert!(
+        readiness.ready,
+        "unexpected blockers: {:?}",
+        readiness.blockers
+    );
 
     let compilation = CinemaService::compile_scene(
         &root,
@@ -289,7 +324,11 @@ fn unified_scene_shot_keyframe_compile_golden_path() {
         },
     )
     .unwrap();
-    let normalize = |value: &str| value.replace(&compilation_id, "COMPILATION").replace(&recompiled.id, "COMPILATION");
+    let normalize = |value: &str| {
+        value
+            .replace(&compilation_id, "COMPILATION")
+            .replace(&recompiled.id, "COMPILATION")
+    };
     assert_eq!(
         normalize(&compilation_json),
         normalize(&recompiled.compilation_json),

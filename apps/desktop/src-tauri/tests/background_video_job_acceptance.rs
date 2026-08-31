@@ -27,10 +27,15 @@ fn open_db(root: &Path) -> rusqlite::Connection {
 
 fn background_test_guard() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap()
 }
 
-fn start_video_run(root: &Path, scene_id: &str) -> cinematic_desktop_lib::workflow::model::WorkflowRunDetail {
+fn start_video_run(
+    root: &Path,
+    scene_id: &str,
+) -> cinematic_desktop_lib::workflow::model::WorkflowRunDetail {
     let created = WorkflowRuntime::create_run(
         root,
         "scene-builder",
@@ -58,14 +63,14 @@ fn pin_shot_keyframe(root: &Path, scene_id: &str, shot_id: &str) -> (String, Str
         .unwrap();
     let source = support::test_image(root, "shot-i2v-source.png", [29, 47, 83, 255]);
     let version = cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
-        root, &keyframe_asset.id, &source, None,
-    )
-    .unwrap();
-    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(
         root,
-        &version.id,
+        &keyframe_asset.id,
+        &source,
+        None,
     )
     .unwrap();
+    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(root, &version.id)
+        .unwrap();
     CinemaService::set_shot_keyframe(root, shot_id, Some(&version.id)).unwrap();
     (version.id, version.sha256)
 }
@@ -190,11 +195,13 @@ fn install_i2v_provider(root: &Path, base_url: String) {
         },
         api_key: None,
         api_key_hint: None,
-        models: vec![cinematic_desktop_lib::providers::model::CustomProviderModel {
-            id: "loop-i2v-v1".into(),
-            name: "Loop I2V V1".into(),
-            capabilities: vec!["video.imageToVideo".into()],
-        }],
+        models: vec![
+            cinematic_desktop_lib::providers::model::CustomProviderModel {
+                id: "loop-i2v-v1".into(),
+                name: "Loop I2V V1".into(),
+                capabilities: vec!["video.imageToVideo".into()],
+            },
+        ],
         headers: Vec::new(),
     };
     let conn = open_db(root);
@@ -224,13 +231,24 @@ fn background_video_job_acceptance_full_lifecycle() {
 
     // Keyframe pin (the scene must be compiled first).
     let keyframe_asset =
-        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
+        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(
+            root, &scene.id,
+        )
+        .unwrap();
     let keyframe_source = support::test_image(root, "keyframe.png", [9, 8, 7, 255]);
-    let keyframe_version = cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
-        root, &keyframe_asset.id, &keyframe_source, None,
+    let keyframe_version =
+        cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
+            root,
+            &keyframe_asset.id,
+            &keyframe_source,
+            None,
+        )
+        .unwrap();
+    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(
+        root,
+        &keyframe_version.id,
     )
     .unwrap();
-    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(root, &keyframe_version.id).unwrap();
     CinemaService::set_shot_keyframe(root, &shot.id, Some(&keyframe_version.id)).unwrap();
     CinemaService::compile_scene(
         root,
@@ -250,7 +268,10 @@ fn background_video_job_acceptance_full_lifecycle() {
         "the execution advance must return before provider completion"
     );
     let (provider_job_id, job_status) = durable_job(root, &running.run.id);
-    assert!(!provider_job_id.is_empty(), "durable ProviderJob must exist before returning");
+    assert!(
+        !provider_job_id.is_empty(),
+        "durable ProviderJob must exist before returning"
+    );
     assert_eq!(job_status, "submitted");
 
     // The attempt is durable and non-terminal; the step is running.
@@ -301,7 +322,11 @@ fn background_video_job_acceptance_full_lifecycle() {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(progress, Some(50), "progress must be durable and readable without the runner");
+        assert_eq!(
+            progress,
+            Some(50),
+            "progress must be durable and readable without the runner"
+        );
         assert!(polled_at.is_some());
         let run_status: String = conn
             .query_row(
@@ -334,13 +359,19 @@ fn background_video_job_acceptance_full_lifecycle() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(preserved, "running", "durable remote job must be preserved by recovery");
+        assert_eq!(
+            preserved, "running",
+            "durable remote job must be preserved by recovery"
+        );
     }
 
     // --- Second tick: the provider completes; the runner captures the
     // artifact and completes attempt, step, and run. ---
     let tick = background::run_pending_jobs(root).unwrap();
-    assert_eq!(tick.completed, 1, "the durable job must complete on the resumed runner");
+    assert_eq!(
+        tick.completed, 1,
+        "the durable job must complete on the resumed runner"
+    );
     let completed = WorkflowRuntime::get_run(root, &running.run.id).unwrap();
     assert_eq!(completed.run.status, "completed");
 
@@ -420,13 +451,9 @@ fn background_video_job_acceptance_full_lifecycle() {
         )
         .unwrap()
     };
-    let promoted = GenerationService::promote_generated_artifact(
-        root,
-        &artifact.id,
-        &video_asset_id,
-        true,
-    )
-    .unwrap();
+    let promoted =
+        GenerationService::promote_generated_artifact(root, &artifact.id, &video_asset_id, true)
+            .unwrap();
     assert_eq!(promoted.status, "canonical");
     CinemaService::set_shot_video(root, &shot.id, Some(&promoted.id)).unwrap();
     {
@@ -509,11 +536,9 @@ fn background_video_job_cancellation_is_durable_and_terminal_safe() {
             .unwrap();
         assert_eq!(run_status, "cancelled");
         let artifacts: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM generated_artifacts",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(artifacts, 0, "a cancelled job must produce no artifacts");
     }
@@ -615,7 +640,10 @@ fn completion_vs_cancellation_race_is_terminal_state_safe() {
             )
             .unwrap();
         assert_eq!(attempt, "cancelled");
-        assert_eq!(job, "cancelled", "job status must match the attempt outcome");
+        assert_eq!(
+            job, "cancelled",
+            "job status must match the attempt outcome"
+        );
         assert_eq!(run, "cancelled", "the cancel command made the run terminal");
     }
 
@@ -733,7 +761,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
         .unwrap()
     };
     assert_eq!(attempt2_number, 2);
-    assert!(attempt2_key.ends_with(":2"), "retry must use a fresh idempotency key");
+    assert!(
+        attempt2_key.ends_with(":2"),
+        "retry must use a fresh idempotency key"
+    );
     assert_eq!(attempt1_status, "failed", "the old attempt is immutable");
 
     // Execute the retry: a new provider job, and completion through the runner.
@@ -750,7 +781,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
         )
         .unwrap()
     };
-    assert!(job_count >= 2, "retry must create a new ProviderJob, not reuse attempt 1's (found {job_count})");
+    assert!(
+        job_count >= 2,
+        "retry must create a new ProviderJob, not reuse attempt 1's (found {job_count})"
+    );
 
     let mut completed_seen = false;
     for _ in 0..6 {
@@ -760,7 +794,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
             break;
         }
     }
-    assert!(completed_seen, "the retried job must complete through the runner");
+    assert!(
+        completed_seen,
+        "the retried job must complete through the runner"
+    );
     let completed = WorkflowRuntime::get_run(root, &run_id).unwrap();
     assert_eq!(completed.run.status, "completed");
 }
@@ -859,7 +896,10 @@ fn retry_double_click_creates_one_attempt_and_no_raw_sqlite_error() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(attempts, 2, "a double-click must create exactly one new attempt");
+    assert_eq!(
+        attempts, 2,
+        "a double-click must create exactly one new attempt"
+    );
 }
 
 #[test]
@@ -887,7 +927,10 @@ fn two_background_jobs_progress_independently() {
     // one another (job A completes on this tick; job B still has its own
     // poll count).
     let tick = background::run_pending_jobs(root).unwrap();
-    assert!(tick.polled + tick.completed >= 2, "both jobs must be worked in one tick");
+    assert!(
+        tick.polled + tick.completed >= 2,
+        "both jobs must be worked in one tick"
+    );
 
     // Complete B too.
     for _ in 0..4 {
@@ -907,14 +950,14 @@ fn two_background_jobs_progress_independently() {
     // Two distinct artifacts, two result sets, two video candidate versions.
     let conn = open_db(root);
     let result_sets: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM generation_result_sets",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM generation_result_sets", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     let artifacts: i64 = conn
-        .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     let video_versions: i64 = conn
         .query_row(
@@ -926,7 +969,10 @@ fn two_background_jobs_progress_independently() {
         .unwrap();
     assert_eq!(result_sets, 2);
     assert_eq!(artifacts, 2);
-    assert_eq!(video_versions, 1, "both runs dedup into the same content version");
+    assert_eq!(
+        video_versions, 1,
+        "both runs dedup into the same content version"
+    );
 }
 
 #[test]
@@ -991,12 +1037,8 @@ fn canon_mutation_during_background_execution_never_alters_the_request() {
             None,
         )
         .unwrap();
-        cinematic_desktop_lib::canon::service::CanonService::lock_section(
-            root,
-            &section_id,
-            None,
-        )
-        .unwrap();
+        cinematic_desktop_lib::canon::service::CanonService::lock_section(root, &section_id, None)
+            .unwrap();
     }
 
     // Drive the job to completion.
@@ -1020,11 +1062,16 @@ fn canon_mutation_during_background_execution_never_alters_the_request() {
         )
         .unwrap()
     };
-    assert_eq!(frozen_request, after_request, "background execution must never re-resolve canon");
+    assert_eq!(
+        frozen_request, after_request,
+        "background execution must never re-resolve canon"
+    );
 
     // The lineage references the run's snapshot, not live canon state.
     let result_sets = GenerationService::list_results(root, Some(&running.run.id)).unwrap();
-    let detail = GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id).unwrap();
+    let detail =
+        GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id)
+            .unwrap();
     let lineage = detail.lineage.unwrap();
     assert_eq!(lineage.workflow_definition_id, "scene.generate_video");
     assert_eq!(lineage.provider_id, "fake_async_video");
@@ -1101,10 +1148,7 @@ mod loopback_provider {
         /// Polls 1–2 report running (40%); later polls report completed
         /// with the data-URI MP4 (the runner's result fetch re-polls the
         /// same status path and extracts the URL).
-        pub fn serve_in_background(
-            self,
-            total_requests: usize,
-        ) -> std::thread::JoinHandle<()> {
+        pub fn serve_in_background(self, total_requests: usize) -> std::thread::JoinHandle<()> {
             std::thread::spawn(move || {
                 let mut polls = 0;
                 for _ in 0..total_requests {
@@ -1124,9 +1168,7 @@ mod loopback_provider {
                         }
                         request.extend_from_slice(&buffer[..read]);
                         if header_end.is_none() {
-                            if let Some(position) =
-                                find_header_end(&request)
-                            {
+                            if let Some(position) = find_header_end(&request) {
                                 header_end = Some(position);
                                 content_length = parse_content_length(&request[..position]);
                             }
@@ -1163,9 +1205,9 @@ mod loopback_provider {
                                 base64::Engine::encode(
                                     &base64::engine::general_purpose::STANDARD,
                                     [
-                                        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm',
-                                        b'p', b'4', b'2', 0x00, 0x00, 0x00, 0x00, b'm', b'p',
-                                        b'4', b'2', b'i', b's', b'o', b'm',
+                                        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p',
+                                        b'4', b'2', 0x00, 0x00, 0x00, 0x00, b'm', b'p', b'4', b'2',
+                                        b'i', b's', b'o', b'm',
                                     ]
                                 ),
                             )
@@ -1283,19 +1325,18 @@ fn declarative_async_job_resumes_through_a_rehydrated_adapter() {
             },
             api_key: None,
             api_key_hint: None,
-            models: vec![cinematic_desktop_lib::providers::model::CustomProviderModel {
-                id: "loop-v1".into(),
-                name: "Loop V1".into(),
-                capabilities: Vec::new(),
-            }],
+            models: vec![
+                cinematic_desktop_lib::providers::model::CustomProviderModel {
+                    id: "loop-v1".into(),
+                    name: "Loop V1".into(),
+                    capabilities: Vec::new(),
+                },
+            ],
             headers: Vec::new(),
         };
         let conn = open_db(root);
-        cinematic_desktop_lib::providers::repository::upsert_custom_provider(
-            &conn,
-            &definition,
-        )
-        .unwrap();
+        cinematic_desktop_lib::providers::repository::upsert_custom_provider(&conn, &definition)
+            .unwrap();
     }
 
     // Serve the whole conversation on a background thread.
@@ -1377,11 +1418,9 @@ fn declarative_async_job_resumes_through_a_rehydrated_adapter() {
 
     // The lineage used the original provider/model provenance from the
     // durable attempt, never today's default provider config.
-    let detail = GenerationService::get_artifact_detail(
-        root,
-        &result_sets[0].artifacts[0].artifact.id,
-    )
-    .unwrap();
+    let detail =
+        GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id)
+            .unwrap();
     let lineage = detail.lineage.unwrap();
     assert_eq!(lineage.provider_id, "loopback_video");
     assert_eq!(lineage.model_id, "loop-v1");
@@ -1396,20 +1435,13 @@ fn shot_i2v_resumes_through_rehydrated_declarative_adapter_without_resubmit() {
     let root = &fixture.root;
     let scene = &fixture.scene;
     let shot = &fixture.shots[0];
-    let (source_version_id, source_sha256) =
-        pin_shot_keyframe(root, &scene.id, &shot.id);
+    let (source_version_id, source_sha256) = pin_shot_keyframe(root, &scene.id, &shot.id);
     let server = LoopbackServer::start();
     install_i2v_provider(root, server.url());
     let observation = server.observation();
     let server = server.serve_in_background(5);
 
-    let running = start_shot_i2v_run(
-        root,
-        &scene.id,
-        &shot.id,
-        "loopback_i2v",
-        "loop-i2v-v1",
-    );
+    let running = start_shot_i2v_run(root, &scene.id, &shot.id, "loopback_i2v", "loop-i2v-v1");
     assert_eq!(running.run.status, "running");
     let (operation, attempt_count): (Option<String>, i64) = {
         let conn = open_db(root);
@@ -1440,7 +1472,10 @@ fn shot_i2v_resumes_through_rehydrated_declarative_adapter_without_resubmit() {
             break;
         }
     }
-    assert!(completed_seen, "the cold adapter must complete the durable I2V job");
+    assert!(
+        completed_seen,
+        "the cold adapter must complete the durable I2V job"
+    );
     server.join().unwrap();
     assert_eq!(observation.submit_count(), 1, "restart must never resubmit");
 
@@ -1463,15 +1498,20 @@ fn shot_i2v_resumes_through_rehydrated_declarative_adapter_without_resubmit() {
         )
         .unwrap()
     };
-    assert_eq!(video_candidates, 1, "completion must import one video candidate");
+    assert_eq!(
+        video_candidates, 1,
+        "completion must import one video candidate"
+    );
     let compiled: serde_json::Value =
         serde_json::from_str(&compiled_request_json(root, &running.run.id)).unwrap();
     assert_eq!(compiled["references"][0]["reference"], source_version_id);
     let shots = CinemaService::list_shots(root, &scene.id).unwrap();
-    assert_eq!(shots[0].keyframe_asset_version_id.as_deref(), Some(source_version_id.as_str()));
     assert_eq!(
-        shots[0].generated_video_asset_version_id,
-        None,
+        shots[0].keyframe_asset_version_id.as_deref(),
+        Some(source_version_id.as_str())
+    );
+    assert_eq!(
+        shots[0].generated_video_asset_version_id, None,
         "completion must never auto-pin the Shot video"
     );
 }
@@ -1530,7 +1570,10 @@ fn shot_i2v_retry_preserves_exact_source() {
         )
         .unwrap()
     };
-    assert_eq!(submitted_attempt, 2, "retry must submit the pre-created attempt 2");
+    assert_eq!(
+        submitted_attempt, 2,
+        "retry must submit the pre-created attempt 2"
+    );
 
     let mut completed_seen = false;
     for _ in 0..6 {
@@ -1572,8 +1615,7 @@ fn shot_i2v_cancellation_is_truthful_and_terminal_safe() {
     let tick = background::run_pending_jobs(root).unwrap();
     assert_eq!(tick.cancelled, 1);
 
-    let (attempt_status, job_status, audit_payload, result_sets):
-        (String, String, String, i64) = {
+    let (attempt_status, job_status, audit_payload, result_sets): (String, String, String, i64) = {
         let conn = open_db(root);
         let (attempt_status, job_status) = conn
             .query_row(

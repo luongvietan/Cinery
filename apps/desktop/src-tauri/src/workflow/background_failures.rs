@@ -59,7 +59,10 @@ pub fn complete_run_from_background(
         tx.commit().map_err(db_error)?;
         return Ok(());
     };
-    if matches!(status.as_str(), "completed" | "rejected" | "cancelled" | "failed") {
+    if matches!(
+        status.as_str(),
+        "completed" | "rejected" | "cancelled" | "failed"
+    ) {
         // Run terminal through another path (e.g. cancel raced ahead);
         // terminal states never flip.
         tx.commit().map_err(db_error)?;
@@ -160,7 +163,10 @@ fn complete_run_record_only(
     let Some(status) = run_status else {
         return Ok(());
     };
-    if matches!(status.as_str(), "completed" | "rejected" | "cancelled" | "failed") {
+    if matches!(
+        status.as_str(),
+        "completed" | "rejected" | "cancelled" | "failed"
+    ) {
         return Ok(());
     }
     let complete_index: Option<(i64, String)> = tx

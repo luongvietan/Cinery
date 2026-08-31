@@ -1,8 +1,8 @@
 use super::credential_store::KeyringCredentialStore;
+use super::http::UreqExecutor;
 use super::model::{CustomProviderDefinition, ProviderCapabilities};
 use super::registry::ProviderRegistry;
 use super::repository::ProviderConfigRecord;
-use super::http::UreqExecutor;
 use super::service::{ProviderConfigurationStatus, ProviderConnectionTestResult, ProviderService};
 use crate::db;
 use crate::error::{AppCommandError, AppError};

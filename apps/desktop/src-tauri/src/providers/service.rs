@@ -1,15 +1,15 @@
 use super::adapter::GenerationProvider;
 use super::cancellation;
+use super::config::{OPERATION_VALIDATE, OPERATION_VIDEO_IMAGE_TO_VIDEO};
 use super::credential_store::{
     credential_account, credential_reference, header_credential_account,
     legacy_header_credential_account, CredentialStore, KeyringCredentialStore,
 };
-use super::config::{OPERATION_VALIDATE, OPERATION_VIDEO_IMAGE_TO_VIDEO};
 use super::declarative::DeclarativeProvider;
 use super::error::{ProviderError, ProviderErrorKind};
 use super::http::{HttpExecutor, HttpRequest, HttpResponse, UreqExecutor};
-use super::model::*;
 use super::model::CustomProviderPurpose;
+use super::model::*;
 use super::presets::preset_by_id;
 use super::registry::ProviderRegistry;
 use crate::db;
@@ -794,9 +794,7 @@ impl ProviderService {
     /// rehydrates the builtin OpenAI adapter after a restart. The secret is
     /// resolved from the project's keyring entry (or developer environment
     /// fallback) and never persisted.
-    pub fn resolve_openai_execution_token(
-        project_root: &Path,
-    ) -> Result<String, AppError> {
+    pub fn resolve_openai_execution_token(project_root: &Path) -> Result<String, AppError> {
         Self::resolve_openai_token(Some(project_root), None)
     }
 
@@ -1107,7 +1105,10 @@ impl ProviderService {
             let capabilities = provider.capabilities();
             if capabilities.supports_image_to_video
                 && (capabilities.supported_models.is_empty()
-                    || capabilities.supported_models.iter().any(|model| model == model_id))
+                    || capabilities
+                        .supported_models
+                        .iter()
+                        .any(|model| model == model_id))
             {
                 return Ok(());
             }
@@ -1148,9 +1149,9 @@ impl ProviderService {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         let config = super::repository::get_provider_config(&conn, provider_id)?;
         let custom = super::repository::get_custom_provider(&conn, provider_id)?;
-        Ok(config
-            .and_then(|record| record.default_model)
-            .or_else(|| custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))))
+        Ok(config.and_then(|record| record.default_model).or_else(|| {
+            custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))
+        }))
     }
 
     /// Waits for a submission to finish: polls with the provider's suggested
@@ -1179,9 +1180,7 @@ impl ProviderService {
         let mut status = provider.poll(&submission.job).map_err(provider_error)?;
         let mut saw_progress = matches!(
             status.lifecycle,
-            ProviderLifecycle::Queued
-                | ProviderLifecycle::Submitted
-                | ProviderLifecycle::Running
+            ProviderLifecycle::Queued | ProviderLifecycle::Submitted | ProviderLifecycle::Running
         );
         loop {
             if options.cancelled.is_some_and(|check| check()) {
@@ -1304,10 +1303,10 @@ fn restore_secret_states<S: CredentialStore + ?Sized>(
 #[cfg(test)]
 mod connection_tests {
     use super::*;
+    use crate::project::service::ProjectService;
     use crate::providers::config::{
         EndpointConfig, ResponseMapping, OPERATION_VIDEO_IMAGE_TO_VIDEO,
     };
-    use crate::project::service::ProjectService;
     use crate::providers::credential_store::MemoryCredentialStore;
     use crate::providers::http::TransportFailure;
     use crate::providers::presets::preset_by_id;
@@ -1412,9 +1411,13 @@ mod connection_tests {
         .unwrap();
         let transport = RecordingExecutor::with_status(200);
 
-        let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "image_provider")
-                .unwrap();
+        let result = ProviderService::test_connection(
+            &root,
+            &credentials,
+            transport.clone(),
+            "image_provider",
+        )
+        .unwrap();
 
         assert!(result.connected);
         assert_eq!(result.status_code, Some(200));
@@ -1442,7 +1445,8 @@ mod connection_tests {
         let transport = RecordingExecutor::with_status(200);
 
         let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare").unwrap();
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare")
+                .unwrap();
 
         assert!(result.connected);
         let (method, url, headers) = transport.requests.lock().unwrap().remove(0);
@@ -1471,9 +1475,13 @@ mod connection_tests {
             r#"{"errors":[{"message":"prompt is required","code":7002}]}"#,
         );
 
-        let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare_err")
-                .unwrap();
+        let result = ProviderService::test_connection(
+            &root,
+            &credentials,
+            transport.clone(),
+            "cloudflare_err",
+        )
+        .unwrap();
 
         assert!(!result.connected);
         assert_eq!(result.status_code, Some(400));
@@ -1495,9 +1503,13 @@ mod connection_tests {
         .unwrap();
         for status in [401u16, 403] {
             let transport = RecordingExecutor::with_status(status);
-            let result =
-                ProviderService::test_connection(&root, &credentials, transport.clone(), "auth_provider")
-                    .unwrap();
+            let result = ProviderService::test_connection(
+                &root,
+                &credentials,
+                transport.clone(),
+                "auth_provider",
+            )
+            .unwrap();
             assert!(!result.connected);
             assert_eq!(result.status_code, Some(status));
         }
@@ -1514,8 +1526,9 @@ mod connection_tests {
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let transport = RecordingExecutor::default();
 
-        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "no_auth")
-            .unwrap_err();
+        let error =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "no_auth")
+                .unwrap_err();
 
         assert!(error
             .to_string()
@@ -1578,7 +1591,11 @@ mod connection_tests {
             Err(AppError::ImageToVideoUnsupported)
         ));
         assert!(matches!(
-            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "missing-model"),
+            ProviderService::validate_image_to_video_selection(
+                &root,
+                "i2v_provider",
+                "missing-model"
+            ),
             Err(AppError::ImageToVideoUnsupported)
         ));
 
@@ -1606,8 +1623,8 @@ mod connection_tests {
         let credentials = MemoryCredentialStore::new();
         let mut definition = openai_compatible_definition("hinted");
         definition.api_key = Some("sk-j9mlQwErTyXzray".into());
-        let saved = ProviderService::upsert_custom_provider(&root, &credentials, &definition)
-            .unwrap();
+        let saved =
+            ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         assert_eq!(saved.api_key, None);
         assert_eq!(saved.api_key_hint.as_deref(), Some("sk-j9ml•••ray"));
 
@@ -1676,8 +1693,9 @@ mod connection_tests {
         .unwrap();
         let transport = RecordingExecutor::default();
 
-        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "tampered")
-            .unwrap_err();
+        let error =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "tampered")
+                .unwrap_err();
 
         assert!(error.to_string().contains("must not contain credentials"));
         assert!(transport.requests.lock().unwrap().is_empty());
@@ -1716,7 +1734,10 @@ mod connection_tests {
             .unwrap()
             .is_none());
         let transport = RecordingExecutor::default();
-        assert!(ProviderService::test_connection(&root, &credentials, transport.clone(), "moving").is_err());
+        assert!(
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "moving")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1807,8 +1828,9 @@ mod connection_tests {
         )
         .unwrap();
         let transport = RecordingExecutor::with_status(200);
-        let result = ProviderService::test_connection(&root, &credentials, transport.clone(), "legacy_img")
-            .unwrap();
+        let result =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "legacy_img")
+                .unwrap();
         assert!(result.connected, "legacy rows validate through /models");
         assert_eq!(result.endpoint, "https://old.example.test/v1/models");
     }

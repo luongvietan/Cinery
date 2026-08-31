@@ -271,7 +271,8 @@ mod tests {
     #[test]
     fn provider_error_serializes_without_optional_noise() {
         let json = serde_json::to_value(
-            ProviderError::new(ProviderErrorKind::NetworkError, "down").with_operation("video.generate"),
+            ProviderError::new(ProviderErrorKind::NetworkError, "down")
+                .with_operation("video.generate"),
         )
         .unwrap();
         assert!(json.get("statusCode").is_none());

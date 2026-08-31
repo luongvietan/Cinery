@@ -137,11 +137,10 @@ fn compile_scene_requires_characters_and_shots() {
     let look_asset =
         AssetService::create_asset(&root, "outfit", "Owned Look", Some(character.clone())).unwrap();
     let owned_source = test_image(&root, "owned-look.png", [11, 12, 13, 255]);
-    let owned = AssetService::import_asset_version(&root, &look_asset.id, &owned_source, None)
-        .unwrap();
+    let owned =
+        AssetService::import_asset_version(&root, &look_asset.id, &owned_source, None).unwrap();
     AssetService::promote_asset_version(&root, &owned.id).unwrap();
-    SceneService::add_scene_character(&root, &scene.id, &character, &owned.id, None, None)
-        .unwrap();
+    SceneService::add_scene_character(&root, &scene.id, &character, &owned.id, None, None).unwrap();
     CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None).unwrap();
 
     let compilation = CinemaService::compile_scene(

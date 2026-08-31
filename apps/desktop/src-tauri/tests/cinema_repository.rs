@@ -17,8 +17,7 @@ fn open_db(root: &PathBuf) -> Connection {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     // Integration tests open the same file the service just bootstrapped;
     // FK enforcement is session-scoped, so re-assert it here.
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap()
-    ;
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
     conn
 }
 

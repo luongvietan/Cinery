@@ -32,8 +32,7 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
     // --- Keyframe: import one and pin it as the shot's exact reference. ---
     let shots = CinemaService::list_shots(root, &scene.id).unwrap();
     let shot = &shots[0];
-    let keyframe_asset =
-        SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
+    let keyframe_asset = SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
     let keyframe_source = support::test_image(root, "keyframe.png", [200, 100, 50, 255]);
     let keyframe_version =
         AssetService::import_asset_version(root, &keyframe_asset.id, &keyframe_source, None)
@@ -56,8 +55,14 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
     // (A second, fully-assembled scene -- world + cast, but never compiled --
     // isolates the compilation gate. The gate lives in the resolve-context
     // step, so the run is created but fails on the first advance.)
-    let bare_scene = SceneService::create_scene(root, "Bare", "Assembled but not compiled").unwrap();
-    SceneService::assign_scene_world(root, &bare_scene.id, &fixture.scene.world_id.clone().unwrap()).unwrap();
+    let bare_scene =
+        SceneService::create_scene(root, "Bare", "Assembled but not compiled").unwrap();
+    SceneService::assign_scene_world(
+        root,
+        &bare_scene.id,
+        &fixture.scene.world_id.clone().unwrap(),
+    )
+    .unwrap();
     SceneService::add_scene_character(
         root,
         &bare_scene.id,
@@ -191,8 +196,7 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
     drop(conn);
 
     // The lineage captured the full provenance chain.
-    let detail =
-        GenerationService::get_artifact_detail(root, &video_artifact.id).unwrap();
+    let detail = GenerationService::get_artifact_detail(root, &video_artifact.id).unwrap();
     let lineage = detail.lineage.as_ref().unwrap();
     assert_eq!(lineage.skill_id, "scene-builder");
     assert_eq!(lineage.workflow_definition_id, "scene.generate_video");
@@ -251,8 +255,7 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
     )
     .unwrap();
     let second_version =
-        AssetService::import_media_version(root, &video_asset_id, &distinct_source, None)
-            .unwrap();
+        AssetService::import_media_version(root, &video_asset_id, &distinct_source, None).unwrap();
     AssetService::promote_asset_version(root, &second_version.id).unwrap();
 
     {
@@ -282,7 +285,10 @@ fn compiled_scene_generates_promotes_and_pins_an_exact_video_version() {
 
     // Pinning a non-video or non-canonical version is rejected.
     let bad_pin = CinemaService::set_shot_video(root, &shot.id, Some(&keyframe_version.id));
-    assert!(bad_pin.is_err(), "a keyframe version must not be pinnable as the shot video");
+    assert!(
+        bad_pin.is_err(),
+        "a keyframe version must not be pinnable as the shot video"
+    );
 
     // --- Restart: reopen the project and verify exact state persists. ---
     let reopened = ProjectService::open(root).unwrap();
@@ -357,7 +363,10 @@ fn failed_video_capture_leaves_no_phantom_video_version() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(video_versions, 0, "no phantom video version after a failed run");
+    assert_eq!(
+        video_versions, 0,
+        "no phantom video version after a failed run"
+    );
     let artifact_rows: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM generated_artifacts WHERE media_kind = 'video'",
@@ -365,5 +374,8 @@ fn failed_video_capture_leaves_no_phantom_video_version() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(artifact_rows, 0, "no phantom video artifact after a failed run");
+    assert_eq!(
+        artifact_rows, 0,
+        "no phantom video artifact after a failed run"
+    );
 }

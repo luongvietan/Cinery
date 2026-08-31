@@ -23,7 +23,12 @@ fn tauri_shot_and_compile_via_commands() {
     )
     .unwrap();
     assert!(!scene.id.is_empty());
-    assert_eq!(scene_commands::list_world_scenes(root.clone()).unwrap().len(), 2);
+    assert_eq!(
+        scene_commands::list_world_scenes(root.clone())
+            .unwrap()
+            .len(),
+        2
+    );
 
     // Shot lifecycle via commands on the authoritative scene.
     commands::create_shot(
@@ -47,8 +52,7 @@ fn tauri_shot_and_compile_via_commands() {
 
     let fetched = commands::get_cinema_compilation(root.clone(), compilation.id.clone()).unwrap();
     assert_eq!(fetched.id, compilation.id);
-    let listed =
-        commands::list_cinema_compilations(root.clone(), setup.scene.id.clone()).unwrap();
+    let listed = commands::list_cinema_compilations(root.clone(), setup.scene.id.clone()).unwrap();
     assert_eq!(listed.len(), 1);
 
     // Readiness reflects the compiled scene.
@@ -61,20 +65,16 @@ fn command_errors_map_to_app_command_error_codes() {
     let setup = compilable_scene();
     let root = path_string(&setup);
 
-    let error =
-        commands::list_shots(root.clone(), "missing-scene".to_string()).unwrap_err();
+    let error = commands::list_shots(root.clone(), "missing-scene".to_string()).unwrap_err();
     assert_eq!(error.code, "SCENE_NOT_FOUND");
 
     let error = commands::get_cinema_compilation(root.clone(), "missing-compilation".to_string())
         .unwrap_err();
     assert_eq!(error.code, "CINEMA_COMPILATION_NOT_FOUND");
 
-    let error = scene_commands::create_world_scene(
-        root.clone(),
-        "   ".to_string(),
-        "summary".to_string(),
-    )
-    .unwrap_err();
+    let error =
+        scene_commands::create_world_scene(root.clone(), "   ".to_string(), "summary".to_string())
+            .unwrap_err();
     assert_eq!(error.code, "INVALID_SCENE_TITLE");
 
     // A blocked compilation surfaces the TBD firewall code.

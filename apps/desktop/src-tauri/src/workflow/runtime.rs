@@ -3,8 +3,7 @@ use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::providers::repository::{
     append_audit_event, create_attempt, latest_attempt, next_attempt_number,
-    persist_job_with_operation, update_artifact_ids,
-    update_attempt_status,
+    persist_job_with_operation, update_artifact_ids, update_attempt_status,
 };
 use crate::providers::service::ProviderService;
 use crate::skills::registry::SkillRegistry;
@@ -178,8 +177,7 @@ impl WorkflowRuntime {
             .optional()
             .map_err(|error| AppError::Database(error.to_string()))?
             .ok_or(AppError::ShotNotFound)?;
-        let source_asset_version_id =
-            keyframe_version_id.ok_or(AppError::SourceKeyframeMissing)?;
+        let source_asset_version_id = keyframe_version_id.ok_or(AppError::SourceKeyframeMissing)?;
 
         let mut frozen = input.clone();
         if let Some(object) = frozen.as_object_mut() {
@@ -205,7 +203,13 @@ impl WorkflowRuntime {
                    AND status IN ('created', 'running', 'waiting_for_approval',
                                   'ready_for_execution')
                  ORDER BY created_at DESC LIMIT 1",
-                params![project_id, skill_id, skill_version, operation_id, input_json],
+                params![
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                    input_json
+                ],
                 |row| row.get(0),
             )
             .optional()
@@ -266,10 +270,7 @@ impl WorkflowRuntime {
         // durable provider job keeps executing; re-advancing must never
         // fail or duplicate the run's work.
         if detail.run.status == "running"
-            && crate::workflow::background::run_has_active_provider_job(
-                &conn,
-                workflow_run_id,
-            )?
+            && crate::workflow::background::run_has_active_provider_job(&conn, workflow_run_id)?
         {
             return Ok(detail);
         }
@@ -644,13 +645,8 @@ impl WorkflowRuntime {
                                 serde_json::from_str(&context_json).map_err(|error| {
                                     AppError::WorkflowRunInconsistent(error.to_string())
                                 })?;
-                            let request =
-                                crate::workflow::compiler::ShotImageToVideoCompiler.compile(
-                                    workflow_run_id,
-                                    skill,
-                                    operation,
-                                    &context,
-                                )?;
+                            let request = crate::workflow::compiler::ShotImageToVideoCompiler
+                                .compile(workflow_run_id, skill, operation, &context)?;
                             write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
                             serde_json::to_string(&request)
                                 .map_err(|error| AppError::Database(error.to_string()))?
@@ -1827,11 +1823,7 @@ fn execute_scene_video_ready(
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
     let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
     if operation.id == "shot.image_to_video" {
-        ProviderService::validate_image_to_video_selection(
-            project_root,
-            &provider_id,
-            &model_id,
-        )?;
+        ProviderService::validate_image_to_video_selection(project_root, &provider_id, &model_id)?;
     }
 
     // Compute required reference count from request (world + looks + sheets + props)
@@ -1929,8 +1921,7 @@ fn execute_scene_video_ready(
                 attempt
             }
             _ => {
-                let attempt_number =
-                    next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+                let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
                 let idempotency_key = ProviderService::idempotency_key(
                     &detail.run.id,
                     execute_step_id,
@@ -2529,27 +2520,27 @@ fn execute_ready(
                 .iter()
                 .map(|artifact| artifact.id.clone())
                 .collect::<Vec<_>>();
-             update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
-             append_audit_event(
-                 conn,
-                 Some(&attempt.id),
-                 &detail.run.id,
-                 "provider.execution.completed",
-                 Some(
-                     &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
-                 ),
-             )?;
-             // Durable persistence is complete: only now is the attempt
-             // marked succeeded (see the comment above the capture call).
-             update_attempt_status(conn, &attempt.id, "succeeded", None)?;
-             crate::workflow::execution::ExecutionResult {
-                 kind: provider_id,
-                 artifact_path: project_root.join(&captured.artifacts[0].storage_path),
-                 result_set_id: Some(captured.result_set.id),
-                 artifact_ids,
-                 request,
-             }
-         } else {
+            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+            append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.completed",
+                Some(
+                    &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
+                ),
+            )?;
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(&captured.artifacts[0].storage_path),
+                result_set_id: Some(captured.result_set.id),
+                artifact_ids,
+                request,
+            }
+        } else {
             // World/scene flows persist the candidate version directly into the
             // stable expected-output asset.
             let asset_type = request.expected_output.asset_type.as_str();
@@ -4122,8 +4113,8 @@ mod tests {
         ProjectService::create(&root, "Shot I2V").unwrap();
         let scene =
             SceneService::create_scene(&root, "Test Scene", "A test summary for i2v").unwrap();
-        let shot = CinemaService::create_shot(&root, &scene.id, None, 4.0, "Push in", None, None)
-            .unwrap();
+        let shot =
+            CinemaService::create_shot(&root, &scene.id, None, 4.0, "Push in", None, None).unwrap();
 
         let tmp = root.join("tmp_keyframes");
         std::fs::create_dir_all(&tmp).unwrap();
@@ -4323,7 +4314,8 @@ mod tests {
         .unwrap();
         {
             let conn = open_project(&fixture.root).unwrap();
-            conn.execute("PRAGMA ignore_check_constraints = ON", []).unwrap();
+            conn.execute("PRAGMA ignore_check_constraints = ON", [])
+                .unwrap();
             conn.execute(
                 "UPDATE asset_versions SET mime_type = 'video/mp4' WHERE id = ?1",
                 [&fixture.first_keyframe_version_id],

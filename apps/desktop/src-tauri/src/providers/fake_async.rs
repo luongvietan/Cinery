@@ -18,8 +18,8 @@ use std::sync::Mutex;
 /// Minimal MP4 framing: a 24-byte `ftyp` box. Capture only requires valid
 /// ISO-BMFF magic; these bytes are deterministic and tiny.
 const FAKE_MP4_BYTES: &[u8] = &[
-    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p', b'4', b'2', 0x00, 0x00, 0x00,
-    0x00, b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
+    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p', b'4', b'2', 0x00, 0x00, 0x00, 0x00,
+    b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
 ];
 
 pub const FAKE_ASYNC_VIDEO_PROVIDER_ID: &str = "fake_async_video";
@@ -132,7 +132,10 @@ impl GenerationProvider for FakeAsyncVideoProvider {
             outputs: vec![ProviderOutput {
                 uri: format!(
                     "data:video/mp4;base64,{}",
-                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, FAKE_MP4_BYTES)
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        FAKE_MP4_BYTES
+                    )
                 ),
                 mime_type: "video/mp4".into(),
                 filename: Some("fake-video.mp4".into()),

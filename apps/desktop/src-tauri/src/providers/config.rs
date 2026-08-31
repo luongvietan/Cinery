@@ -87,9 +87,7 @@ impl AuthConfig {
             AuthMode::Header | AuthMode::Query => {
                 let name = self.credential_name.as_deref().unwrap_or_default();
                 if name.is_empty() {
-                    return Err(
-                        "header/query authentication requires a credential name".into(),
-                    );
+                    return Err("header/query authentication requires a credential name".into());
                 }
                 if name.contains(['\r', '\n', ' ', ':', '=', '&', '?']) {
                     return Err("credential name must be a bare header or query name".into());
@@ -193,9 +191,7 @@ pub fn canonical_lookup(
         "seed" => values.seed.map(|v| serde_json::json!(v))?,
         "steps" => values.steps.map(|v| serde_json::json!(v))?,
         "quality" => values.quality.clone().map(serde_json::Value::String)?,
-        "duration" => values
-            .duration_seconds
-            .map(|v| serde_json::json!(v))?,
+        "duration" => values.duration_seconds.map(|v| serde_json::json!(v))?,
         "fps" => values.fps.map(|v| serde_json::json!(v))?,
         "strength" => values.strength.map(|v| serde_json::json!(v))?,
         // Convenience helpers derived from canonical fields.
@@ -324,9 +320,9 @@ pub fn compile_form_urlencoded(
     references: &[ReferenceInput],
 ) -> Result<Vec<u8>, String> {
     let compiled = compile_json_template(template, values, references);
-    let map = compiled.as_object().ok_or_else(|| {
-        "form-urlencoded request mapping must be a JSON object".to_string()
-    })?;
+    let map = compiled
+        .as_object()
+        .ok_or_else(|| "form-urlencoded request mapping must be a JSON object".to_string())?;
     let mut encoded = url::form_urlencoded::Serializer::new(String::new());
     for (key, value) in map {
         let rendered = match value {
@@ -354,7 +350,10 @@ pub fn compile_multipart(
         match field.kind {
             MultipartFieldKind::Text => {
                 let template = field.value.as_deref().ok_or_else(|| {
-                    format!("multipart text field {} requires a value template", field.name)
+                    format!(
+                        "multipart text field {} requires a value template",
+                        field.name
+                    )
                 })?;
                 let compiled = compile_string_leaf(template, values, references);
                 if is_omitted_marker(&compiled) {
@@ -430,21 +429,20 @@ pub fn compile_url_template(template: &str, context: &UrlContext) -> String {
         if !result.contains(&placeholder) {
             continue;
         }
-        let rendered = canonical_lookup(
-            &context.values,
-            name,
-            &[],
-        )
-        .map(|value| match value {
-            serde_json::Value::String(text) => text,
-            other => other.to_string(),
-        })
-        .unwrap_or_default();
+        let rendered = canonical_lookup(&context.values, name, &[])
+            .map(|value| match value {
+                serde_json::Value::String(text) => text,
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
         result = result.replace(&placeholder, &url_encode(&rendered));
     }
     let single = [
         ("{model}", context.values.model.clone()),
-        ("{accountId}", context.account_id.clone().unwrap_or_default()),
+        (
+            "{accountId}",
+            context.account_id.clone().unwrap_or_default(),
+        ),
         ("{providerId}", context.provider_id.clone()),
         ("{operation}", context.operation.clone()),
         ("{jobId}", context.job_id.clone().unwrap_or_default()),
@@ -500,9 +498,7 @@ pub fn resolve_json_path<'a>(
             return None;
         }
         current = match current {
-            serde_json::Value::Array(items) => {
-                items.get(segment.parse::<usize>().ok()?)?
-            }
+            serde_json::Value::Array(items) => items.get(segment.parse::<usize>().ok()?)?,
             serde_json::Value::Object(map) => map.get(segment)?,
             _ => return None,
         };
@@ -900,9 +896,11 @@ impl EndpointConfig {
     /// True when the request mapping (or multipart fields) reference image
     /// input — used to derive reference-image capabilities.
     pub fn accepts_reference_images(&self) -> bool {
-        if self.multipart_fields.iter().any(|field| {
-            matches!(field.kind, MultipartFieldKind::File)
-        }) {
+        if self
+            .multipart_fields
+            .iter()
+            .any(|field| matches!(field.kind, MultipartFieldKind::File))
+        {
             return true;
         }
         let Some(mapping) = &self.request_mapping else {
@@ -927,16 +925,16 @@ impl EndpointConfig {
     pub fn validate(&self, operation: &str) -> Result<(), String> {
         let method = self.method.to_ascii_uppercase();
         if !matches!(method.as_str(), "GET" | "POST" | "PUT" | "PATCH" | "DELETE") {
-            return Err(format!("operation {operation} has an unsupported HTTP method"));
+            return Err(format!(
+                "operation {operation} has an unsupported HTTP method"
+            ));
         }
         if !self.path_template.is_empty() && !self.path_template.starts_with('/') {
             return Err(format!(
                 "operation {operation} path template must start with '/'"
             ));
         }
-        if operation == OPERATION_VALIDATE
-            && !matches!(method.as_str(), "GET" | "POST")
-        {
+        if operation == OPERATION_VALIDATE && !matches!(method.as_str(), "GET" | "POST") {
             return Err("validate operation must use GET or POST".into());
         }
         for name in self.headers.keys() {
@@ -992,9 +990,7 @@ impl EndpointConfig {
 
 fn mapping_references(value: &serde_json::Value, needles: &[&str]) -> bool {
     match value {
-        serde_json::Value::String(text) => needles
-            .iter()
-            .any(|needle| text.contains(needle)),
+        serde_json::Value::String(text) => needles.iter().any(|needle| text.contains(needle)),
         serde_json::Value::Array(items) => {
             items.iter().any(|item| mapping_references(item, needles))
         }
@@ -1100,8 +1096,7 @@ impl ProviderRuntimeConfig {
         let mut header_names = BTreeMap::new();
         for name in self.headers.keys() {
             if !crate::providers::model::is_http_header_name(name)
-                || header_names
-                    .insert(name.to_ascii_lowercase(), ()).is_some()
+                || header_names.insert(name.to_ascii_lowercase(), ()).is_some()
             {
                 return Err("custom header names must be valid and unique".into());
             }
@@ -1182,7 +1177,10 @@ mod tests {
         assert_eq!(compiled["seed"], 42);
         assert_eq!(compiled["size"], "1024x768");
         assert_eq!(compiled["negative"], "fog");
-        assert_eq!(compiled["nested"]["inner"]["text"], "prompt: a calm lake v2");
+        assert_eq!(
+            compiled["nested"]["inner"]["text"],
+            "prompt: a calm lake v2"
+        );
         assert_eq!(compiled["unknown_left_alone"], "{{notAField}}");
         // Unset canonical fields are omitted, never sent empty.
         assert!(compiled.get("missing").is_none());
@@ -1230,12 +1228,18 @@ mod tests {
             operation: OPERATION_IMAGE_GENERATE.into(),
             job_id: None,
         };
-        let url = compile_url_template("https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run/{model}", &context);
+        let url = compile_url_template(
+            "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run/{model}",
+            &context,
+        );
         assert_eq!(
             url,
             "https://api.cloudflare.com/client/v4/accounts/acc-1/ai/run/test-model"
         );
-        let with_prompt = compile_url_template("https://image.example/prompt/{{prompt}}?seed={{seed}}", &context);
+        let with_prompt = compile_url_template(
+            "https://image.example/prompt/{{prompt}}?seed={{seed}}",
+            &context,
+        );
         assert_eq!(
             with_prompt,
             "https://image.example/prompt/a%20calm%20lake?seed=42"
@@ -1266,7 +1270,9 @@ mod tests {
             base64_path: Some("b64_json".into()),
             ..Default::default()
         };
-        let (outputs, _) = mapping.extract_outputs(&document, OPERATION_IMAGE_GENERATE).unwrap();
+        let (outputs, _) = mapping
+            .extract_outputs(&document, OPERATION_IMAGE_GENERATE)
+            .unwrap();
         assert_eq!(outputs.len(), 2);
         assert_eq!(outputs[0].uri, "https://x/1.png");
         assert!(outputs[1].uri.starts_with("data:image/png;base64,AAAA"));
@@ -1276,7 +1282,9 @@ mod tests {
             ..Default::default()
         };
         let doc = json!({"result": {"images": [{"url": "https://x/final.png"}]}});
-        let (outputs, _) = absolute.extract_outputs(&doc, OPERATION_IMAGE_GENERATE).unwrap();
+        let (outputs, _) = absolute
+            .extract_outputs(&doc, OPERATION_IMAGE_GENERATE)
+            .unwrap();
         assert_eq!(outputs[0].uri, "https://x/final.png");
     }
 
@@ -1287,7 +1295,9 @@ mod tests {
             ..Default::default()
         };
         let doc = json!({"output": ["https://x/clip.mp4"]});
-        let (outputs, _) = mapping.extract_outputs(&doc, OPERATION_VIDEO_GENERATE).unwrap();
+        let (outputs, _) = mapping
+            .extract_outputs(&doc, OPERATION_VIDEO_GENERATE)
+            .unwrap();
         assert_eq!(outputs[0].mime_type, "video/mp4");
     }
 
@@ -1415,7 +1425,8 @@ mod tests {
             binary_response: true,
             ..Default::default()
         };
-        let output = mapping.extract_binary_output(b"bytes", Some("image/jpeg"), OPERATION_IMAGE_GENERATE);
+        let output =
+            mapping.extract_binary_output(b"bytes", Some("image/jpeg"), OPERATION_IMAGE_GENERATE);
         assert_eq!(output.mime_type, "image/jpeg");
         assert!(output.uri.starts_with("data:image/jpeg;base64,"));
     }
@@ -1426,6 +1437,9 @@ mod tests {
         let mut operations = BTreeMap::new();
         operations.insert(OPERATION_VIDEO_GENERATE.into(), EndpointConfig::default());
         config.operations = operations;
-        assert_eq!(config.derived_purpose(), crate::providers::model::CustomProviderPurpose::Video);
+        assert_eq!(
+            config.derived_purpose(),
+            crate::providers::model::CustomProviderPurpose::Video
+        );
     }
 }

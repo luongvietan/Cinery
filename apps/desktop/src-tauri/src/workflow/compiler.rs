@@ -2,7 +2,8 @@ use crate::error::AppError;
 use crate::skills::model::{SkillDefinition, SkillOperation};
 use crate::workflow::execution::{
     ExecutionConstraint, ExecutionGenerationParameters, ExecutionMediaType, ExecutionProvenance,
-    ExecutionReference, ExecutionReferenceType, ExecutionRequest, ExecutionTask, ReferenceBackground, ReferenceRole,
+    ExecutionReference, ExecutionReferenceType, ExecutionRequest, ExecutionTask,
+    ReferenceBackground, ReferenceRole,
 };
 use crate::workflow::model::WorkflowContextSnapshot;
 use serde_json::Value;
@@ -324,12 +325,16 @@ impl RequestCompiler for SceneVideoCompiler {
         // text, diegetic sound only. The prompt body itself stays untouched so
         // any provider-specific adaptation stays possible later.
         let mut prompt = String::new();
-        prompt.push_str("TASK
-");
+        prompt.push_str(
+            "TASK
+",
+        );
         if total_duration.is_empty() {
-            prompt.push_str("Animate the following compiled scene into one continuous video shot.
+            prompt.push_str(
+                "Animate the following compiled scene into one continuous video shot.
 
-");
+",
+            );
         } else {
             prompt.push_str(&format!(
                 "Animate the following compiled scene into one continuous video shot of {total_duration} seconds total.
@@ -341,24 +346,32 @@ impl RequestCompiler for SceneVideoCompiler {
 All shots at normal speed. No slow motion, no overcranking, no ramping, and no speed change anywhere in this sequence.
 
 ");
-        prompt.push_str("TEXT POLICY
+        prompt.push_str(
+            "TEXT POLICY
 No on-screen text, no captions, no titles, no subtitles, no watermarks anywhere in the frame.
 
-");
+",
+        );
         prompt.push_str("SOUND POLICY
 Diegetic sound only: what exists inside the world of the scene. No music, no lyrics, no dialogue, no singing unless the compiled audio instructions say otherwise.
 
 ");
         if !last_frame.trim().is_empty() {
-            prompt.push_str("LAST FRAME
-Hold the final composition exactly as described: ");
+            prompt.push_str(
+                "LAST FRAME
+Hold the final composition exactly as described: ",
+            );
             prompt.push_str(last_frame);
-            prompt.push_str("
+            prompt.push_str(
+                "
 
-");
+",
+            );
         }
-        prompt.push_str("COMPILED SCENE PROMPT
-");
+        prompt.push_str(
+            "COMPILED SCENE PROMPT
+",
+        );
         prompt.push_str(provider_prompt);
 
         Ok(ExecutionRequest {

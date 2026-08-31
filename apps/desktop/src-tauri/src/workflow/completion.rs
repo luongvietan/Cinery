@@ -121,14 +121,20 @@ pub fn complete_attempt(
     let attempt = load_attempt_record(&conn, &pending.execution_id)?;
 
     // Terminal guard: never re-capture a finished attempt.
-    if matches!(attempt.status.as_str(), "succeeded" | "failed" | "cancelled") {
+    if matches!(
+        attempt.status.as_str(),
+        "succeeded" | "failed" | "cancelled"
+    ) {
         return Ok(CompletionOutcome::AlreadyTerminal);
     }
 
-    let context = load_attempt_context(&conn, &CompletionJob {
-        attempt: &attempt,
-        provider_job_id: &pending.provider_job_id,
-    })?;
+    let context = load_attempt_context(
+        &conn,
+        &CompletionJob {
+            attempt: &attempt,
+            provider_job_id: &pending.provider_job_id,
+        },
+    )?;
     let request: crate::workflow::execution::ExecutionRequest =
         serde_json::from_str(&context.request_json).map_err(|error| {
             AppError::WorkflowRunInconsistent(format!(
@@ -150,8 +156,7 @@ pub fn complete_attempt(
         });
     }
 
-    let media_kind = if request.media_type
-        == crate::workflow::execution::ExecutionMediaType::Video
+    let media_kind = if request.media_type == crate::workflow::execution::ExecutionMediaType::Video
     {
         "video"
     } else {
@@ -231,10 +236,12 @@ pub fn complete_attempt(
             canon_snapshot_id: canon
                 .filter(|sections| !sections.is_empty())
                 .map(|_| format!("canon:{}", attempt.workflow_run_id)),
-            canon_snapshot_sha256: canon.filter(|sections| !sections.is_empty()).map(|sections| {
-                let bytes = serde_json::to_vec(sections).unwrap_or_default();
-                sha256_hex(&bytes)
-            }),
+            canon_snapshot_sha256: canon
+                .filter(|sections| !sections.is_empty())
+                .map(|sections| {
+                    let bytes = serde_json::to_vec(sections).unwrap_or_default();
+                    sha256_hex(&bytes)
+                }),
             provider_attempt_id: attempt.id.clone(),
             provider_id: attempt.provider_id.clone(),
             model_id: attempt.model_id.clone(),
@@ -317,10 +324,7 @@ fn load_attempt_record(
 
 /// An existing generation result set for this provider attempt, if a prior
 /// (interrupted) completion pass already captured it.
-fn existing_result_set(
-    conn: &Connection,
-    attempt_id: &str,
-) -> Result<Option<String>, AppError> {
+fn existing_result_set(conn: &Connection, attempt_id: &str) -> Result<Option<String>, AppError> {
     conn.query_row(
         "SELECT id FROM generation_result_sets WHERE provider_attempt_id = ?1",
         rusqlite::params![attempt_id],
@@ -330,15 +334,14 @@ fn existing_result_set(
     .map_err(db_error)
 }
 
-fn existing_artifact_ids(
-    conn: &Connection,
-    result_set_id: &str,
-) -> Result<Vec<String>, AppError> {
+fn existing_artifact_ids(conn: &Connection, result_set_id: &str) -> Result<Vec<String>, AppError> {
     let mut statement = conn
         .prepare("SELECT id FROM generated_artifacts WHERE result_set_id = ?1 ORDER BY ordinal")
         .map_err(db_error)?;
     let ids = statement
-        .query_map(rusqlite::params![result_set_id], |row| row.get::<_, String>(0))
+        .query_map(rusqlite::params![result_set_id], |row| {
+            row.get::<_, String>(0)
+        })
         .map_err(db_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(db_error)?;
@@ -361,17 +364,11 @@ fn import_scene_video_candidate(
         .get("sceneId")
         .or_else(|| input.get("scene_id"))
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            AppError::WorkflowInputInvalid("sceneId is required".into())
-        })?
+        .ok_or_else(|| AppError::WorkflowInputInvalid("sceneId is required".into()))?
         .to_string();
     let project_id = context.project_id.clone();
-    let video_asset_id = find_or_create_scene_video_asset(
-        conn,
-        project_root,
-        &project_id,
-        &scene_id,
-    )?;
+    let video_asset_id =
+        find_or_create_scene_video_asset(conn, project_root, &project_id, &scene_id)?;
     let source_path = project_root.join(&artifact.storage_path);
     let imported = match crate::assets::service::AssetService::import_media_version(
         project_root,
@@ -463,9 +460,7 @@ fn import_scene_keyframe_candidate(
         .get("sceneId")
         .or_else(|| input.get("scene_id"))
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            AppError::WorkflowInputInvalid("sceneId is required".into())
-        })?;
+        .ok_or_else(|| AppError::WorkflowInputInvalid("sceneId is required".into()))?;
     let scene_asset_id: Option<String> = conn
         .query_row(
             "SELECT keyframe_asset_id FROM world_scenes WHERE id = ?1",
@@ -475,9 +470,8 @@ fn import_scene_keyframe_candidate(
         .optional()
         .map_err(db_error)?
         .flatten();
-    let keyframe_asset_id = scene_asset_id.ok_or_else(|| {
-        AppError::WorkflowRunInconsistent("keyframe asset id missing".into())
-    })?;
+    let keyframe_asset_id = scene_asset_id
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("keyframe asset id missing".into()))?;
     let source_path = project_root.join(&artifact.storage_path);
     let imported = match crate::assets::service::AssetService::import_asset_version(
         project_root,

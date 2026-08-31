@@ -196,8 +196,7 @@ pub fn promote_shot_video_candidate(
             shot_id: shot_id.to_string(),
             artifact_id: artifact_id.to_string(),
             asset_version_id: promoted.id.clone(),
-            previous_asset_version_id: expected_current_video_asset_version_id
-                .map(str::to_string),
+            previous_asset_version_id: expected_current_video_asset_version_id.map(str::to_string),
         });
     }
 
@@ -486,9 +485,8 @@ mod tests {
             "Ops room stand-off".into(),
         )
         .unwrap();
-        let shot =
-            CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None)
-                .unwrap();
+        let shot = CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None)
+            .unwrap();
         let keyframe_asset =
             crate::scenes::service::SceneService::ensure_scene_keyframe_asset(&root, &scene.id)
                 .unwrap();
@@ -565,13 +563,9 @@ mod tests {
                 .unwrap();
         let candidate_source = root.join("candidate.mp4");
         std::fs::write(&candidate_source, mp4_bytes(3)).unwrap();
-        let candidate = AssetService::import_media_version(
-            &root,
-            &video_asset.id,
-            &candidate_source,
-            None,
-        )
-        .unwrap();
+        let candidate =
+            AssetService::import_media_version(&root, &video_asset.id, &candidate_source, None)
+                .unwrap();
         assert_eq!(candidate.sha256, artifacts[0].sha256);
 
         CompletedShot {
@@ -621,7 +615,10 @@ mod tests {
             after.generated_video_asset_version_id,
             Some(promoted.asset_version_id.clone())
         );
-        assert_eq!(after.keyframe_asset_version_id, before.keyframe_asset_version_id);
+        assert_eq!(
+            after.keyframe_asset_version_id,
+            before.keyframe_asset_version_id
+        );
         assert_eq!(
             after.keyframe_asset_version_id.as_deref(),
             Some(fixture.source_version_id.as_str())
@@ -642,7 +639,10 @@ mod tests {
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0]["shotId"], fixture.shot_id);
         assert_eq!(payloads[0]["sceneId"], fixture.scene_id);
-        assert_eq!(payloads[0]["sourceAssetVersionId"], fixture.source_version_id);
+        assert_eq!(
+            payloads[0]["sourceAssetVersionId"],
+            fixture.source_version_id
+        );
         assert_eq!(payloads[0]["workflowRunId"], "run-i2v");
         assert_eq!(payloads[0]["providerAttemptId"], "attempt-i2v");
         assert_eq!(payloads[0]["artifactId"], fixture.artifact_id);
@@ -669,9 +669,7 @@ mod tests {
         let second_artifact = fixture.capture_extra_video_artifact("attempt-i2v-2", 11);
         let first = fixture.promote(None).unwrap();
 
-        let error = fixture
-            .promote_with(&second_artifact, None)
-            .unwrap_err();
+        let error = fixture.promote_with(&second_artifact, None).unwrap_err();
         assert!(matches!(error, AppError::PromotionConflict));
 
         // The winner's pin is untouched; the loser never repinned anything.
@@ -679,7 +677,10 @@ mod tests {
             fixture.shot().generated_video_asset_version_id,
             Some(first.asset_version_id)
         );
-        assert_eq!(audit_payloads(&fixture.root, "shot.video.promoted").len(), 1);
+        assert_eq!(
+            audit_payloads(&fixture.root, "shot.video.promoted").len(),
+            1
+        );
     }
 
     #[test]
@@ -696,7 +697,10 @@ mod tests {
             Some(first.asset_version_id)
         );
         // No duplicate provenance for the replayed no-op.
-        assert_eq!(audit_payloads(&fixture.root, "shot.video.promoted").len(), 1);
+        assert_eq!(
+            audit_payloads(&fixture.root, "shot.video.promoted").len(),
+            1
+        );
     }
 
     #[test]
@@ -707,16 +711,27 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, AppError::PromotionConflict));
         assert_eq!(fixture.shot().generated_video_asset_version_id, None);
-        assert_eq!(audit_payloads(&fixture.root, "shot.video.promoted").len(), 0);
+        assert_eq!(
+            audit_payloads(&fixture.root, "shot.video.promoted").len(),
+            0
+        );
     }
 
     #[test]
     fn wrong_shot_or_operation_is_not_promotable() {
         let fixture = completed_shot_i2v_fixture();
-        let other_shot =
-            CinemaService::create_shot(&fixture.root, &fixture.scene_id, None, 2.0, "Close", None, None)
-                .unwrap();
-        let wrong_shot_artifact = fixture.capture_wrong_shot_artifact("attempt-wrong-shot", &other_shot.id);
+        let other_shot = CinemaService::create_shot(
+            &fixture.root,
+            &fixture.scene_id,
+            None,
+            2.0,
+            "Close",
+            None,
+            None,
+        )
+        .unwrap();
+        let wrong_shot_artifact =
+            fixture.capture_wrong_shot_artifact("attempt-wrong-shot", &other_shot.id);
         let error = fixture
             .promote_with(&wrong_shot_artifact, None)
             .unwrap_err();
@@ -769,12 +784,20 @@ mod tests {
         let image: image::RgbaImage =
             image::ImageBuffer::from_pixel(8, 8, image::Rgba([200, 100, 50, 255]));
         image.save(&replacement_source).unwrap();
-        let replacement_version =
-            AssetService::import_asset_version(&fixture.root, &keyframe_asset_id(&fixture), &replacement_source, None)
-                .unwrap();
+        let replacement_version = AssetService::import_asset_version(
+            &fixture.root,
+            &keyframe_asset_id(&fixture),
+            &replacement_source,
+            None,
+        )
+        .unwrap();
         AssetService::promote_asset_version(&fixture.root, &replacement_version.id).unwrap();
-        CinemaService::set_shot_keyframe(&fixture.root, &fixture.shot_id, Some(&replacement_version.id))
-            .unwrap();
+        CinemaService::set_shot_keyframe(
+            &fixture.root,
+            &fixture.shot_id,
+            Some(&replacement_version.id),
+        )
+        .unwrap();
 
         let promoted = fixture.promote(None).unwrap();
         let shot = fixture.shot();
@@ -798,4 +821,3 @@ mod tests {
         .unwrap()
     }
 }
-

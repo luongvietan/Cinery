@@ -479,7 +479,9 @@ fn traverse_backwards(
         "scene" => {
             // Scene -> Character Look Version
             let mut stmt = conn
-                .prepare("SELECT look_asset_version_id FROM world_scene_characters WHERE scene_id = ?1")
+                .prepare(
+                    "SELECT look_asset_version_id FROM world_scene_characters WHERE scene_id = ?1",
+                )
                 .map_err(|e| AppError::Database(e.to_string()))?;
             for row in stmt
                 .query_map([id], |r| r.get::<_, String>(0))

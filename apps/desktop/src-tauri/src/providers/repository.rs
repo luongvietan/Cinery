@@ -14,7 +14,9 @@ mod tests {
             base_url: "https://video.example.test".into(),
             purpose: CustomProviderPurpose::Video,
             preset_id: None,
-            runtime: crate::providers::presets::legacy_purpose_runtime(CustomProviderPurpose::Video),
+            runtime: crate::providers::presets::legacy_purpose_runtime(
+                CustomProviderPurpose::Video,
+            ),
             api_key: Some("secret".into()),
             api_key_hint: None,
             models: vec![CustomProviderModel {
@@ -518,7 +520,14 @@ pub fn persist_job(
     provider_job_id: &str,
     status: &str,
 ) -> Result<(), AppError> {
-    persist_job_with_operation(conn, execution_id, provider_id, provider_job_id, status, None)
+    persist_job_with_operation(
+        conn,
+        execution_id,
+        provider_id,
+        provider_job_id,
+        status,
+        None,
+    )
 }
 
 /// Persists the durable provider job row including the provider operation

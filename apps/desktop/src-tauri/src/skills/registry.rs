@@ -308,7 +308,10 @@ mod tests {
         assert_eq!(operation.id, "scene.generate_video");
         let expected = operation.expected_output.clone().unwrap();
         assert_eq!(expected.asset_type, AssetType::Video);
-        assert_eq!(expected.media_type, crate::skills::model::OutputMediaType::Video);
+        assert_eq!(
+            expected.media_type,
+            crate::skills::model::OutputMediaType::Video
+        );
     }
 
     #[test]

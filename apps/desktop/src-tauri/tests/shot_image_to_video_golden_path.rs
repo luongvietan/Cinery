@@ -22,15 +22,20 @@ fn open_db(root: &Path) -> rusqlite::Connection {
 
 fn background_test_guard() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap()
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap()
 }
 
 fn pin_keyframe(root: &Path, scene_id: &str, shot_id: &str, name: &str, pixel: [u8; 4]) -> String {
     let keyframe_asset =
-        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(root, scene_id)
-            .unwrap();
+        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(
+            root, scene_id,
+        )
+        .unwrap();
     let source = support::test_image(root, name, pixel);
-    let version = AssetService::import_asset_version(root, &keyframe_asset.id, &source, None).unwrap();
+    let version =
+        AssetService::import_asset_version(root, &keyframe_asset.id, &source, None).unwrap();
     AssetService::promote_asset_version(root, &version.id).unwrap();
     CinemaService::set_shot_keyframe(root, shot_id, Some(&version.id)).unwrap();
     version.id
@@ -84,7 +89,10 @@ fn drive_background_to_completion(root: &Path) -> bool {
     false
 }
 
-fn only_artifact(root: &Path, run_id: &str) -> cinematic_desktop_lib::generation::model::GeneratedArtifact {
+fn only_artifact(
+    root: &Path,
+    run_id: &str,
+) -> cinematic_desktop_lib::generation::model::GeneratedArtifact {
     let results = GenerationService::list_results(root, Some(run_id)).unwrap();
     assert_eq!(results.len(), 1, "exactly one result set for the run");
     assert_eq!(results[0].artifacts.len(), 1, "exactly one artifact");
@@ -127,10 +135,22 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
     let shot = &fixture.shots[0];
 
     // The exact frozen source at run creation.
-    let source_version = pin_keyframe(root, &scene.id, &shot.id, "golden-kf.png", [29, 47, 83, 255]);
+    let source_version = pin_keyframe(
+        root,
+        &scene.id,
+        &shot.id,
+        "golden-kf.png",
+        [29, 47, 83, 255],
+    );
 
     // Submit with the fake async video adapter (durable, restartable).
-    let running = start_shot_i2v_run(root, &scene.id, &shot.id, "fake_async_video", "fake-video-v1");
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
     assert_eq!(running.run.status, "running");
     let submitted_attempt: i64 = {
         let conn = open_db(root);
@@ -147,7 +167,13 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
 
     // Drift the Shot's keyframe AFTER submission: the frozen compiled
     // request and lineage must keep the original source.
-    let replacement = pin_keyframe(root, &scene.id, &shot.id, "golden-kf-2.png", [200, 100, 50, 255]);
+    let replacement = pin_keyframe(
+        root,
+        &scene.id,
+        &shot.id,
+        "golden-kf-2.png",
+        [200, 100, 50, 255],
+    );
     assert_ne!(replacement, source_version);
 
     // Simulate a restart and drive the background runner to completion.
@@ -164,7 +190,10 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
     let artifact = only_artifact(root, &running.run.id);
     let detail = GenerationService::get_artifact_detail(root, &artifact.id).unwrap();
     let lineage = detail.lineage.expect("lineage present");
-    assert_eq!(lineage.source_asset_version_ids, vec![source_version.clone()]);
+    assert_eq!(
+        lineage.source_asset_version_ids,
+        vec![source_version.clone()]
+    );
 
     // Completion imported a candidate but never auto-pinned the Shot.
     let before_promotion = shot_row(root, &shot.id);
@@ -197,7 +226,13 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
 
     // Replay with the now-current pin is idempotent: same version, no new
     // audit row.
-    let replay = promote_shot_video_candidate(root, &shot.id, &artifact.id, Some(&promoted.asset_version_id)).unwrap();
+    let replay = promote_shot_video_candidate(
+        root,
+        &shot.id,
+        &artifact.id,
+        Some(&promoted.asset_version_id),
+    )
+    .unwrap();
     assert_eq!(replay.asset_version_id, promoted.asset_version_id);
     let audit_count: i64 = {
         let conn = open_db(root);
@@ -208,7 +243,10 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
         )
         .unwrap()
     };
-    assert_eq!(audit_count, 1, "replay must not append a second audit event");
+    assert_eq!(
+        audit_count, 1,
+        "replay must not append a second audit event"
+    );
 }
 
 #[test]
@@ -222,12 +260,24 @@ fn conflicting_shot_promotions_yield_one_winner_and_one_conflict() {
     let source_version = pin_keyframe(root, &scene.id, &shot.id, "race-kf.png", [29, 47, 83, 255]);
 
     // First run -> first artifact.
-    let first = start_shot_i2v_run(root, &scene.id, &shot.id, "fake_async_video", "fake-video-v1");
+    let first = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
     assert!(drive_background_to_completion(root), "first run completes");
     let first_artifact = only_artifact(root, &first.run.id);
 
     // Second run (a new generation of the same keyframe) -> second artifact.
-    let second = start_shot_i2v_run(root, &scene.id, &shot.id, "fake_async_video", "fake-video-v1");
+    let second = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
     assert!(drive_background_to_completion(root), "second run completes");
     let second_artifact = only_artifact(root, &second.run.id);
     assert_ne!(first_artifact.id, second_artifact.id);
@@ -240,11 +290,24 @@ fn conflicting_shot_promotions_yield_one_winner_and_one_conflict() {
         (Err(_), Ok(b)) => b.asset_version_id.clone(),
         _ => panic!("exactly one promotion must win: {outcome_a:?} vs {outcome_b:?}"),
     };
-    assert!(matches!(outcome_a, Err(cinematic_desktop_lib::error::AppError::PromotionConflict))
-        || matches!(outcome_b, Err(cinematic_desktop_lib::error::AppError::PromotionConflict)));
+    assert!(
+        matches!(
+            outcome_a,
+            Err(cinematic_desktop_lib::error::AppError::PromotionConflict)
+        ) || matches!(
+            outcome_b,
+            Err(cinematic_desktop_lib::error::AppError::PromotionConflict)
+        )
+    );
     let pinned = shot_row(root, &shot.id);
-    assert_eq!(pinned.generated_video_asset_version_id.as_deref(), Some(winner_version.as_str()));
-    assert_eq!(pinned.keyframe_asset_version_id.as_deref(), Some(source_version.as_str()));
+    assert_eq!(
+        pinned.generated_video_asset_version_id.as_deref(),
+        Some(winner_version.as_str())
+    );
+    assert_eq!(
+        pinned.keyframe_asset_version_id.as_deref(),
+        Some(source_version.as_str())
+    );
 }
 
 #[test]
@@ -255,8 +318,20 @@ fn completion_is_idempotent_when_run_twice() {
     let root = &fixture.root;
     let scene = &fixture.scene;
     let shot = &fixture.shots[0];
-    pin_keyframe(root, &scene.id, &shot.id, "replay-kf.png", [29, 47, 83, 255]);
-    let running = start_shot_i2v_run(root, &scene.id, &shot.id, "fake_async_video", "fake-video-v1");
+    pin_keyframe(
+        root,
+        &scene.id,
+        &shot.id,
+        "replay-kf.png",
+        [29, 47, 83, 255],
+    );
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
 
     assert!(drive_background_to_completion(root), "first completion");
     let completed = WorkflowRuntime::get_run(root, &running.run.id).unwrap();
@@ -267,7 +342,10 @@ fn completion_is_idempotent_when_run_twice() {
     // capture a second result set, artifact, or candidate version.
     background::reset_provider_cache_for_tests();
     let tick = background::run_pending_jobs(root).unwrap();
-    assert_eq!(tick.completed, 0, "no pending job remains after terminal completion");
+    assert_eq!(
+        tick.completed, 0,
+        "no pending job remains after terminal completion"
+    );
 
     let results = GenerationService::list_results(root, Some(&running.run.id)).unwrap();
     assert_eq!(results.len(), 1);
@@ -284,7 +362,10 @@ fn completion_is_idempotent_when_run_twice() {
         )
         .unwrap()
     };
-    assert_eq!(candidates, 1, "content-dedup keeps exactly one candidate version");
+    assert_eq!(
+        candidates, 1,
+        "content-dedup keeps exactly one candidate version"
+    );
 }
 
 #[test]
@@ -295,7 +376,13 @@ fn changed_prompt_allows_a_new_generation_run() {
     let root = &fixture.root;
     let scene = &fixture.scene;
     let shot = &fixture.shots[0];
-    pin_keyframe(root, &scene.id, &shot.id, "prompt-kf.png", [29, 47, 83, 255]);
+    pin_keyframe(
+        root,
+        &scene.id,
+        &shot.id,
+        "prompt-kf.png",
+        [29, 47, 83, 255],
+    );
 
     let first = WorkflowRuntime::create_run(
         root,
@@ -325,7 +412,10 @@ fn changed_prompt_allows_a_new_generation_run() {
         }),
     )
     .unwrap();
-    assert_ne!(first.run.id, second.run.id, "a changed prompt is a new generation");
+    assert_ne!(
+        first.run.id, second.run.id,
+        "a changed prompt is a new generation"
+    );
 }
 
 #[test]
@@ -337,7 +427,13 @@ fn retry_after_failure_preserves_the_exact_frozen_source() {
     let scene = &fixture.scene;
     let shot = &fixture.shots[0];
     let source_version = pin_keyframe(root, &scene.id, &shot.id, "retry-kf.png", [29, 47, 83, 255]);
-    let running = start_shot_i2v_run(root, &scene.id, &shot.id, "fake_async_video", "fake-video-v1");
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
 
     // Fail the provider job, execution, step, and run before retrying.
     {
@@ -370,7 +466,13 @@ fn retry_after_failure_preserves_the_exact_frozen_source() {
         )
         .unwrap();
     }
-    let replacement = pin_keyframe(root, &scene.id, &shot.id, "retry-kf-2.png", [90, 90, 90, 255]);
+    let replacement = pin_keyframe(
+        root,
+        &scene.id,
+        &shot.id,
+        "retry-kf-2.png",
+        [90, 90, 90, 255],
+    );
 
     let retried = retry_workflow_execution(
         root.to_string_lossy().into(),
@@ -394,5 +496,8 @@ fn retry_after_failure_preserves_the_exact_frozen_source() {
         "retry must never reread the drifted Shot keyframe"
     );
     let final_shot = shot_row(root, &shot.id);
-    assert_eq!(final_shot.keyframe_asset_version_id.as_deref(), Some(replacement.as_str()));
+    assert_eq!(
+        final_shot.keyframe_asset_version_id.as_deref(),
+        Some(replacement.as_str())
+    );
 }
