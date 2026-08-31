@@ -768,7 +768,9 @@ impl GenerationProvider for DeclarativeProvider {
         {
             media_types.push(super::model::ProviderMediaType::Image);
         }
-        if operations.contains_key(OPERATION_VIDEO_GENERATE) {
+        if operations.contains_key(OPERATION_VIDEO_GENERATE)
+            || operations.contains_key(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
             media_types.push(super::model::ProviderMediaType::Video);
         }
         let all_endpoints: Vec<&EndpointConfig> = operations.values().collect();
@@ -1749,6 +1751,35 @@ mod tests {
         request
     }
 
+    fn image_to_video_only_config(interval_ms: u64, timeout_ms: u64) -> ProviderRuntimeConfig {
+        let mut config = async_video_config(interval_ms, timeout_ms);
+        let mut endpoint = config
+            .operations
+            .remove(OPERATION_VIDEO_GENERATE)
+            .expect("fixture starts with video.generate");
+        endpoint.request_mapping = Some(serde_json::json!({
+            "prompt": "{{prompt}}",
+            "image": "{{image}}"
+        }));
+        config
+            .operations
+            .insert(OPERATION_VIDEO_IMAGE_TO_VIDEO.into(), endpoint);
+        config
+    }
+
+    fn shot_image_to_video_request() -> crate::providers::model::ProviderExecutionRequest {
+        let mut request = video_request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "source-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+        request.reference_attachments = vec![png_attachment()];
+        request
+    }
+
     #[test]
     fn video_generate_only_adapter_rejects_shot_image_to_video_without_submission() {
         let transport = FakeTransport::with_responses(vec![]);
@@ -1767,6 +1798,29 @@ mod tests {
         assert_eq!(error.kind, ProviderErrorKind::UnsupportedCapability);
         assert!(error.message.contains("image-to-video"));
         assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn image_to_video_only_adapter_submits_a_shot_source_image() {
+        let transport = FakeTransport::with_responses(vec![FakeResponse {
+            url_contains: "/submit".into(),
+            status: 200,
+            body: r#"{"result":{"task_id":"i2v-task-1"}}"#.into(),
+        }]);
+        let provider = async_video_provider(image_to_video_only_config(1, 10_000), transport.clone());
+
+        let submission = provider.submit(&shot_image_to_video_request()).unwrap();
+
+        assert_eq!(submission.job.provider_job_id, "i2v-task-1");
+        assert_eq!(
+            submission.job.operation.as_deref(),
+            Some(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        );
+        let body = transport.last_request().json_body().unwrap();
+        assert!(body["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
     }
 
     #[test]
