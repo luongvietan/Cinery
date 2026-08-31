@@ -121,15 +121,14 @@ pub fn promote_shot_video_candidate(
         return Err(AppError::GenerationArtifactNotPromotable);
     }
 
-    // Lineage must contain the Shot's exact current frozen keyframe.
-    let shot_keyframe_version_id: Option<String> = conn
-        .query_row(
-            "SELECT keyframe_asset_version_id FROM scene_shots WHERE id = ?1",
-            params![shot_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| AppError::Database(error.to_string()))?;
-    let Some(source_version_id) = shot_keyframe_version_id else {
+    // Lineage must contain the exact source keyframe frozen into the
+    // producing run -- not the Shot's current pin, which may have drifted
+    // after submission under explicit human review.
+    let Some(source_version_id) = input
+        .get("sourceAssetVersionId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+    else {
         return Err(AppError::SourceKeyframeMissing);
     };
     if !lineage
@@ -351,16 +350,6 @@ mod tests {
             .artifacts[0]
                 .id
                 .clone()
-        }
-
-        /// Imports a candidate version of the given bytes into the
-        /// scene-owned video asset, mirroring completion-time capture import.
-        fn import_candidate(&self, seed: u8) -> String {
-            let source = self.root.join(format!("candidate-{seed}.mp4"));
-            std::fs::write(&source, mp4_bytes(seed)).unwrap();
-            AssetService::import_media_version(&self.root, &self.video_asset_id, &source, None)
-                .unwrap()
-                .id
         }
 
         /// Captures an image artifact under a fresh attempt + a separate
@@ -771,10 +760,11 @@ mod tests {
     }
 
     #[test]
-    fn changed_source_keyframe_is_rejected() {
+    fn promotion_uses_frozen_run_source_not_drifted_pin() {
         let fixture = completed_shot_i2v_fixture();
-        // Re-pin a different keyframe: the candidate no longer matches the
-        // shot's exact frozen source.
+        // Re-pin a different keyframe after the run: the frozen run source
+        // stays authoritative, so promotion still succeeds and the drifted
+        // pin is untouched.
         let replacement_source = fixture.root.join("keyframe-2.png");
         let image: image::RgbaImage =
             image::ImageBuffer::from_pixel(8, 8, image::Rgba([200, 100, 50, 255]));
@@ -786,8 +776,16 @@ mod tests {
         CinemaService::set_shot_keyframe(&fixture.root, &fixture.shot_id, Some(&replacement_version.id))
             .unwrap();
 
-        let error = fixture.promote(None).unwrap_err();
-        assert!(matches!(error, AppError::GenerationArtifactNotPromotable));
+        let promoted = fixture.promote(None).unwrap();
+        let shot = fixture.shot();
+        assert_eq!(
+            shot.generated_video_asset_version_id.as_deref(),
+            Some(promoted.asset_version_id.as_str())
+        );
+        assert_eq!(
+            shot.keyframe_asset_version_id.as_deref(),
+            Some(replacement_version.id.as_str())
+        );
     }
 
     fn keyframe_asset_id(fixture: &CompletedShot) -> String {
