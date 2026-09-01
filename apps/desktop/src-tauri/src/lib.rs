@@ -13,6 +13,7 @@ pub mod recovery;
 pub mod router;
 pub mod scenes;
 pub mod skills;
+pub mod video_qa;
 pub mod workflow;
 pub mod worlds;
 

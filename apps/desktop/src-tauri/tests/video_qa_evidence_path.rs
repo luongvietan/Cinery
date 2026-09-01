@@ -1,85 +1,34 @@
 //! P10.3 production-evidence spike.
 //!
-//! This test deliberately keeps the boundary independent of the Video QA
-//! domain. It proves which evidence modes can be prepared from a packaged
-//! desktop application without consulting `PATH` for a media decoder.
+//! It proves which evidence modes the production Tauri library can prepare
+//! without consulting `PATH` for a media decoder.
 
-use sha2::{Digest, Sha256};
-use std::{fs, io, path::Path};
-
-const VIDEO_QA_EVIDENCE_UNSUPPORTED: &str = "VIDEO_QA_EVIDENCE_UNSUPPORTED";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum EvidenceMode {
-    DirectVideo,
-    SampledFrames,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum PackagedDecoderBinding {
-    NotBundled,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct DirectVideoEvidence {
-    source_content_sha256: String,
-    mime_type: &'static str,
-    size_bytes: u64,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum PreparedEvidence {
-    DirectVideo(DirectVideoEvidence),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum EvidencePathError {
-    Unreadable(io::ErrorKind),
-    InvalidMp4,
-    EvidenceUnsupported {
-        code: &'static str,
-        mode: EvidenceMode,
-        reason: &'static str,
-    },
-}
-
-fn prepare_packaged_evidence(
-    source: &Path,
-    mode: EvidenceMode,
-    decoder: PackagedDecoderBinding,
-) -> Result<PreparedEvidence, EvidencePathError> {
-    let bytes = fs::read(source).map_err(|error| EvidencePathError::Unreadable(error.kind()))?;
-    if !cinematic_desktop_lib::generation::storage::looks_like_mp4(&bytes) {
-        return Err(EvidencePathError::InvalidMp4);
-    }
-
-    match mode {
-        EvidenceMode::DirectVideo => Ok(PreparedEvidence::DirectVideo(DirectVideoEvidence {
-            source_content_sha256: format!("{:x}", Sha256::digest(&bytes)),
-            mime_type: "video/mp4",
-            size_bytes: bytes.len() as u64,
-        })),
-        EvidenceMode::SampledFrames => match decoder {
-            PackagedDecoderBinding::NotBundled => Err(EvidencePathError::EvidenceUnsupported {
-                code: VIDEO_QA_EVIDENCE_UNSUPPORTED,
-                mode,
-                reason:
-                    "sampled-frame evidence requires a decoder bundled with the Tauri application",
-            }),
-        },
-    }
-}
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use cinematic_desktop_lib::video_qa::evidence::{
+    prepare_packaged_evidence, DirectVideoEvidence, EvidenceMode, EvidencePathError,
+    PreparedEvidence, TemporalDecoderAvailability, VIDEO_QA_EVIDENCE_UNSUPPORTED,
+};
+use std::{fs, path::Path};
 
 fn write_fixture_video(path: &Path) {
-    // A deterministic ISO-BMFF fixture: a valid `ftyp` box followed by an
-    // empty `mdat` box. Direct-video evidence needs exact readable bytes;
-    // sampled-frame evidence additionally needs a packaged decoder.
-    const FIXTURE: &[u8] = &[
-        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0x00, 0x00, 0x02,
-        0x00, b'i', b's', b'o', b'm', b'i', b's', b'o', b'2', 0x00, 0x00, 0x00, 0x08, b'm', b'd',
-        b'a', b't',
-    ];
-    fs::write(path, FIXTURE).unwrap();
+    // Decodable H.264/AVC fixture from Web Platform Tests:
+    // media-source/mp4/test-v-128k-640x480-30fps-10kfr.mp4
+    // Declared there as video/mp4; codecs="avc1.4D4001" (BSD-3-Clause).
+    let encoded: String = include_str!("fixtures/video_qa_wpt_h264.mp4.b64")
+        .split_whitespace()
+        .collect();
+    let fixture = BASE64_STANDARD.decode(encoded).unwrap();
+
+    // Guard against replacing the checked-in playable fixture with another
+    // signature-only stub: this file has movie/track metadata, AVC decoder
+    // configuration, fragmented samples, and media payload.
+    for marker in [b"moov", b"trak", b"avc1", b"avcC", b"moof", b"mdat"] {
+        assert!(
+            fixture.windows(marker.len()).any(|window| window == marker),
+            "fixture must contain the {marker:?} box/entry"
+        );
+    }
+    fs::write(path, fixture).unwrap();
 }
 
 #[test]
@@ -91,13 +40,13 @@ fn direct_video_mode_is_deterministic_without_a_path_decoder() {
     let first = prepare_packaged_evidence(
         &source,
         EvidenceMode::DirectVideo,
-        PackagedDecoderBinding::NotBundled,
+        TemporalDecoderAvailability::Unavailable,
     )
     .unwrap();
     let second = prepare_packaged_evidence(
         &source,
         EvidenceMode::DirectVideo,
-        PackagedDecoderBinding::NotBundled,
+        TemporalDecoderAvailability::Unavailable,
     )
     .unwrap();
 
@@ -106,15 +55,15 @@ fn direct_video_mode_is_deterministic_without_a_path_decoder() {
         first,
         PreparedEvidence::DirectVideo(DirectVideoEvidence {
             source_content_sha256:
-                "de17900c6e6225de65eec7b1970c03636113a98dc8a9c0e9ea5e937fa7ad32f8".into(),
+                "1743855560ef42b195a58901fc634881ad1dd6b01394ce8feedd23cfb25a3fbf".into(),
             mime_type: "video/mp4",
-            size_bytes: 32,
+            size_bytes: 27_764,
         })
     );
 }
 
 #[test]
-fn sampled_frame_mode_returns_typed_unsupported_without_a_bundled_decoder() {
+fn sampled_frame_mode_returns_typed_unsupported_when_decoder_is_explicitly_unavailable() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("candidate.mp4");
     write_fixture_video(&source);
@@ -122,7 +71,7 @@ fn sampled_frame_mode_returns_typed_unsupported_without_a_bundled_decoder() {
     let result = prepare_packaged_evidence(
         &source,
         EvidenceMode::SampledFrames,
-        PackagedDecoderBinding::NotBundled,
+        TemporalDecoderAvailability::Unavailable,
     );
 
     assert_eq!(
@@ -130,7 +79,7 @@ fn sampled_frame_mode_returns_typed_unsupported_without_a_bundled_decoder() {
         Err(EvidencePathError::EvidenceUnsupported {
             code: VIDEO_QA_EVIDENCE_UNSUPPORTED,
             mode: EvidenceMode::SampledFrames,
-            reason: "sampled-frame evidence requires a decoder bundled with the Tauri application",
+            reason: "sampled-frame evidence requires an explicitly configured decoder bundled with the Tauri application",
         })
     );
 }
