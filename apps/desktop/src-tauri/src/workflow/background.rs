@@ -1,4 +1,4 @@
-﻿//! Durable background execution for provider jobs (P10.1).
+//! Durable background execution for provider jobs (P10.1).
 //!
 //! The workflow runtime owns *submission*: it creates the attempt, submits to
 //! the provider, persists the durable `provider_jobs` row, and returns
@@ -15,6 +15,7 @@
 
 use crate::db;
 use crate::error::AppError;
+use crate::project::repository::read_project;
 use crate::providers::adapter::GenerationProvider;
 use crate::providers::model::{
     ProviderJobRef, ProviderJobStatus, ProviderLifecycle, ProviderResult,
@@ -22,7 +23,6 @@ use crate::providers::model::{
 use crate::providers::registry::ProviderRegistry;
 use crate::providers::repository::append_audit_event;
 use crate::providers::service::ProviderService;
-use crate::project::repository::read_project;
 use crate::workflow::completion::{self, CompletionOutcome};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -76,7 +76,8 @@ impl PendingJob {
 /// re-reading declarative definitions and re-resolving vault credentials
 /// on every tick. A process restart rebuilds the cache and resumes from
 /// durable state (remote providers poll their real remote job).
-type ProviderCache = Mutex<std::collections::HashMap<(PathBuf, String), Arc<dyn GenerationProvider>>>;
+type ProviderCache =
+    Mutex<std::collections::HashMap<(PathBuf, String), Arc<dyn GenerationProvider>>>;
 
 fn provider_cache() -> &'static ProviderCache {
     static CACHE: OnceLock<ProviderCache> = OnceLock::new();
@@ -114,7 +115,10 @@ fn provider_for(
             error.message
         ))
     })?;
-    provider_cache().lock().unwrap().insert(key, provider.clone());
+    provider_cache()
+        .lock()
+        .unwrap()
+        .insert(key, provider.clone());
     Ok(provider)
 }
 
@@ -289,7 +293,11 @@ fn terminal_set_attempt(
 }
 
 /// Terminal transition for the provider_jobs row (any non-terminal â†’ given).
-fn terminal_set_provider_job(conn: &Connection, execution_id: &str, status: &str) -> Result<(), AppError> {
+fn terminal_set_provider_job(
+    conn: &Connection,
+    execution_id: &str,
+    status: &str,
+) -> Result<(), AppError> {
     conn.execute(
         "UPDATE provider_jobs SET status = ?1, updated_at = ?2
          WHERE execution_id = ?3 AND status NOT IN ('completed', 'failed', 'cancelled')",
@@ -304,10 +312,7 @@ fn open_project(root: &Path) -> Result<Connection, AppError> {
 }
 
 /// Processes one claimed durable job through a single poll cycle.
-fn process_one_job(
-    project_root: &Path,
-    job: &PendingJob,
-) -> Result<TickDisposition, AppError> {
+fn process_one_job(project_root: &Path, job: &PendingJob) -> Result<TickDisposition, AppError> {
     let mut conn = open_project(project_root)?;
     if !claim_job(&mut conn, job)? {
         return Ok(TickDisposition::StillRunning {
@@ -328,9 +333,16 @@ fn process_one_job(
         if Utc::now() - submitted
             >= chrono::TimeDelta::from_std(spec.timeout).unwrap_or(chrono::TimeDelta::MAX)
         {
-            let message =
-                format!("the AI service did not finish within {} seconds", spec.timeout.as_secs());
-            fail_job(project_root, job, &message, "provider.execution.deadline_exceeded")?;
+            let message = format!(
+                "the AI service did not finish within {} seconds",
+                spec.timeout.as_secs()
+            );
+            fail_job(
+                project_root,
+                job,
+                &message,
+                "provider.execution.deadline_exceeded",
+            )?;
             return Ok(TickDisposition::DeadlineExceeded);
         }
     }
@@ -419,10 +431,7 @@ fn process_one_job(
             // the blocking loop did: a hard failure for sync adapters that
             // lost their result. After progress, keep polling.
             if job.job_status == "submitted" && status.progress_percent.is_none() {
-                let message = format!(
-                    "provider {} ended in an unknown state",
-                    job.provider_id
-                );
+                let message = format!("provider {} ended in an unknown state", job.provider_id);
                 fail_job(project_root, job, &message, "provider.execution.failed")?;
                 return Ok(TickDisposition::Failed);
             }
@@ -483,7 +492,10 @@ fn record_progress(
 /// Resolves a durable cancellation request: stop polling locally, ask the
 /// provider to cancel when it can, persist truthful terminal state, and
 /// cancel the workflow run.
-fn resolve_cancellation(project_root: &Path, job: &PendingJob) -> Result<TickDisposition, AppError> {
+fn resolve_cancellation(
+    project_root: &Path,
+    job: &PendingJob,
+) -> Result<TickDisposition, AppError> {
     let provider = provider_for(project_root, &job.provider_id)?;
     let supports_cancel = provider.capabilities().supports_cancel;
     let mut remote_cancelled = false;
@@ -521,9 +533,7 @@ fn resolve_cancellation(project_root: &Path, job: &PendingJob) -> Result<TickDis
         )?;
         crate::providers::cancellation::unregister(&job.provider_id, &job.provider_job_id);
     }
-    Ok(TickDisposition::Cancelled {
-        remote_cancelled,
-    })
+    Ok(TickDisposition::Cancelled { remote_cancelled })
 }
 
 /// Fails a durable job: terminal attempt + provider job + workflow run, with
@@ -608,7 +618,9 @@ fn complete_job(
                 project_root,
                 &job.workflow_run_id,
             )?;
-            Ok(TickDisposition::Completed { result_set_id: None })
+            Ok(TickDisposition::Completed {
+                result_set_id: None,
+            })
         }
     }
 }
@@ -754,9 +766,7 @@ fn db_error(error: rusqlite::Error) -> AppError {
 
 /// Lists provider jobs for the JobsPanel surface: durable job rows joined
 /// with attempt and run context.
-pub fn list_provider_jobs(
-    project_root: &Path,
-) -> Result<Vec<ProviderJobView>, AppError> {
+pub fn list_provider_jobs(project_root: &Path) -> Result<Vec<ProviderJobView>, AppError> {
     let conn = open_project(project_root)?;
     let project = read_project(&conn)?;
     let mut statement = conn

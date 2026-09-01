@@ -2,11 +2,10 @@ use crate::db;
 use crate::error::AppError;
 use crate::project::repository::read_project;
 use crate::providers::repository::{
-    append_audit_event, create_attempt, next_attempt_number, persist_job_with_operation,
-    update_artifact_ids,
-    update_attempt_status,
+    append_audit_event, create_attempt, latest_attempt, next_attempt_number,
+    persist_job_with_operation, update_artifact_ids, update_attempt_status, NewExecutionAttempt,
 };
-use crate::providers::service::ProviderService;
+use crate::providers::service::{ProviderService, ProviderSubmitRequest};
 use crate::skills::registry::SkillRegistry;
 use crate::workflow::artifacts::{workflow_artifact_dir, write_run_artifacts};
 use crate::workflow::compiler::{
@@ -17,12 +16,15 @@ use crate::workflow::context::{
     resolve_character_face_lock_context, resolve_character_outfit_context,
     resolve_character_sheet_context, resolve_scene_keyframe_context, resolve_world_plate_context,
 };
+use crate::workflow::execution::ExecutionGenerationParameters;
 use crate::workflow::executor::{DryRunExecutor, ExecutionExecutor};
 use crate::workflow::model::{
     WorkflowCharacterOption, WorkflowContextSnapshot, WorkflowRunDetail, WorkflowRunRecord,
 };
 use crate::workflow::prerequisites::{evaluate_prerequisites, evaluate_tbd_guards};
-use crate::workflow::repository::{append_event_in_transaction, WorkflowRepository};
+use crate::workflow::repository::{
+    append_event_in_transaction, NewWorkflowRun, RunIdentity, WorkflowRepository,
+};
 use chrono::Utc;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
@@ -68,6 +70,7 @@ impl WorkflowRuntime {
             "create_world_plate" => validate_world_plate_input(&input)?,
             "create_scene_keyframe" => validate_scene_keyframe_input(&input)?,
             "generate_scene_video" => validate_scene_keyframe_input(&input)?,
+            "generate_shot_video" => validate_shot_image_to_video_input(&input)?,
             schema_id => {
                 return Err(AppError::WorkflowInputInvalid(format!(
                     "unsupported input schema: {schema_id}"
@@ -113,17 +116,145 @@ impl WorkflowRuntime {
                 &decisions,
             )?;
         }
+        if operation.id == "shot.image_to_video" {
+            return Self::create_shot_i2v_run(
+                &mut conn,
+                RunIdentity {
+                    project_id: &project.id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input,
+                operation,
+                &report,
+            );
+        }
         let run_id = WorkflowRepository::create_run(
             &mut conn,
-            &project.id,
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id: &project.id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input: &input,
+                prerequisite_report: &report,
+                steps: &operation.workflow,
+            },
+        )?;
+        WorkflowRepository::get_run(&conn, &project.id, &run_id)
+    }
+
+    /// P10.2: atomically freezes the shot's exact source keyframe. Inside one
+    /// immediate transaction the scoped shot lookup pins
+    /// `sourceAssetVersionId` and the shot duration into the persisted input,
+    /// an active run with the same normalized input is reused, and the run is
+    /// inserted -- so the frozen keyframe can never drift between lookup and
+    /// insert.
+    fn create_shot_i2v_run(
+        conn: &mut Connection,
+        identity: RunIdentity<'_>,
+        input: Value,
+        operation: &crate::skills::model::SkillOperation,
+        report: &crate::workflow::model::PrerequisiteReport,
+    ) -> Result<WorkflowRunDetail, AppError> {
+        let RunIdentity {
+            project_id,
             skill_id,
             skill_version,
             operation_id,
-            input.clone(),
-            &report,
-            &operation.workflow,
+        } = identity;
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let scene_id = input
+            .get("sceneId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let shot_id = input
+            .get("shotId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let (duration_seconds, keyframe_version_id): (f64, Option<String>) = transaction
+            .query_row(
+                "SELECT s.duration_seconds, s.keyframe_asset_version_id
+                 FROM scene_shots s
+                 JOIN world_scenes ws ON ws.id = s.scene_id
+                 WHERE s.id = ?1 AND s.scene_id = ?2 AND ws.project_id = ?3",
+                params![shot_id, scene_id, project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or(AppError::ShotNotFound)?;
+        let source_asset_version_id = keyframe_version_id.ok_or(AppError::SourceKeyframeMissing)?;
+
+        let mut frozen = input.clone();
+        if let Some(object) = frozen.as_object_mut() {
+            object.insert(
+                "sourceAssetVersionId".into(),
+                Value::String(source_asset_version_id),
+            );
+            let generation_parameters = object
+                .entry("generationParameters")
+                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+            if let Some(parameters) = generation_parameters.as_object_mut() {
+                parameters
+                    .entry("durationSeconds")
+                    .or_insert_with(|| serde_json::json!(duration_seconds));
+            }
+        }
+        let input_json = serde_json::to_string(&frozen)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        // Deduplicate: reuse an existing active run only when the operation
+        // and the normalized input JSON match exactly.
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM workflow_runs
+                 WHERE project_id = ?1 AND skill_id = ?2 AND skill_version = ?3
+                   AND operation_id = ?4 AND input_json = ?5
+                   AND status IN ('created', 'running', 'waiting_for_approval',
+                                  'ready_for_execution')
+                 ORDER BY created_at DESC LIMIT 1",
+                params![
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                    input_json
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        if let Some(run_id) = existing {
+            transaction
+                .rollback()
+                .map_err(|error| AppError::Database(error.to_string()))?;
+            return WorkflowRepository::get_run(conn, project_id, &run_id);
+        }
+
+        let run_id = WorkflowRepository::create_run_in_transaction(
+            &transaction,
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input: &frozen,
+                prerequisite_report: report,
+                steps: &operation.workflow,
+            },
         )?;
-        WorkflowRepository::get_run(&conn, &project.id, &run_id)
+        transaction
+            .commit()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        WorkflowRepository::get_run(conn, project_id, &run_id)
     }
 
     pub fn advance_run(
@@ -159,10 +290,7 @@ impl WorkflowRuntime {
         // durable provider job keeps executing; re-advancing must never
         // fail or duplicate the run's work.
         if detail.run.status == "running"
-            && crate::workflow::background::run_has_active_provider_job(
-                &conn,
-                workflow_run_id,
-            )?
+            && crate::workflow::background::run_has_active_provider_job(&conn, workflow_run_id)?
         {
             return Ok(detail);
         }
@@ -377,6 +505,33 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "shot_image_to_video_context" => {
+                            let report: crate::workflow::model::PrerequisiteReport =
+                                serde_json::from_str(
+                                    detail.run.prerequisite_report_json.as_deref().ok_or_else(
+                                        || {
+                                            AppError::WorkflowRunInconsistent(
+                                                "missing prerequisite report".into(),
+                                            )
+                                        },
+                                    )?,
+                                )
+                                .map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let context =
+                                crate::workflow::context::resolve_shot_image_to_video_context(
+                                    &conn,
+                                    &project.id,
+                                    &detail.run.skill_id,
+                                    &detail.run.skill_version,
+                                    &detail.run.operation_id,
+                                    &input,
+                                    report,
+                                )?;
+                            serde_json::to_string(&context)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         _ => return Err(AppError::WorkflowResolverNotFound(resolver_id.clone())),
                     };
                     complete_context_step(
@@ -501,6 +656,17 @@ impl WorkflowRuntime {
                                 operation,
                                 &context,
                             )?;
+                            write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
+                            serde_json::to_string(&request)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
+                        "shot_image_to_video_v1" => {
+                            let context: WorkflowContextSnapshot =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            let request = crate::workflow::compiler::ShotImageToVideoCompiler
+                                .compile(workflow_run_id, skill, operation, &context)?;
                             write_run_artifacts(project_root, workflow_run_id, &context, &request)?;
                             serde_json::to_string(&request)
                                 .map_err(|error| AppError::Database(error.to_string()))?
@@ -920,13 +1086,15 @@ fn execute_visual_repair_ready(
         ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
     let attempt = create_attempt(
         conn,
-        &detail.run.id,
-        execute_step_id,
-        attempt_number,
-        &compiled_hash,
-        provider_id,
-        model_id,
-        &idempotency_key,
+        NewExecutionAttempt {
+            workflow_run_id: &detail.run.id,
+            step_definition_id: execute_step_id,
+            attempt_number,
+            compiled_request_id: &compiled_hash,
+            provider_id,
+            model_id,
+            idempotency_key: &idempotency_key,
+        },
     )?;
     append_audit_event(
         conn,
@@ -943,15 +1111,17 @@ fn execute_visual_repair_ready(
     let reference_attachments =
         crate::workflow::execution::resolve_reference_attachments(project_root, &request)?;
     let submission = match ProviderService::submit_provider_request(
-        &request,
+        ProviderSubmitRequest {
+            request: &request,
+            project_root: Some(project_root),
+            step_id: execute_step_id,
+            compiled_request_id: &compiled_hash,
+            provider_id,
+            model_id,
+            attempt_number,
+        },
         reference_attachments,
-        Some(project_root),
         None,
-        execute_step_id,
-        &compiled_hash,
-        provider_id,
-        model_id,
-        attempt_number,
     ) {
         Ok(submission) => submission,
         Err(error) => {
@@ -1291,9 +1461,9 @@ fn execute_scene_keyframe_ready(
                 ),
                 &request,
             )
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
         caps.supports(&provider_request)
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
     }
 
     // Proceed with normal provider execution (reuse generic logic but for shot_keyframe)
@@ -1338,13 +1508,15 @@ fn execute_scene_keyframe_ready(
             ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
             conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
+            NewExecutionAttempt {
+                workflow_run_id: &detail.run.id,
+                step_definition_id: execute_step_id,
+                attempt_number,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                idempotency_key: &idempotency_key,
+            },
         )?;
         append_audit_event(
             conn,
@@ -1355,15 +1527,15 @@ fn execute_scene_keyframe_ready(
                 &serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number}),
             ),
         )?;
-        let submission = match ProviderService::submit_compiled_request(
-            &request,
-            Some(project_root),
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
+        let submission = match ProviderService::submit_compiled_request(ProviderSubmitRequest {
+            request: &request,
+            project_root: Some(project_root),
+            step_id: execute_step_id,
+            compiled_request_id: &compiled_hash,
+            provider_id: &provider_id,
+            model_id: &model_id,
             attempt_number,
-        ) {
+        }) {
             Ok(submission) => submission,
             Err(error) => {
                 let error_json = serde_json::json!({"message": error.to_string()}).to_string();
@@ -1668,7 +1840,7 @@ fn execute_scene_video_ready(
         ) => (id.as_str(), complete_id.as_str()),
         _ => {
             return Err(AppError::WorkflowRunInconsistent(
-                "scene keyframe execute/complete definitions are missing".into(),
+                "video execute/complete definitions are missing".into(),
             ))
         }
     };
@@ -1676,6 +1848,9 @@ fn execute_scene_video_ready(
     let input: Value = serde_json::from_str(&detail.run.input_json)
         .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
     let (provider_id, model_id) = resolve_provider_selection(project_root, &input)?;
+    if operation.id == "shot.image_to_video" {
+        ProviderService::validate_image_to_video_selection(project_root, &provider_id, &model_id)?;
+    }
 
     // Compute required reference count from request (world + looks + sheets + props)
     // Already in request.references; check capability
@@ -1717,9 +1892,9 @@ fn execute_scene_video_ready(
                 ),
                 &request,
             )
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
         caps.supports(&provider_request)
-            .map_err(|msg| AppError::ProviderCapabilityUnsatisfied(msg))?;
+            .map_err(AppError::ProviderCapabilityUnsatisfied)?;
     }
 
     // Proceed with normal provider execution (reuse generic logic but for shot_keyframe)
@@ -1759,19 +1934,40 @@ fn execute_scene_video_ready(
         )?
     } else {
         let compiled_hash = compiled_request_id(&request_json);
-        let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
-        let idempotency_key =
-            ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
-        let attempt = create_attempt(
-            conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
-        )?;
+        let attempt = match latest_attempt(conn, &detail.run.id, execute_step_id)? {
+            Some(attempt) if attempt.status == "queued" => {
+                if attempt.compiled_request_id != compiled_hash
+                    || attempt.provider_id != provider_id
+                    || attempt.model_id != model_id
+                {
+                    return Err(AppError::WorkflowRunInconsistent(
+                        "queued retry attempt does not match the frozen video request".into(),
+                    ));
+                }
+                attempt
+            }
+            _ => {
+                let attempt_number = next_attempt_number(conn, &detail.run.id, execute_step_id)?;
+                let idempotency_key = ProviderService::idempotency_key(
+                    &detail.run.id,
+                    execute_step_id,
+                    attempt_number,
+                );
+                create_attempt(
+                    conn,
+                    NewExecutionAttempt {
+                        workflow_run_id: &detail.run.id,
+                        step_definition_id: execute_step_id,
+                        attempt_number,
+                        compiled_request_id: &compiled_hash,
+                        provider_id: &provider_id,
+                        model_id: &model_id,
+                        idempotency_key: &idempotency_key,
+                    },
+                )?
+            }
+        };
+        let attempt_number = attempt.attempt_number;
         append_audit_event(
             conn,
             Some(&attempt.id),
@@ -1781,14 +1977,35 @@ fn execute_scene_video_ready(
                 &serde_json::json!({"providerId": provider_id, "modelId": model_id, "attemptNumber": attempt_number}),
             ),
         )?;
-        let submission = match ProviderService::submit_compiled_request(
-            &request,
-            Some(project_root),
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            attempt_number,
+        let reference_attachments =
+            match crate::workflow::execution::resolve_reference_attachments(project_root, &request)
+            {
+                Ok(attachments) => attachments,
+                Err(error) => {
+                    let error_json = serde_json::json!({"message": error.to_string()}).to_string();
+                    let _ = update_attempt_status(conn, &attempt.id, "failed", Some(&error_json));
+                    let _ = append_audit_event(
+                        conn,
+                        Some(&attempt.id),
+                        &detail.run.id,
+                        "provider.execution.failed",
+                        Some(&serde_json::json!({"error": error.to_string()})),
+                    );
+                    return Err(error);
+                }
+            };
+        let submission = match ProviderService::submit_provider_request(
+            ProviderSubmitRequest {
+                request: &request,
+                project_root: Some(project_root),
+                step_id: execute_step_id,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                attempt_number,
+            },
+            reference_attachments,
+            None,
         ) {
             Ok(submission) => submission,
             Err(error) => {
@@ -2096,7 +2313,10 @@ fn execute_ready(
     if operation.id == "scene.create_keyframe" {
         return execute_scene_keyframe_ready(conn, project_root, project_id, detail, operation);
     }
-    if operation.id == "scene.generate_video" {
+    if matches!(
+        operation.id.as_str(),
+        "scene.generate_video" | "shot.image_to_video"
+    ) {
         return execute_scene_video_ready(conn, project_root, project_id, detail, operation);
     }
     let execute_index = detail
@@ -2177,13 +2397,15 @@ fn execute_ready(
             ProviderService::idempotency_key(&detail.run.id, execute_step_id, attempt_number);
         let attempt = create_attempt(
             conn,
-            &detail.run.id,
-            execute_step_id,
-            attempt_number,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            &idempotency_key,
+            NewExecutionAttempt {
+                workflow_run_id: &detail.run.id,
+                step_definition_id: execute_step_id,
+                attempt_number,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                idempotency_key: &idempotency_key,
+            },
         )?;
         append_audit_event(
             conn,
@@ -2212,15 +2434,17 @@ fn execute_ready(
                 }
             };
         let submission = match ProviderService::submit_provider_request(
-            &request,
+            ProviderSubmitRequest {
+                request: &request,
+                project_root: Some(project_root),
+                step_id: execute_step_id,
+                compiled_request_id: &compiled_hash,
+                provider_id: &provider_id,
+                model_id: &model_id,
+                attempt_number,
+            },
             reference_attachments,
-            Some(project_root),
             None,
-            execute_step_id,
-            &compiled_hash,
-            &provider_id,
-            &model_id,
-            attempt_number,
         ) {
             Ok(submission) => submission,
             Err(error) => {
@@ -2330,27 +2554,27 @@ fn execute_ready(
                 .iter()
                 .map(|artifact| artifact.id.clone())
                 .collect::<Vec<_>>();
-             update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
-             append_audit_event(
-                 conn,
-                 Some(&attempt.id),
-                 &detail.run.id,
-                 "provider.execution.completed",
-                 Some(
-                     &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
-                 ),
-             )?;
-             // Durable persistence is complete: only now is the attempt
-             // marked succeeded (see the comment above the capture call).
-             update_attempt_status(conn, &attempt.id, "succeeded", None)?;
-             crate::workflow::execution::ExecutionResult {
-                 kind: provider_id,
-                 artifact_path: project_root.join(&captured.artifacts[0].storage_path),
-                 result_set_id: Some(captured.result_set.id),
-                 artifact_ids,
-                 request,
-             }
-         } else {
+            update_artifact_ids(conn, &attempt.id, &artifact_ids)?;
+            append_audit_event(
+                conn,
+                Some(&attempt.id),
+                &detail.run.id,
+                "provider.execution.completed",
+                Some(
+                    &serde_json::json!({"resultSetId": captured.result_set.id, "artifactCount": captured.artifacts.len()}),
+                ),
+            )?;
+            // Durable persistence is complete: only now is the attempt
+            // marked succeeded (see the comment above the capture call).
+            update_attempt_status(conn, &attempt.id, "succeeded", None)?;
+            crate::workflow::execution::ExecutionResult {
+                kind: provider_id,
+                artifact_path: project_root.join(&captured.artifacts[0].storage_path),
+                result_set_id: Some(captured.result_set.id),
+                artifact_ids,
+                request,
+            }
+        } else {
             // World/scene flows persist the candidate version directly into the
             // stable expected-output asset.
             let asset_type = request.expected_output.asset_type.as_str();
@@ -2909,6 +3133,73 @@ fn validate_scene_keyframe_input(input: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_shot_image_to_video_input(input: &Value) -> Result<(), AppError> {
+    for key in ["sceneId", "shotId", "providerId", "modelId", "prompt"] {
+        if input
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .is_none()
+        {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{key} must be a non-empty string"
+            )));
+        }
+    }
+    for forbidden in ["apiKey", "bearerToken", "credential", "secret"] {
+        if input.get(forbidden).is_some() {
+            return Err(AppError::WorkflowInputInvalid(format!(
+                "{forbidden} must not be stored in workflow input"
+            )));
+        }
+    }
+    if let Some(parameters) = input.get("generationParameters") {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.values().any(Value::is_null))
+        {
+            return Err(AppError::WorkflowInputInvalid(
+                "generationParameters must not contain null values".into(),
+            ));
+        }
+        let parameters: ExecutionGenerationParameters = serde_json::from_value(parameters.clone())
+            .map_err(|error| {
+                AppError::WorkflowInputInvalid(format!(
+                    "generationParameters must contain valid typed values: {error}"
+                ))
+            })?;
+
+        if let Some(duration_seconds) = parameters.duration_seconds {
+            if !duration_seconds.is_finite() || !(0.5..=30.0).contains(&duration_seconds) {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.durationSeconds must be between 0.5 and 30".into(),
+                ));
+            }
+        }
+        if let Some(fps) = parameters.fps {
+            if !(1..=120).contains(&fps) {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.fps must be between 1 and 120".into(),
+                ));
+            }
+        }
+        if let Some(aspect_ratio) = parameters.aspect_ratio {
+            let Some((width, height)) = aspect_ratio.split_once(':') else {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.aspectRatio must use WIDTH:HEIGHT".into(),
+                ));
+            };
+            let valid = |part: &str| part.parse::<u32>().is_ok_and(|value| value > 0);
+            if !valid(width) || !valid(height) || aspect_ratio.matches(':').count() != 1 {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.aspectRatio must use positive WIDTH:HEIGHT".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn db_error(error: rusqlite::Error) -> AppError {
     AppError::Database(error.to_string())
 }
@@ -2994,7 +3285,7 @@ mod tests {
     fn world_plate_prerequisites_block_without_locked_sections() {
         let (_temp, root, world_id) = world_plate_fixture();
         let conn = open_project(&root).unwrap();
-        let project_id: String = conn
+        let _project_id: String = conn
             .query_row("SELECT id FROM projects", [], |row| row.get(0))
             .unwrap();
         let location_id: String = conn
@@ -3228,7 +3519,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(asset_versions2 >= 1 && asset_versions2 <= 2);
+        assert!((1..=2).contains(&asset_versions2));
         let asset_count2: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM assets WHERE type = 'world_plate' AND project_id = ?1",
@@ -3390,7 +3681,7 @@ mod tests {
 
     #[test]
     fn scene_keyframe_exact_reference_world() {
-        let (_temp, root, world_id, world_asset_id, scene_id, look_v01) = scene_keyframe_fixture();
+        let (_temp, root, _world_id, world_asset_id, scene_id, look_v01) = scene_keyframe_fixture();
         // Capture pinned V01
         let pinned_v01: String = {
             let conn = open_project(&root).unwrap();
@@ -3740,7 +4031,7 @@ mod tests {
             err
         );
         // Ensure no reference dropping: the compiled request should have contained all 4 refs before failure
-        let waiting = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
+        let _waiting = WorkflowRuntime::get_run(&root, &created.run.id).unwrap();
         // The run should be failed, no phantom asset versions created beyond the ensure asset slot
         let conn = open_project(&root).unwrap();
         let shot_assets: i64 = conn
@@ -3832,13 +4123,12 @@ mod tests {
         // Check that snapshot contained exact pinned version not canonical alias
         let context: WorkflowContextSnapshot =
             serde_json::from_str(&completed.run.context_snapshot_json.clone().unwrap()).unwrap();
-        assert_eq!(
+        assert!(
             context.resolved_context["world"]["assetVersionId"]
                 .as_str()
                 .unwrap()
                 .len()
-                > 10,
-            true
+                > 10
         );
         assert!(context.resolved_context["world"]["assetVersionId"].is_string());
         // Ensure request references contain exact pinned version
@@ -3878,5 +4168,369 @@ mod tests {
                     .to_string_lossy()
                     .contains("generations")
         );
+    }
+
+    // -- P10.2: shot-scoped image-to-video ------------------------------
+
+    struct ShotI2vFixture {
+        _temp: tempfile::TempDir,
+        root: std::path::PathBuf,
+        scene_id: String,
+        shot_id: String,
+        first_keyframe_version_id: String,
+        second_keyframe_version_id: String,
+    }
+
+    fn shot_i2v_fixture() -> ShotI2vFixture {
+        use crate::cinema::service::CinemaService;
+        use crate::scenes::service::SceneService;
+
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("shot-i2v");
+        ProjectService::create(&root, "Shot I2V").unwrap();
+        let scene =
+            SceneService::create_scene(&root, "Test Scene", "A test summary for i2v").unwrap();
+        let shot =
+            CinemaService::create_shot(&root, &scene.id, None, 4.0, "Push in", None, None).unwrap();
+
+        let tmp = root.join("tmp_keyframes");
+        std::fs::create_dir_all(&tmp).unwrap();
+        let keyframe_asset = crate::assets::service::AssetService::create_asset(
+            &root,
+            "shot_keyframe",
+            "KEYFRAME-SHOT",
+            None,
+        )
+        .unwrap();
+        let first = {
+            let p = tmp.join("kf_v01.png");
+            let img: image::RgbaImage =
+                image::ImageBuffer::from_pixel(32, 32, image::Rgba([10, 10, 10, 255]));
+            img.save(&p).unwrap();
+            crate::assets::service::AssetService::import_asset_version(
+                &root,
+                &keyframe_asset.id,
+                &p,
+                None,
+            )
+            .unwrap()
+        };
+        crate::assets::service::AssetService::promote_asset_version(&root, &first.id).unwrap();
+        CinemaService::set_shot_keyframe(&root, &shot.id, Some(&first.id)).unwrap();
+        let second = {
+            let p = tmp.join("kf_v02.png");
+            let img: image::RgbaImage =
+                image::ImageBuffer::from_pixel(32, 32, image::Rgba([20, 20, 20, 255]));
+            img.save(&p).unwrap();
+            crate::assets::service::AssetService::import_asset_version(
+                &root,
+                &keyframe_asset.id,
+                &p,
+                Some(first.id.clone()),
+            )
+            .unwrap()
+        };
+        crate::assets::service::AssetService::promote_asset_version(&root, &second.id).unwrap();
+
+        ShotI2vFixture {
+            _temp: temp,
+            root,
+            scene_id: scene.id,
+            shot_id: shot.id,
+            first_keyframe_version_id: first.id,
+            second_keyframe_version_id: second.id,
+        }
+    }
+
+    fn shot_i2v_input(fixture: &ShotI2vFixture, prompt: &str) -> Value {
+        serde_json::json!({
+            "sceneId": fixture.scene_id,
+            "shotId": fixture.shot_id,
+            "providerId": "fake_async_video",
+            "modelId": "fake-video-v1",
+            "prompt": prompt
+        })
+    }
+
+    fn compiled_request(
+        detail: &WorkflowRunDetail,
+    ) -> crate::workflow::execution::ExecutionRequest {
+        let request_json = detail
+            .steps
+            .iter()
+            .find(|step| step.step_type == "compile_request")
+            .and_then(|step| step.output_json.as_deref())
+            .expect("compile request step output");
+        serde_json::from_str(request_json).unwrap()
+    }
+
+    #[test]
+    fn shot_i2v_run_freezes_keyframe_before_context_resolution() {
+        let fixture = shot_i2v_fixture();
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        let frozen: serde_json::Value = serde_json::from_str(&run.run.input_json).unwrap();
+        assert_eq!(
+            frozen["sourceAssetVersionId"],
+            fixture.first_keyframe_version_id
+        );
+        assert_eq!(frozen["generationParameters"]["durationSeconds"], 4.0);
+
+        crate::cinema::service::CinemaService::set_shot_keyframe(
+            &fixture.root,
+            &fixture.shot_id,
+            Some(&fixture.second_keyframe_version_id),
+        )
+        .unwrap();
+        let waiting = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap();
+        assert_eq!(waiting.run.status, "waiting_for_approval");
+        let request = compiled_request(&waiting);
+        assert_eq!(
+            request.references[0].reference,
+            fixture.first_keyframe_version_id
+        );
+        assert_eq!(
+            request.references[0].role,
+            Some(crate::workflow::execution::ReferenceRole::SourceImage)
+        );
+        assert_eq!(
+            request.task,
+            crate::workflow::execution::ExecutionTask::ShotImageToVideo
+        );
+        assert_eq!(
+            request.media_type,
+            crate::workflow::execution::ExecutionMediaType::Video
+        );
+    }
+
+    #[test]
+    fn shot_i2v_run_preserves_supplied_generation_parameters() {
+        let fixture = shot_i2v_fixture();
+        let mut input = shot_i2v_input(&fixture, "A measured push-in");
+        input["generationParameters"] = serde_json::json!({
+            "durationSeconds": 7.5,
+            "aspectRatio": "9:16",
+            "fps": 24,
+            "seed": 314159
+        });
+
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            input,
+        )
+        .unwrap();
+        let frozen: serde_json::Value = serde_json::from_str(&run.run.input_json).unwrap();
+
+        assert_eq!(
+            frozen["generationParameters"],
+            serde_json::json!({
+                "durationSeconds": 7.5,
+                "aspectRatio": "9:16",
+                "fps": 24,
+                "seed": 314159
+            })
+        );
+    }
+
+    #[test]
+    fn shot_i2v_rejects_invalid_generation_parameters_before_creating_a_run() {
+        let fixture = shot_i2v_fixture();
+        let invalid_parameters = [
+            serde_json::json!({ "durationSeconds": null }),
+            serde_json::json!({ "durationSeconds": 0.25 }),
+            serde_json::json!({ "durationSeconds": 30.5 }),
+            serde_json::json!({ "fps": 0 }),
+            serde_json::json!({ "fps": 121 }),
+            serde_json::json!({ "seed": -1 }),
+            serde_json::json!({ "aspectRatio": "landscape" }),
+            serde_json::json!({ "aspectRatio": "0:9" }),
+        ];
+
+        for parameters in invalid_parameters {
+            let mut input = shot_i2v_input(&fixture, "A measured push-in");
+            input["generationParameters"] = parameters;
+            assert!(matches!(
+                WorkflowRuntime::create_run(
+                    &fixture.root,
+                    "scene-builder",
+                    "1.0.0",
+                    "shot.image_to_video",
+                    input,
+                ),
+                Err(AppError::WorkflowInputInvalid(_))
+            ));
+        }
+
+        assert!(WorkflowRuntime::list_runs(&fixture.root)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn shot_i2v_dedupe_distinguishes_supplied_generation_parameters() {
+        let fixture = shot_i2v_fixture();
+        let mut first_input = shot_i2v_input(&fixture, "A measured push-in");
+        first_input["generationParameters"] = serde_json::json!({
+            "durationSeconds": 6.0,
+            "aspectRatio": "16:9",
+            "fps": 24,
+            "seed": 7
+        });
+        let mut second_input = first_input.clone();
+        second_input["generationParameters"]["seed"] = serde_json::json!(8);
+
+        let first = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            first_input,
+        )
+        .unwrap();
+        let second = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            second_input,
+        )
+        .unwrap();
+
+        assert_ne!(first.run.id, second.run.id);
+    }
+
+    #[test]
+    fn shot_i2v_rejects_unknown_shot_and_missing_keyframe() {
+        let fixture = shot_i2v_fixture();
+
+        let error = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            serde_json::json!({
+                "sceneId": fixture.scene_id,
+                "shotId": "missing-shot",
+                "providerId": "fake_async_video",
+                "modelId": "fake-video-v1",
+                "prompt": "A measured push-in"
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::ShotNotFound));
+
+        let bare = crate::cinema::service::CinemaService::create_shot(
+            &fixture.root,
+            &fixture.scene_id,
+            None,
+            4.0,
+            "Bare shot",
+            None,
+            None,
+        )
+        .unwrap();
+        let error = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            serde_json::json!({
+                "sceneId": fixture.scene_id,
+                "shotId": bare.id,
+                "providerId": "fake_async_video",
+                "modelId": "fake-video-v1",
+                "prompt": "A measured push-in"
+            }),
+        )
+        .unwrap_err();
+        assert!(matches!(error, AppError::SourceKeyframeMissing));
+    }
+
+    #[test]
+    fn shot_i2v_rejects_missing_version_and_non_image_mime() {
+        let fixture = shot_i2v_fixture();
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+
+        // Missing version: the frozen run input no longer resolves to a row.
+        {
+            let conn = open_project(&fixture.root).unwrap();
+            conn.execute(
+                "UPDATE workflow_runs SET input_json = json_set(input_json, '$.sourceAssetVersionId', 'ghost-version') WHERE id = ?1",
+                [&run.run.id],
+            )
+            .unwrap();
+        }
+        let error = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap_err();
+        assert!(matches!(error, AppError::AssetVersionNotFound));
+
+        // Non-image MIME on the frozen version.
+        let run = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        {
+            let conn = open_project(&fixture.root).unwrap();
+            conn.execute("PRAGMA ignore_check_constraints = ON", [])
+                .unwrap();
+            conn.execute(
+                "UPDATE asset_versions SET mime_type = 'video/mp4' WHERE id = ?1",
+                [&fixture.first_keyframe_version_id],
+            )
+            .unwrap();
+        }
+        let error = WorkflowRuntime::advance_run(&fixture.root, &run.run.id).unwrap_err();
+        assert!(matches!(error, AppError::SourceMediaTypeUnsupported));
+    }
+
+    #[test]
+    fn shot_i2v_reuses_active_run_for_identical_input() {
+        let fixture = shot_i2v_fixture();
+        let first = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        let second = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A measured push-in"),
+        )
+        .unwrap();
+        assert_eq!(first.run.id, second.run.id);
+
+        let third = WorkflowRuntime::create_run(
+            &fixture.root,
+            "scene-builder",
+            "1.0.0",
+            "shot.image_to_video",
+            shot_i2v_input(&fixture, "A different push-in"),
+        )
+        .unwrap();
+        assert_ne!(first.run.id, third.run.id);
     }
 }

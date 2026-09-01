@@ -12,6 +12,7 @@ mod support;
 use cinematic_desktop_lib::assets::commands::{
     create_asset, import_asset_version, list_assets, promote_asset_version,
 };
+use cinematic_desktop_lib::canon::commands::create_canon_entity as create_location_entity;
 use cinematic_desktop_lib::canon::commands::{
     create_canon_entity, ensure_canon_singletons, lock_canon_section, upsert_canon_section,
 };
@@ -19,21 +20,20 @@ use cinematic_desktop_lib::cinema::commands::{
     compile_cinema, create_shot, get_cinema_compilation, get_scene_readiness, list_shots,
     set_shot_keyframe, update_shot,
 };
-use cinematic_desktop_lib::canon::commands::create_canon_entity as create_location_entity;
-use cinematic_desktop_lib::scenes::commands::{
-    add_world_scene_character, add_world_scene_prop, assign_scene_world, create_world_scene,
-    get_world_scene, list_world_scenes, update_scene_details,
-};
-use cinematic_desktop_lib::worlds::commands::create_world;
 use cinematic_desktop_lib::generation::commands::{
     list_generation_results, promote_generated_artifact,
 };
 use cinematic_desktop_lib::project::commands::{
     create_project_standalone, open_project_standalone,
 };
+use cinematic_desktop_lib::scenes::commands::{
+    add_world_scene_character, add_world_scene_prop, assign_scene_world, create_world_scene,
+    get_world_scene, list_world_scenes, update_scene_details,
+};
 use cinematic_desktop_lib::workflow::commands::{
     advance_workflow_run, approve_workflow_step, create_workflow_run, get_workflow_run,
 };
+use cinematic_desktop_lib::worlds::commands::create_world;
 use serde_json::json;
 use support::command_harness::CommandHarness;
 
@@ -286,8 +286,8 @@ fn mvp_full_journey_through_command_boundaries() {
         "Mara returns to the ops room".into(),
     )
     .unwrap();
-    let location = create_location_entity(root.clone(), "location".into(), "The Station".into())
-        .unwrap();
+    let location =
+        create_location_entity(root.clone(), "location".into(), "The Station".into()).unwrap();
     let world = create_world(root.clone(), location.id.clone()).unwrap();
     {
         // Canonicalize the World's own plate asset (import + promote via commands).
@@ -397,9 +397,11 @@ fn mvp_full_journey_through_command_boundaries() {
         reopened_scene.world_asset_version_id.as_deref(),
         Some(pinned_world_version.as_str())
     );
-    let reopened_cast =
-        cinematic_desktop_lib::scenes::commands::list_scene_characters(root.clone(), scene.id.clone())
-            .unwrap();
+    let reopened_cast = cinematic_desktop_lib::scenes::commands::list_scene_characters(
+        root.clone(),
+        scene.id.clone(),
+    )
+    .unwrap();
     assert_eq!(reopened_cast[0].look_asset_version_id, outfit_version.id);
     assert_eq!(
         reopened_cast[0].sheet_asset_version_id.as_deref(),
@@ -488,7 +490,6 @@ fn mvp_character_operations_reject_prerequisites_through_command_boundary() {
     .unwrap_err();
     assert_eq!(error.code, "WORKFLOW_PREREQUISITE_FAILED");
 
-    let scenes =
-        list_world_scenes(harness.root.to_string_lossy().to_string()).unwrap();
+    let scenes = list_world_scenes(harness.root.to_string_lossy().to_string()).unwrap();
     assert!(scenes.is_empty());
 }

@@ -14,7 +14,9 @@ mod tests {
             base_url: "https://video.example.test".into(),
             purpose: CustomProviderPurpose::Video,
             preset_id: None,
-            runtime: crate::providers::presets::legacy_purpose_runtime(CustomProviderPurpose::Video),
+            runtime: crate::providers::presets::legacy_purpose_runtime(
+                CustomProviderPurpose::Video,
+            ),
             api_key: Some("secret".into()),
             api_key_hint: None,
             models: vec![CustomProviderModel {
@@ -75,13 +77,15 @@ mod tests {
 
         let attempt = create_attempt(
             &conn,
-            "run-1",
-            "execute",
-            1,
-            "compiled-1",
-            "openai",
-            "gpt-image-1",
-            "run-1:execute:1",
+            NewExecutionAttempt {
+                workflow_run_id: "run-1",
+                step_definition_id: "execute",
+                attempt_number: 1,
+                compiled_request_id: "compiled-1",
+                provider_id: "openai",
+                model_id: "gpt-image-1",
+                idempotency_key: "run-1:execute:1",
+            },
         )
         .unwrap();
         assert_eq!(attempt.attempt_number, 1);
@@ -106,11 +110,29 @@ mod tests {
         ).unwrap();
 
         create_attempt(
-            &conn, "run", "execute", 1, "compiled", "mock", "model", "same-key",
+            &conn,
+            NewExecutionAttempt {
+                workflow_run_id: "run",
+                step_definition_id: "execute",
+                attempt_number: 1,
+                compiled_request_id: "compiled",
+                provider_id: "mock",
+                model_id: "model",
+                idempotency_key: "same-key",
+            },
         )
         .unwrap();
         let result = create_attempt(
-            &conn, "run", "execute", 2, "compiled", "mock", "model", "same-key",
+            &conn,
+            NewExecutionAttempt {
+                workflow_run_id: "run",
+                step_definition_id: "execute",
+                attempt_number: 2,
+                compiled_request_id: "compiled",
+                provider_id: "mock",
+                model_id: "model",
+                idempotency_key: "same-key",
+            },
         );
         assert!(result.is_err());
     }
@@ -129,13 +151,15 @@ mod tests {
         ).unwrap();
         let attempt = create_attempt(
             &conn,
-            "run",
-            "execute",
-            1,
-            "compiled",
-            "mock",
-            "model",
-            "artifact-key",
+            NewExecutionAttempt {
+                workflow_run_id: "run",
+                step_definition_id: "execute",
+                attempt_number: 1,
+                compiled_request_id: "compiled",
+                provider_id: "mock",
+                model_id: "model",
+                idempotency_key: "artifact-key",
+            },
         )
         .unwrap();
 
@@ -456,16 +480,30 @@ pub fn get_provider_config(
     .map_err(db_error)
 }
 
+/// Arguments for inserting one provider execution attempt.
+pub struct NewExecutionAttempt<'a> {
+    pub workflow_run_id: &'a str,
+    pub step_definition_id: &'a str,
+    pub attempt_number: i64,
+    pub compiled_request_id: &'a str,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub idempotency_key: &'a str,
+}
+
 pub fn create_attempt(
     conn: &Connection,
-    workflow_run_id: &str,
-    step_definition_id: &str,
-    attempt_number: i64,
-    compiled_request_id: &str,
-    provider_id: &str,
-    model_id: &str,
-    idempotency_key: &str,
+    attempt: NewExecutionAttempt<'_>,
 ) -> Result<ExecutionAttemptRecord, AppError> {
+    let NewExecutionAttempt {
+        workflow_run_id,
+        step_definition_id,
+        attempt_number,
+        compiled_request_id,
+        provider_id,
+        model_id,
+        idempotency_key,
+    } = attempt;
     let record = ExecutionAttemptRecord {
         id: ulid::Ulid::new().to_string(),
         workflow_run_id: workflow_run_id.into(),
@@ -518,7 +556,14 @@ pub fn persist_job(
     provider_job_id: &str,
     status: &str,
 ) -> Result<(), AppError> {
-    persist_job_with_operation(conn, execution_id, provider_id, provider_job_id, status, None)
+    persist_job_with_operation(
+        conn,
+        execution_id,
+        provider_id,
+        provider_job_id,
+        status,
+        None,
+    )
 }
 
 /// Persists the durable provider job row including the provider operation

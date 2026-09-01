@@ -141,4 +141,47 @@ describe("ProviderModelFields", () => {
     expect(option.disabled).toBe(true);
     expect(option.textContent).toContain("not compatible");
   });
+
+  it("offers only providers and models that advertise video.imageToVideo", async () => {
+    vi.mocked(listProviders).mockResolvedValue(["plain-video", "i2v"]);
+    vi.mocked(getProviderCapabilities).mockImplementation(async (providerId) =>
+      providerId === "plain-video"
+        ? { ...mockCapabilities, mediaTypes: ["video" as const], supportsImageToVideo: false, supportedModels: ["plain-v1"] }
+        : { ...mockCapabilities, mediaTypes: ["video" as const], supportsImageToVideo: true, supportedModels: [] },
+    );
+    vi.mocked(listProviderModels).mockImplementation(async (providerId) =>
+      providerId === "plain-video" ? ["plain-v1"] : ["text-v1", "motion-v1"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([
+      {
+        providerId: "i2v", displayName: "I2V", baseUrl: "https://api.i2v.test/v1",
+        purpose: "video", models: [
+          { id: "text-v1", name: "Text", capabilities: ["video.generate"] },
+          { id: "motion-v1", name: "Motion", capabilities: ["video.imageToVideo"] },
+        ],
+        headers: [],
+      },
+    ]);
+    vi.mocked(getProviderConfigurationStatus).mockImplementation(async (_root, providerId) => ({
+      providerId,
+      enabled: true,
+      credentialConfigured: true,
+      defaultModel: providerId === "plain-video" ? "plain-v1" : "motion-v1",
+      models: providerId === "plain-video" ? ["plain-v1"] : ["text-v1", "motion-v1"],
+    }));
+
+    render(
+      <ProviderModelFields
+        projectRootPath="C:/p"
+        value={{ providerId: "i2v", modelId: "motion-v1" }}
+        mediaType="video"
+        requiresReferences={false}
+        requiredOperation="video.imageToVideo"
+        onChange={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("option", { name: /i2v/ })).toBeEnabled();
+    expect(screen.getByRole("option", { name: /plain-video/ })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "motion-v1" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "text-v1" })).not.toBeInTheDocument();
+  });
 });

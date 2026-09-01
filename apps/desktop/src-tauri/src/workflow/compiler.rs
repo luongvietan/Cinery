@@ -1,8 +1,9 @@
 use crate::error::AppError;
 use crate::skills::model::{SkillDefinition, SkillOperation};
 use crate::workflow::execution::{
-    ExecutionConstraint, ExecutionMediaType, ExecutionProvenance, ExecutionReference,
-    ExecutionReferenceType, ExecutionRequest, ExecutionTask, ReferenceBackground,
+    ExecutionConstraint, ExecutionGenerationParameters, ExecutionMediaType, ExecutionProvenance,
+    ExecutionReference, ExecutionReferenceType, ExecutionRequest, ExecutionTask,
+    ReferenceBackground, ReferenceRole,
 };
 use crate::workflow::model::WorkflowContextSnapshot;
 use serde_json::Value;
@@ -135,6 +136,7 @@ impl RequestCompiler for CharacterFaceLockCompiler {
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
         })
     }
 }
@@ -279,6 +281,7 @@ impl RequestCompiler for WorldPlateCompiler {
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
         })
     }
 }
@@ -322,12 +325,16 @@ impl RequestCompiler for SceneVideoCompiler {
         // text, diegetic sound only. The prompt body itself stays untouched so
         // any provider-specific adaptation stays possible later.
         let mut prompt = String::new();
-        prompt.push_str("TASK
-");
+        prompt.push_str(
+            "TASK
+",
+        );
         if total_duration.is_empty() {
-            prompt.push_str("Animate the following compiled scene into one continuous video shot.
+            prompt.push_str(
+                "Animate the following compiled scene into one continuous video shot.
 
-");
+",
+            );
         } else {
             prompt.push_str(&format!(
                 "Animate the following compiled scene into one continuous video shot of {total_duration} seconds total.
@@ -339,24 +346,32 @@ impl RequestCompiler for SceneVideoCompiler {
 All shots at normal speed. No slow motion, no overcranking, no ramping, and no speed change anywhere in this sequence.
 
 ");
-        prompt.push_str("TEXT POLICY
+        prompt.push_str(
+            "TEXT POLICY
 No on-screen text, no captions, no titles, no subtitles, no watermarks anywhere in the frame.
 
-");
+",
+        );
         prompt.push_str("SOUND POLICY
 Diegetic sound only: what exists inside the world of the scene. No music, no lyrics, no dialogue, no singing unless the compiled audio instructions say otherwise.
 
 ");
         if !last_frame.trim().is_empty() {
-            prompt.push_str("LAST FRAME
-Hold the final composition exactly as described: ");
+            prompt.push_str(
+                "LAST FRAME
+Hold the final composition exactly as described: ",
+            );
             prompt.push_str(last_frame);
-            prompt.push_str("
+            prompt.push_str(
+                "
 
-");
+",
+            );
         }
-        prompt.push_str("COMPILED SCENE PROMPT
-");
+        prompt.push_str(
+            "COMPILED SCENE PROMPT
+",
+        );
         prompt.push_str(provider_prompt);
 
         Ok(ExecutionRequest {
@@ -377,6 +392,90 @@ Hold the final composition exactly as described: ");
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
+        })
+    }
+}
+
+/// P10.2: compiles the shot image-to-video request from the frozen context.
+/// The single `SourceImage` reference is the exact pinned keyframe version
+/// frozen at run creation; the prompt and generation parameters come from the
+/// persisted run input, never from the shot's current state. Provider and
+/// model selection stay execution metadata and are never compiled in.
+pub struct ShotImageToVideoCompiler;
+
+impl RequestCompiler for ShotImageToVideoCompiler {
+    fn id(&self) -> &'static str {
+        "shot_image_to_video_v1"
+    }
+
+    fn compile(
+        &self,
+        workflow_run_id: &str,
+        skill: &SkillDefinition,
+        operation: &SkillOperation,
+        context: &WorkflowContextSnapshot,
+    ) -> Result<ExecutionRequest, AppError> {
+        let prompt = context
+            .input
+            .get("prompt")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                AppError::WorkflowRunInconsistent("prompt is missing from run input".into())
+            })?
+            .to_string();
+        let generation_parameters: ExecutionGenerationParameters = context
+            .input
+            .get("generationParameters")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?
+            .unwrap_or_default();
+
+        let mut pinned = context
+            .assets
+            .iter()
+            .filter(|snapshot| {
+                snapshot.status == crate::workflow::model::AssetSnapshotStatus::Pinned
+            })
+            .collect::<Vec<_>>();
+        if pinned.len() != 1 {
+            return Err(AppError::WorkflowRunInconsistent(format!(
+                "shot image-to-video expects exactly one pinned source keyframe, found {}",
+                pinned.len()
+            )));
+        }
+        let source = pinned.remove(0);
+
+        Ok(ExecutionRequest {
+            request_version: 1,
+            task: ExecutionTask::ShotImageToVideo,
+            media_type: ExecutionMediaType::Video,
+            prompt,
+            references: vec![ExecutionReference {
+                reference_type: ExecutionReferenceType::AssetVersion,
+                reference: source.asset_version_id.clone(),
+                description: format!(
+                    "Exact shot source keyframe {} (version {})",
+                    source.asset_id, source.version_number
+                ),
+                role: Some(ReferenceRole::SourceImage),
+            }],
+            constraints: Vec::new(),
+            expected_output: operation.expected_output.clone().ok_or_else(|| {
+                AppError::WorkflowRunInconsistent(
+                    "shot image-to-video operation has no expected output".into(),
+                )
+            })?,
+            provenance: ExecutionProvenance {
+                workflow_run_id: workflow_run_id.into(),
+                skill_id: skill.id.clone(),
+                skill_version: skill.version.clone(),
+                operation_id: operation.id.clone(),
+            },
+            generation_parameters,
         })
     }
 }
@@ -651,7 +750,7 @@ impl RequestCompiler for SceneKeyframeCompiler {
                 role: None,
             })
             .collect::<Vec<_>>();
-        references.extend(canon_refs.drain(..));
+        references.append(&mut canon_refs);
 
         // Validate we never drop references: if any character/prop/world is present in context, we must have added it
         // This is enforced by above logic; never filter.
@@ -680,6 +779,7 @@ impl RequestCompiler for SceneKeyframeCompiler {
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
         })
     }
 }
@@ -789,6 +889,7 @@ impl RequestCompiler for CharacterOutfitCompiler {
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
         })
     }
 }
@@ -870,6 +971,7 @@ impl RequestCompiler for CharacterSheetCompiler {
                 skill_version: skill.version.clone(),
                 operation_id: operation.id.clone(),
             },
+            generation_parameters: ExecutionGenerationParameters::default(),
         })
     }
 }

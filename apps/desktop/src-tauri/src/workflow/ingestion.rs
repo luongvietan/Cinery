@@ -1,33 +1,3 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::project::service::ProjectService;
-    use crate::providers::model::{ProviderOutput, ProviderResult};
-    use tempfile::tempdir;
-
-    #[test]
-    fn mock_output_is_materialized_as_a_candidate_asset_version() {
-        let temp = tempdir().unwrap();
-        let root = temp.path().join("project");
-        ProjectService::create(&root, "Red Door").unwrap();
-        let result = ProviderResult {
-            outputs: vec![ProviderOutput {
-                uri: "mock://face-lock.png".into(),
-                mime_type: "image/png".into(),
-                filename: Some("face-lock.png".into()),
-            }],
-            provider_reported_model: Some("mock-image-v1".into()),
-            metadata: serde_json::json!({}),
-        };
-
-        let persisted =
-            persist_provider_result(&root, "run-1", &result, "face_lock", Some("mara".into()))
-                .unwrap();
-        assert_eq!(persisted.status, "candidate");
-        assert_eq!(persisted.mime_type, "image/png");
-        assert!(root.join(&persisted.file_path).exists());
-    }
-}
 use crate::assets::model::AssetVersionRecord;
 use crate::assets::service::AssetService;
 use crate::error::AppError;
@@ -38,7 +8,6 @@ use image::{ImageBuffer, Rgba, RgbaImage};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
 
 const MAX_PROVIDER_OUTPUT_BYTES: usize = 50 * 1024 * 1024;
 
@@ -189,4 +158,35 @@ fn hash_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::service::ProjectService;
+    use crate::providers::model::{ProviderOutput, ProviderResult};
+    use tempfile::tempdir;
+
+    #[test]
+    fn mock_output_is_materialized_as_a_candidate_asset_version() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "Red Door").unwrap();
+        let result = ProviderResult {
+            outputs: vec![ProviderOutput {
+                uri: "mock://face-lock.png".into(),
+                mime_type: "image/png".into(),
+                filename: Some("face-lock.png".into()),
+            }],
+            provider_reported_model: Some("mock-image-v1".into()),
+            metadata: serde_json::json!({}),
+        };
+
+        let persisted =
+            persist_provider_result(&root, "run-1", &result, "face_lock", Some("mara".into()))
+                .unwrap();
+        assert_eq!(persisted.status, "candidate");
+        assert_eq!(persisted.mime_type, "image/png");
+        assert!(root.join(&persisted.file_path).exists());
+    }
 }

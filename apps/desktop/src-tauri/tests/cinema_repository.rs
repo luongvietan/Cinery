@@ -3,7 +3,7 @@ use cinematic_desktop_lib::cinema::repository;
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
 use rusqlite::{params, Connection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tempfile::{tempdir, TempDir};
 
 fn project(name: &str) -> (TempDir, PathBuf) {
@@ -13,12 +13,11 @@ fn project(name: &str) -> (TempDir, PathBuf) {
     (temp, root)
 }
 
-fn open_db(root: &PathBuf) -> Connection {
+fn open_db(root: &Path) -> Connection {
     let conn = db::open_existing_connection(&root.join("project.db")).unwrap();
     // Integration tests open the same file the service just bootstrapped;
     // FK enforcement is session-scoped, so re-assert it here.
-    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap()
-    ;
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
     conn
 }
 

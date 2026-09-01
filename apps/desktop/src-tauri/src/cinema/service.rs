@@ -187,7 +187,13 @@ impl CinemaService {
         project_root: &Path,
         project_id: &str,
         scene_id: &str,
-    ) -> Result<(crate::scenes::model::Scene, Vec<crate::scenes::model::SceneCharacterAssignment>), AppError> {
+    ) -> Result<
+        (
+            crate::scenes::model::Scene,
+            Vec<crate::scenes::model::SceneCharacterAssignment>,
+        ),
+        AppError,
+    > {
         let scene = load_scene(conn, project_id, scene_id)?;
 
         let characters = repository::list_scene_cast(conn, &scene.id)?;
@@ -235,8 +241,12 @@ impl CinemaService {
         let project = ProjectService::open(project_root)?;
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
 
-        let (scene, characters) =
-            Self::validate_scene_for_compilation(&conn, project_root, &project.id, &input.scene_id)?;
+        let (scene, characters) = Self::validate_scene_for_compilation(
+            &conn,
+            project_root,
+            &project.id,
+            &input.scene_id,
+        )?;
         tbd_guard::check_tbd_firewall(&conn, &project.id, &scene.id)?;
 
         // Collect the topics of every open TBD so their text is scrubbed
@@ -406,6 +416,64 @@ impl CinemaService {
             ensure_canonical_version(&conn, &project.id, version, &["video"])?;
         }
         repository::set_shot_video(&conn, &project.id, shot_id, version_id)
+    }
+
+    /// Display-only projection of the Shot's exact pinned keyframe: the
+    /// frozen source an `shot.image_to_video` run will use. Reads only
+    /// `keyframe_asset_version_id` — never "latest" — and validates the
+    /// version is an image of this project.
+    pub fn get_shot_image_to_video_source(
+        project_root: &Path,
+        shot_id: &str,
+    ) -> Result<model::ShotImageToVideoSource, AppError> {
+        use crate::assets::service::AssetService;
+        let project = ProjectService::open(project_root)?;
+        let conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        let (keyframe_version_id, scene_id): (Option<String>, String) = conn
+            .query_row(
+                "SELECT ss.keyframe_asset_version_id, ss.scene_id FROM scene_shots ss \
+                 JOIN world_scenes ws ON ws.id = ss.scene_id \
+                 WHERE ss.id = ?1 AND ws.project_id = ?2",
+                params![shot_id, project.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or(AppError::ShotNotFound)?;
+        let Some(version_id) = keyframe_version_id else {
+            let _ = scene_id;
+            return Err(AppError::SourceKeyframeMissing);
+        };
+        let asset_id: String = conn
+            .query_row(
+                "SELECT asset_id FROM asset_versions WHERE id = ?1",
+                params![version_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or(AppError::AssetVersionNotFound)?;
+        let asset_with_versions = AssetService::get_asset_with_versions(project_root, &asset_id)?;
+        let version = asset_with_versions
+            .versions
+            .iter()
+            .find(|version| version.id == version_id)
+            .ok_or(AppError::AssetVersionNotFound)?;
+        if !version.mime_type.starts_with("image/") {
+            return Err(AppError::SourceMediaTypeUnsupported);
+        }
+        Ok(model::ShotImageToVideoSource {
+            asset_id: asset_with_versions.asset.id,
+            asset_version_id: version.id.clone(),
+            version_number: version.version_number,
+            file_path: version.file_path.clone(),
+            thumbnail_path: if version.thumbnail_path.is_empty() {
+                None
+            } else {
+                Some(version.thumbnail_path.clone())
+            },
+            mime_type: version.mime_type.clone(),
+        })
     }
 
     /// Computes structured compile readiness for the authoritative scene.

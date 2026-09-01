@@ -45,7 +45,7 @@ fn canonical_version(root: &Path, asset_type: &str, label: &str) -> String {
 
 /// Builds a compilable scene on the authoritative aggregate: locked-behavior
 /// + visual-locks character with a canonical look, a World whose plate is the
-/// canonical world plate assigned to the scene, and two 4s shots (8s total).
+///   canonical world plate assigned to the scene, and two 4s shots (8s total).
 pub fn compilable_scene() -> CompiledScene {
     let temp = tempdir().unwrap();
     let root = temp.path().join("red-door");
@@ -86,8 +86,8 @@ pub fn compilable_scene() -> CompiledScene {
         AssetService::import_asset_version(&root, &look_asset.id, &look_source, None).unwrap();
     AssetService::promote_asset_version(&root, &look_version.id).unwrap();
     let look = look_version.id;
-    let location = CanonService::create_entity(&root, CanonEntityType::Location, "The Station")
-        .unwrap();
+    let location =
+        CanonService::create_entity(&root, CanonEntityType::Location, "The Station").unwrap();
     let world = WorldService::create_world(&root, &location.id).unwrap();
     // Give the World's plate asset its canonical version so the scene can
     // pin the exact version.
@@ -96,8 +96,8 @@ pub fn compilable_scene() -> CompiledScene {
         AssetService::import_asset_version(&root, &world.world_plate_asset_id, &plate_source, None)
             .unwrap();
     AssetService::promote_asset_version(&root, &plate_version.id).unwrap();
-    let scene = SceneService::create_scene(&root, "Scene 001", "Mara returns to the ops room")
-        .unwrap();
+    let scene =
+        SceneService::create_scene(&root, "Scene 001", "Mara returns to the ops room").unwrap();
     SceneService::assign_scene_world(&root, &scene.id, &world.id).unwrap();
     // Re-fetch so the fixture carries the pinned world version.
     let scene = SceneService::get_scene(&root, &scene.id).unwrap();
@@ -128,7 +128,8 @@ pub fn compilable_scene() -> CompiledScene {
     let behavioral_locks = CinemaService::resolve_scene_behavioral_locks(&conn, &scene.id).unwrap();
     let visual_locks =
         CanonService::get_locked_character_visual_locks(&root, &character.id).unwrap();
-    let cast = cinematic_desktop_lib::cinema::repository::list_scene_cast(&conn, &scene.id).unwrap();
+    let cast =
+        cinematic_desktop_lib::cinema::repository::list_scene_cast(&conn, &scene.id).unwrap();
     let shots = CinemaService::list_shots(&root, &scene.id).unwrap();
     let world_continuity = match &scene.world_asset_version_id {
         Some(version_id) => {

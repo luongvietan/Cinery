@@ -163,20 +163,20 @@ impl VisualQaAdapter for OpenAiCompatibleVisualQaAdapter {
         let request = HttpRequest {
             method: "POST".into(),
             url: self.chat_endpoint(),
-            headers: vec![("Authorization".into(), format!("Bearer {}", self.bearer_token))],
+            headers: vec![(
+                "Authorization".into(),
+                format!("Bearer {}", self.bearer_token),
+            )],
             body: HttpBody::Json(body),
             max_response_bytes: 50 * 1024 * 1024,
         };
-        let response = self
-            .transport
-            .execute(request)
-            .map_err(|failure| {
-                VisualQaAdapterError::new(
-                    VisualQaAdapterErrorKind::Network,
-                    "Visual QA request failed",
-                )
-                .with_diagnostic(redact(&failure.message, &self.bearer_token))
-            })?;
+        let response = self.transport.execute(request).map_err(|failure| {
+            VisualQaAdapterError::new(
+                VisualQaAdapterErrorKind::Network,
+                "Visual QA request failed",
+            )
+            .with_diagnostic(redact(&failure.message, &self.bearer_token))
+        })?;
         if !response.is_success() {
             return Err(VisualQaAdapterError::new(
                 VisualQaAdapterErrorKind::Network,

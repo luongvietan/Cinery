@@ -102,6 +102,54 @@ pub(crate) fn builtin_scene_builder() -> SkillDefinition {
                 desired_status: DesiredOutputStatus::Candidate,
                 owner_entity_input_ref: Some("sceneId".to_string()),
             }),
+        }, SkillOperation {
+            id: "shot.image_to_video".to_string(),
+            name: "Generate Shot Video from Keyframe".to_string(),
+            description:
+                "Compile a provider-neutral image-to-video request from the shot's exact pinned keyframe."
+                    .to_string(),
+            intent_examples: vec![
+                "Animate this shot from its keyframe".to_string(),
+                "Generate video for this shot".to_string(),
+            ],
+            input_schema_id: "generate_shot_video".to_string(),
+            prerequisites: vec![],
+            tbd_guards: vec![],
+            workflow: vec![
+                WorkflowStepDefinition::ValidateInput {
+                    id: "validate-input".to_string(),
+                },
+                WorkflowStepDefinition::ResolveContext {
+                    id: "resolve-context".to_string(),
+                    resolver_id: "shot_image_to_video_context".to_string(),
+                },
+                WorkflowStepDefinition::CompileRequest {
+                    id: "compile-request".to_string(),
+                    compiler_id: "shot_image_to_video_v1".to_string(),
+                },
+                WorkflowStepDefinition::Approval {
+                    id: "approve-request".to_string(),
+                    title: "Approve Shot Video Request".to_string(),
+                    description:
+                        "Review the compiled image-to-video request before spending a generation."
+                            .to_string(),
+                    approval_artifact_ref: "compiled_request".to_string(),
+                },
+                WorkflowStepDefinition::Execute {
+                    id: "execute".to_string(),
+                    executor_kind: crate::workflow::model::ExecutorKind::DryRun,
+                    request_artifact_ref: "compiled_request".to_string(),
+                },
+                WorkflowStepDefinition::Complete {
+                    id: "complete".to_string(),
+                },
+            ],
+            expected_output: Some(ExpectedOutputDefinition {
+                asset_type: AssetType::Video,
+                media_type: OutputMediaType::Video,
+                desired_status: DesiredOutputStatus::Candidate,
+                owner_entity_input_ref: Some("sceneId".to_string()),
+            }),
         }],
     }
 }

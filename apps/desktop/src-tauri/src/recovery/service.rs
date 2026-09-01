@@ -171,34 +171,34 @@ impl RecoveryService {
         asset_version_created: bool,
         error_json: Option<&str>,
     ) -> RecoveryClassification {
-        let (disposition, user_action) = if status == "succeeded" {
-            (RecoveryDisposition::NothingRequired, None)
-        } else if status == "cancelled" || status == "cancellation_requested" {
-            (RecoveryDisposition::NothingRequired, None)
-        } else if status == "failed" {
-            if asset_version_created {
-                // CRITICAL: phantom asset created on provider failure
-                (RecoveryDisposition::ManualResolutionRequired, None)
+        let (disposition, user_action) =
+            if status == "succeeded" || status == "cancelled" || status == "cancellation_requested"
+            {
+                (RecoveryDisposition::NothingRequired, None)
+            } else if status == "failed" {
+                if asset_version_created {
+                    // CRITICAL: phantom asset created on provider failure
+                    (RecoveryDisposition::ManualResolutionRequired, None)
+                } else {
+                    // Safe: no asset created, user must explicitly retry
+                    (
+                        RecoveryDisposition::AwaitUserRetry,
+                        Some("explicit_retry".to_string()),
+                    )
+                }
+            } else if status == "queued" || status == "submitted" || status == "running" {
+                // Provider call in progress: check remote state
+                (RecoveryDisposition::InspectRemoteResult, None)
             } else {
-                // Safe: no asset created, user must explicitly retry
-                (
-                    RecoveryDisposition::AwaitUserRetry,
-                    Some("explicit_retry".to_string()),
-                )
-            }
-        } else if status == "queued" || status == "submitted" || status == "running" {
-            // Provider call in progress: check remote state
-            (RecoveryDisposition::InspectRemoteResult, None)
-        } else {
-            (RecoveryDisposition::InspectRemoteResult, None)
-        };
+                (RecoveryDisposition::InspectRemoteResult, None)
+            };
 
         let explanation = match status {
-            status if status == "succeeded" => "Provider call succeeded.".to_string(),
-            status if status == "cancelled" || status == "cancellation_requested" => {
+            "succeeded" => "Provider call succeeded.".to_string(),
+            "cancelled" | "cancellation_requested" => {
                 "Provider call was cancelled and cannot be resumed.".to_string()
             }
-            status if status == "failed" => {
+            "failed" => {
                 if asset_version_created {
                     format!(
                         "Provider failed, but an AssetVersion was created (phantom asset). This should not happen. {}",

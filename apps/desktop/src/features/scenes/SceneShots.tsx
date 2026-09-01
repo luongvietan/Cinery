@@ -17,6 +17,7 @@ import { deriveGenerationResultContext, type AssetSummary } from "@cinematic/dom
 import { GenerationResults } from "../generation/GenerationResults";
 import { listGenerationResults } from "../generation/api";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
+import { ShotImageToVideo } from "./ShotImageToVideo";
 
 interface SceneShotsProps {
   projectRootPath: string;
@@ -57,6 +58,7 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
   const [keyframeRun, setKeyframeRun] = useState<KeyframeRunState | null>(null);
   const [pinningShotId, setPinningShotId] = useState<string | null>(null);
   const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [i2vShotId, setI2vShotId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -390,7 +392,26 @@ export function SceneShots({ projectRootPath, sceneId, onChanged }: SceneShotsPr
                     <button type="button" className="asset-secondary-button shot-icon-action shot-icon-action--danger" onClick={() => void handleDelete(shot.id)} disabled={pending} aria-label={`Delete shot ${index + 1}`} title="Delete shot">
                       ✕
                     </button>
+                    <button
+                      type="button"
+                      className="asset-secondary-button"
+                      aria-expanded={i2vShotId === shot.id}
+                      onClick={() => setI2vShotId((current) => (current === shot.id ? null : shot.id))}
+                    >
+                      {i2vShotId === shot.id ? "Close video" : "Generate video"}
+                    </button>
                   </div>
+                  {i2vShotId === shot.id ? (
+                    <ShotImageToVideo
+                      projectRootPath={projectRootPath}
+                      sceneId={sceneId}
+                      shot={shot}
+                      onShotChanged={() => {
+                        void refresh();
+                        notifyChanged();
+                      }}
+                    />
+                  ) : null}
                 </div>
               )}
             </li>

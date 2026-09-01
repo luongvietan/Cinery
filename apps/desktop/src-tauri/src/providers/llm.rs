@@ -10,7 +10,15 @@ use std::time::Duration;
 /// The visual-spec fields the character forms ask the user to fill, in the
 /// order the face-lock compiler consumes them.
 pub const VISUAL_SPEC_FIELDS: [&str; 9] = [
-    "head", "eyes", "brows", "nose", "lips", "skin", "hair", "build", "expression",
+    "head",
+    "eyes",
+    "brows",
+    "nose",
+    "lips",
+    "skin",
+    "hair",
+    "build",
+    "expression",
 ];
 
 const SUGGEST_TIMEOUT: Duration = Duration::from_secs(45);
@@ -104,7 +112,8 @@ pub fn suggest_visual_spec(
         body: HttpBody::Json(body),
         max_response_bytes: 10 * 1024 * 1024,
     };
-    let response = UreqExecutor::new(SUGGEST_TIMEOUT).execute(request)
+    let response = UreqExecutor::new(SUGGEST_TIMEOUT)
+        .execute(request)
         .map_err(|diagnostic| {
             AppError::ProviderExecution(super::error::redact_secret(&format!(
                 "the text service request failed: {diagnostic}"
@@ -125,12 +134,10 @@ pub fn suggest_visual_spec(
         .pointer("/choices/0/message/content")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| {
-            AppError::ProviderExecution(
-                "the text service returned no suggestion content".into(),
-            )
+            AppError::ProviderExecution("the text service returned no suggestion content".into())
         })?;
-    let mut suggestion: serde_json::Value = serde_json::from_str(content)
-        .or_else::<AppError, _>(|_| {
+    let mut suggestion: serde_json::Value =
+        serde_json::from_str(content).or_else::<AppError, _>(|_| {
             // Some compatible services wrap JSON in a fenced code block.
             let stripped = content
                 .trim()
@@ -138,9 +145,7 @@ pub fn suggest_visual_spec(
                 .trim_start_matches("```")
                 .trim_end_matches("```");
             serde_json::from_str(stripped).map_err(|_| {
-                AppError::ProviderExecution(
-                    "the text service suggestion was not valid JSON".into(),
-                )
+                AppError::ProviderExecution("the text service suggestion was not valid JSON".into())
             })
         })?;
     if !suggestion.is_object() {
@@ -151,7 +156,9 @@ pub fn suggest_visual_spec(
     // Keep only the known fields so a chatty model cannot inject junk into
     // the form.
     if let Some(map) = suggestion.as_object_mut() {
-        map.retain(|key, _| VISUAL_SPEC_FIELDS.contains(&key.as_str()) || key == "baselineWardrobe");
+        map.retain(|key, _| {
+            VISUAL_SPEC_FIELDS.contains(&key.as_str()) || key == "baselineWardrobe"
+        });
         map.values_mut().for_each(|value| {
             if !value.is_string() {
                 *value = serde_json::Value::String(value.to_string());

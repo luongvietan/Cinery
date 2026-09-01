@@ -168,7 +168,7 @@ pub fn execute(
 ) -> Result<VisualQaExecutionResult, AppError> {
     let started_at = Utc::now().to_rfc3339();
     repository::mark_run_running(conn, &compiled.qa_run_id, &started_at)?;
-    let adapter = build_adapter(conn, input, compiled).map_err(|error| {
+    let adapter = build_adapter(conn, input, compiled).inspect_err(|error| {
         let _ = repository::mark_run_failed(
             conn,
             &compiled.qa_run_id,
@@ -177,7 +177,6 @@ pub fn execute(
             None,
             &Utc::now().to_rfc3339(),
         );
-        error
     })?;
     let raw = adapter.analyze(&compiled.request).map_err(|error| {
         let message = error.to_string();
@@ -195,8 +194,8 @@ pub fn execute(
         );
         AppError::ProviderExecution(message)
     })?;
-    let normalized =
-        QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text).map_err(|error| {
+    let normalized = QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text)
+        .inspect_err(|error| {
             let message = error.to_string();
             let _ = repository::mark_run_failed(
                 conn,
@@ -206,7 +205,6 @@ pub fn execute(
                 Some(&raw.metadata),
                 &Utc::now().to_rfc3339(),
             );
-            error
         })?;
     let completed_at = Utc::now().to_rfc3339();
     let checks = compiled

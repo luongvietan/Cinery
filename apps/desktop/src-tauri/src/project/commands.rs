@@ -33,10 +33,7 @@ pub fn create_project(
 
 /// Derives a fresh, non-colliding project directory from the project name:
 /// `<Documents>/Cinery/<slug>`, then `<slug>-2`, `<slug>-3`, …
-fn default_project_root(
-    app: &tauri::AppHandle,
-    name: &str,
-) -> Result<PathBuf, AppCommandError> {
+fn default_project_root(app: &tauri::AppHandle, name: &str) -> Result<PathBuf, AppCommandError> {
     let documents = app
         .path()
         .document_dir()

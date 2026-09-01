@@ -5,9 +5,7 @@ mod support;
 
 use support::compilable_scene;
 
-fn scene_ref(
-    setup: &support::CompiledScene,
-) -> SceneRef {
+fn scene_ref(setup: &support::CompiledScene) -> SceneRef {
     SceneRef {
         id: setup.scene.id.clone(),
         project_id: setup.scene.project_id.clone(),

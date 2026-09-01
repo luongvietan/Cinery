@@ -1,15 +1,15 @@
 use cinematic_desktop_lib::assets::service::AssetService;
 use cinematic_desktop_lib::canon::model::CanonEntityType;
+use cinematic_desktop_lib::canon::model::CanonEntityType as EntityType;
 use cinematic_desktop_lib::canon::service::CanonService;
 use cinematic_desktop_lib::cinema::model::CinemaCompileInput;
 use cinematic_desktop_lib::cinema::service::CinemaService;
-use cinematic_desktop_lib::canon::model::CanonEntityType as EntityType;
-use cinematic_desktop_lib::scenes::service::SceneService;
-use cinematic_desktop_lib::worlds::service::WorldService;
 use cinematic_desktop_lib::integration::health::scan_project;
 use cinematic_desktop_lib::integration::provenance::get_provenance_graph;
 use cinematic_desktop_lib::integration::readiness::get_project_overview;
 use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::scenes::service::SceneService;
+use cinematic_desktop_lib::worlds::service::WorldService;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -85,15 +85,19 @@ fn complete_mara_cinematic_journey() {
     let world = WorldService::create_world(&root, &location.id).unwrap();
     {
         let plate_source = image(&root, "world-plate.png", [13, 14, 15, 255]);
-        let plate_version =
-            AssetService::import_asset_version(&root, &world.world_plate_asset_id, &plate_source, None)
-                .unwrap();
+        let plate_version = AssetService::import_asset_version(
+            &root,
+            &world.world_plate_asset_id,
+            &plate_source,
+            None,
+        )
+        .unwrap();
         AssetService::promote_asset_version(&root, &plate_version.id).unwrap();
     }
 
     // ── Step 5: Assemble Scene with pinned exact versions ──
-    let scene = SceneService::create_scene(&root, "Scene 001", "Mara returns to the station")
-        .unwrap();
+    let scene =
+        SceneService::create_scene(&root, "Scene 001", "Mara returns to the station").unwrap();
     SceneService::assign_scene_world(&root, &scene.id, &world.id).unwrap();
     SceneService::add_scene_character(
         &root,

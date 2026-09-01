@@ -4,10 +4,10 @@ use cinematic_desktop_lib::canon::service::CanonService;
 use cinematic_desktop_lib::canon::tbd;
 use cinematic_desktop_lib::cinema::model::CinemaCompileInput;
 use cinematic_desktop_lib::cinema::service::CinemaService;
-use cinematic_desktop_lib::scenes::service::SceneService;
-use cinematic_desktop_lib::worlds::service::WorldService;
 use cinematic_desktop_lib::integration::readiness::{get_project_overview, ReadinessStatus};
 use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::scenes::service::SceneService;
+use cinematic_desktop_lib::worlds::service::WorldService;
 use std::path::{Path, PathBuf};
 use tempfile::{tempdir, TempDir};
 
@@ -436,7 +436,9 @@ fn later_uncompiled_scene_remains_the_next_production_action_after_an_older_comp
         .canonical_version_id
         .unwrap();
     let _ = world;
-    let location = CanonService::create_entity(&fixture.root, CanonEntityType::Location, "Later Station").unwrap();
+    let location =
+        CanonService::create_entity(&fixture.root, CanonEntityType::Location, "Later Station")
+            .unwrap();
     let later_world = WorldService::create_world(&fixture.root, &location.id).unwrap();
     {
         let plate_source = fixture.image("later-world-plate.png", [40, 41, 42, 255]);
@@ -449,10 +451,18 @@ fn later_uncompiled_scene_remains_the_next_production_action_after_an_older_comp
         .unwrap();
         AssetService::promote_asset_version(&fixture.root, &plate_version.id).unwrap();
     }
-    let later = SceneService::create_scene(&fixture.root, "Scene 002", "Mara returns again").unwrap();
+    let later =
+        SceneService::create_scene(&fixture.root, "Scene 002", "Mara returns again").unwrap();
     SceneService::assign_scene_world(&fixture.root, &later.id, &later_world.id).unwrap();
-    SceneService::add_scene_character(&fixture.root, &later.id, &character_id, &look, Some(sheet.as_str()), None)
-        .unwrap();
+    SceneService::add_scene_character(
+        &fixture.root,
+        &later.id,
+        &character_id,
+        &look,
+        Some(sheet.as_str()),
+        None,
+    )
+    .unwrap();
     CinemaService::create_shot(
         &fixture.root,
         &later.id,

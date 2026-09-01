@@ -14,6 +14,9 @@ interface ProviderModelFieldsProps {
   value: ProviderModelSelection;
   mediaType: "image" | "video";
   requiresReferences: boolean;
+  /** When set (e.g. "video.imageToVideo"), only providers advertising the
+   * capability and models listing the operation are offered. */
+  requiredOperation?: "video.imageToVideo";
   onChange(value: ProviderModelSelection): void;
 }
 
@@ -29,7 +32,7 @@ interface ProviderOption {
   purpose: CustomProviderDefinition["purpose"] | null;
 }
 
-export function ProviderModelFields({ projectRootPath, value, mediaType, requiresReferences, onChange }: ProviderModelFieldsProps) {
+export function ProviderModelFields({ projectRootPath, value, mediaType, requiresReferences, requiredOperation, onChange }: ProviderModelFieldsProps) {
   const [options, setOptions] = useState<ProviderOption[]>([]);
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +54,17 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
                 listProviderModels(id, projectRootPath).catch(() => [] as string[]),
                 getProviderConfigurationStatus(projectRootPath, id).catch(() => null),
               ]);
-              return { id, capabilities, models: models ?? [], configured: status?.credentialConfigured ?? false, purpose: custom?.purpose ?? null };
+              const discoveredModels = models ?? [];
+              const modelOptions = custom?.models
+                .filter((model) => !requiredOperation || !model.capabilities?.length || model.capabilities.includes(requiredOperation))
+                .map((model) => model.id) ?? discoveredModels;
+              return {
+                id,
+                capabilities,
+                models: modelOptions,
+                configured: status?.credentialConfigured ?? false,
+                purpose: custom?.purpose ?? null,
+              };
             } catch {
               return { id, capabilities: null, models: [], configured: false, purpose: custom?.purpose ?? null };
             }
@@ -78,6 +91,7 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
       if (option.capabilities) {
         if (!option.capabilities.mediaTypes.includes(mediaType)) return false;
         if (requiresReferences && !option.capabilities.supportsReferenceImage) return false;
+        if (requiredOperation && !option.capabilities.supportsImageToVideo) return false;
       }
       return true;
     });
@@ -85,11 +99,12 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     if (candidate) {
       onChange({ providerId: candidate.id, modelId: candidate.models[0] ?? "" });
     }
-  }, [pending, options, value.providerId, mediaType, requiresReferences, onChange]);
+  }, [pending, options, value.providerId, mediaType, requiresReferences, requiredOperation, onChange]);
 
   const selected = options.find((option) => option.id === value.providerId) ?? null;
   const compatible = (option: ProviderOption): boolean => {
     if (option.purpose && option.purpose !== "legacy" && option.purpose !== mediaType) return false;
+    if (requiredOperation && (!option.capabilities || !option.capabilities.supportsImageToVideo)) return false;
     if (!option.capabilities) return true;
     const wanted = mediaType === "image" ? "image" : "video";
     if (!option.capabilities.mediaTypes.includes(wanted)) return false;
@@ -98,6 +113,7 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
   };
   const incompatibleReason = (option: ProviderOption): string | null => {
     if (compatible(option)) return null;
+    if (requiredOperation && (!option.capabilities || !option.capabilities.supportsImageToVideo)) return "does not support image-to-video";
     if (option.capabilities && !option.capabilities.mediaTypes.includes(mediaType)) return "does not support this media type";
     if (requiresReferences) return "cannot accept reference images";
     return "not compatible with this operation";

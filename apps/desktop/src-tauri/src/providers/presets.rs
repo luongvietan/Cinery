@@ -30,7 +30,6 @@ pub struct ProviderPreset {
     pub runtime: ProviderRuntimeConfig,
 }
 
-
 fn bearer_auth() -> AuthConfig {
     AuthConfig {
         mode: AuthMode::Bearer,
@@ -219,7 +218,10 @@ pub fn all_presets() -> Vec<ProviderPreset> {
                     OPERATION_IMAGE_GENERATE.to_string(),
                     openai_image_generate_endpoint(),
                 );
-                operations.insert(OPERATION_IMAGE_EDIT.to_string(), openai_image_edit_endpoint());
+                operations.insert(
+                    OPERATION_IMAGE_EDIT.to_string(),
+                    openai_image_edit_endpoint(),
+                );
                 operations.insert(OPERATION_VALIDATE.to_string(), openai_validate_endpoint());
                 ProviderRuntimeConfig {
                     auth: bearer_auth(),
@@ -238,17 +240,17 @@ pub fn all_presets() -> Vec<ProviderPreset> {
             default_base_url: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run",
             requires_account_id: true,
             auth: bearer_auth(),
-            default_models: vec![(
-                "@cf/black-forest-labs/flux-1-schnell",
-                "FLUX.1 Schnell",
-            )],
+            default_models: vec![("@cf/black-forest-labs/flux-1-schnell", "FLUX.1 Schnell")],
             runtime: {
                 let mut operations = BTreeMap::new();
                 operations.insert(
                     OPERATION_IMAGE_GENERATE.to_string(),
                     cloudflare_image_generate_endpoint(),
                 );
-                operations.insert(OPERATION_VALIDATE.to_string(), cloudflare_validate_endpoint());
+                operations.insert(
+                    OPERATION_VALIDATE.to_string(),
+                    cloudflare_validate_endpoint(),
+                );
                 ProviderRuntimeConfig {
                     auth: bearer_auth(),
                     operations,
@@ -583,14 +585,20 @@ pub fn preset_by_id(id: &str) -> Option<ProviderPreset> {
 
 /// Runtime config synthesized for legacy purpose-based provider rows so old
 /// records keep working without modification.
-pub fn legacy_purpose_runtime(purpose: super::model::CustomProviderPurpose) -> ProviderRuntimeConfig {
+pub fn legacy_purpose_runtime(
+    purpose: super::model::CustomProviderPurpose,
+) -> ProviderRuntimeConfig {
     match purpose {
-        super::model::CustomProviderPurpose::Image => preset_by_id("openai-compatible")
-            .expect("openai-compatible preset exists")
-            .runtime,
-        super::model::CustomProviderPurpose::Video => preset_by_id("openai-compatible-video")
-            .expect("openai-compatible-video preset exists")
-            .runtime,
+        super::model::CustomProviderPurpose::Image => {
+            preset_by_id("openai-compatible")
+                .expect("openai-compatible preset exists")
+                .runtime
+        }
+        super::model::CustomProviderPurpose::Video => {
+            preset_by_id("openai-compatible-video")
+                .expect("openai-compatible-video preset exists")
+                .runtime
+        }
         // LLM and legacy providers do not use declarative media operations.
         _ => ProviderRuntimeConfig::default(),
     }
@@ -617,8 +625,14 @@ mod tests {
     fn cloudflare_preset_matches_the_acceptance_contract() {
         let preset = preset_by_id("cloudflare-workers-ai").unwrap();
         assert!(preset.requires_account_id);
-        assert_eq!(preset.default_base_url, "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run");
-        assert_eq!(preset.default_models[0].0, "@cf/black-forest-labs/flux-1-schnell");
+        assert_eq!(
+            preset.default_base_url,
+            "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/run"
+        );
+        assert_eq!(
+            preset.default_models[0].0,
+            "@cf/black-forest-labs/flux-1-schnell"
+        );
         let endpoint = preset
             .runtime
             .operations
@@ -641,7 +655,10 @@ mod tests {
     #[test]
     fn openai_preset_covers_generation_edit_and_validation() {
         let preset = preset_by_id("openai-compatible").unwrap();
-        assert!(preset.runtime.operations.contains_key(OPERATION_IMAGE_GENERATE));
+        assert!(preset
+            .runtime
+            .operations
+            .contains_key(OPERATION_IMAGE_GENERATE));
         assert!(preset.runtime.operations.contains_key(OPERATION_IMAGE_EDIT));
         assert!(preset.runtime.operations.contains_key(OPERATION_VALIDATE));
     }

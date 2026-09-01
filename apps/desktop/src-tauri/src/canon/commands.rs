@@ -24,8 +24,8 @@ pub fn create_canon_entity(
     name: String,
 ) -> Result<CanonEntityRecord, AppCommandError> {
     project_service::validate_root_path(&project_root_path)?;
-    let entity_type = CanonEntityType::from_str(&entity_type)
-        .ok_or(crate::error::AppError::UnknownCanonSection)?;
+    let entity_type =
+        CanonEntityType::parse(&entity_type).ok_or(crate::error::AppError::UnknownCanonSection)?;
     CanonService::create_entity(&PathBuf::from(project_root_path), entity_type, &name)
         .map_err(Into::into)
 }
@@ -39,7 +39,7 @@ pub fn list_canon_entities(
     let entity_type = entity_type
         .as_deref()
         .map(|value| {
-            CanonEntityType::from_str(value).ok_or(crate::error::AppError::UnknownCanonSection)
+            CanonEntityType::parse(value).ok_or(crate::error::AppError::UnknownCanonSection)
         })
         .transpose()?;
     CanonService::list_entities(&PathBuf::from(project_root_path), entity_type).map_err(Into::into)

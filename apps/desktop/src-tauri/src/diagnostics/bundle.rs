@@ -146,7 +146,7 @@ fn database_version_json(conn: &Connection) -> Result<Value, AppError> {
 
 fn project_health_json(project_root: &Path) -> Result<Value, AppError> {
     let issues = health::scan_project(project_root)?;
-    Ok(serde_json::to_value(&issues).map_err(|e| AppError::Database(e.to_string()))?)
+    serde_json::to_value(&issues).map_err(|e| AppError::Database(e.to_string()))
 }
 
 #[derive(Debug)]

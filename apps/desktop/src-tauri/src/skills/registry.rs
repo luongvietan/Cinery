@@ -192,6 +192,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
             | "world.create_plate"
             | "scene.create_keyframe"
             | "scene.generate_video"
+            | "shot.image_to_video"
     ) && step_types
         != [
             "validate_input",
@@ -237,6 +238,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "world_plate_context"
                         | "scene_keyframe_context"
                         | "scene_video_context"
+                        | "shot_image_to_video_context"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -254,6 +256,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "world_plate_v1"
                         | "scene_keyframe_v1"
                         | "scene_video_v1"
+                        | "shot_image_to_video_v1"
                 ) =>
             {
                 return Err(AppError::InvalidBuiltinSkillDefinition(format!(
@@ -305,7 +308,10 @@ mod tests {
         assert_eq!(operation.id, "scene.generate_video");
         let expected = operation.expected_output.clone().unwrap();
         assert_eq!(expected.asset_type, AssetType::Video);
-        assert_eq!(expected.media_type, crate::skills::model::OutputMediaType::Video);
+        assert_eq!(
+            expected.media_type,
+            crate::skills::model::OutputMediaType::Video
+        );
     }
 
     #[test]
@@ -448,7 +454,7 @@ mod tests {
             .find(|skill| skill.id == "character-builder")
             .unwrap()
             .to_owned();
-        let snapshot = serde_json::to_value(&skill).unwrap();
+        let snapshot = serde_json::to_value(skill).unwrap();
         let operations = snapshot["operations"].as_array().unwrap();
 
         assert_eq!(snapshot["id"], "character-builder");

@@ -30,7 +30,7 @@ pub fn materialize_image(
         AppError::GenerationArtifactCaptureFailed(format!("image decode failed: {error}"))
     })?;
     let (width, height) = decoded.dimensions();
-    materialize_media(
+    materialize_media(MaterializeMediaRequest {
         project_root,
         workflow_run_id,
         provider_attempt_id,
@@ -38,24 +38,40 @@ pub fn materialize_image(
         bytes,
         mime_type,
         extension,
-        Some(width as i64),
-        Some(height as i64),
-    )
+        width: Some(width as i64),
+        height: Some(height as i64),
+    })
+}
+
+/// Arguments for persisting one provider output artifact.
+pub struct MaterializeMediaRequest<'a> {
+    pub project_root: &'a Path,
+    pub workflow_run_id: &'a str,
+    pub provider_attempt_id: &'a str,
+    pub ordinal: i64,
+    pub bytes: &'a [u8],
+    pub mime_type: &'a str,
+    pub extension: &'a str,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
 }
 
 /// Persists provider output bytes of any supported media kind (image or
 /// video) under the run's artifact directory with an atomic write.
 pub fn materialize_media(
-    project_root: &Path,
-    workflow_run_id: &str,
-    provider_attempt_id: &str,
-    ordinal: i64,
-    bytes: &[u8],
-    mime_type: &str,
-    extension: &str,
-    width: Option<i64>,
-    height: Option<i64>,
+    request: MaterializeMediaRequest<'_>,
 ) -> Result<MaterializedArtifact, AppError> {
+    let MaterializeMediaRequest {
+        project_root,
+        workflow_run_id,
+        provider_attempt_id,
+        ordinal,
+        bytes,
+        mime_type,
+        extension,
+        width,
+        height,
+    } = request;
     if ordinal < 1 {
         return Err(AppError::GenerationArtifactCaptureFailed(
             "artifact ordinal must be positive".into(),

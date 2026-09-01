@@ -11,13 +11,14 @@
 mod support;
 
 use cinematic_desktop_lib::cinema::service::CinemaService;
-use cinematic_desktop_lib::generation::service::GenerationService;
+use cinematic_desktop_lib::generation::service::{GenerationCaptureInput, GenerationService};
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::providers::commands::{
     cancel_workflow_execution, retry_workflow_execution,
 };
-use cinematic_desktop_lib::workflow::background;
+use cinematic_desktop_lib::providers::model::{ProviderOutput, ProviderResult};
 use cinematic_desktop_lib::workflow::runtime::WorkflowRuntime;
+use cinematic_desktop_lib::workflow::{background, completion};
 use rusqlite::OptionalExtension;
 use std::path::Path;
 
@@ -25,7 +26,17 @@ fn open_db(root: &Path) -> rusqlite::Connection {
     cinematic_desktop_lib::db::open_existing_connection(&root.join("project.db")).unwrap()
 }
 
-fn start_video_run(root: &Path, scene_id: &str) -> cinematic_desktop_lib::workflow::model::WorkflowRunDetail {
+fn background_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap()
+}
+
+fn start_video_run(
+    root: &Path,
+    scene_id: &str,
+) -> cinematic_desktop_lib::workflow::model::WorkflowRunDetail {
     let created = WorkflowRuntime::create_run(
         root,
         "scene-builder",
@@ -45,6 +56,160 @@ fn start_video_run(root: &Path, scene_id: &str) -> cinematic_desktop_lib::workfl
     WorkflowRuntime::advance_run(root, &created.run.id).unwrap()
 }
 
+fn pin_shot_keyframe(root: &Path, scene_id: &str, shot_id: &str) -> (String, String) {
+    let keyframe_asset =
+        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(
+            root, scene_id,
+        )
+        .unwrap();
+    let source = support::test_image(root, "shot-i2v-source.png", [29, 47, 83, 255]);
+    let version = cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
+        root,
+        &keyframe_asset.id,
+        &source,
+        None,
+    )
+    .unwrap();
+    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(root, &version.id)
+        .unwrap();
+    CinemaService::set_shot_keyframe(root, shot_id, Some(&version.id)).unwrap();
+    (version.id, version.sha256)
+}
+
+fn start_shot_i2v_run(
+    root: &Path,
+    scene_id: &str,
+    shot_id: &str,
+    provider_id: &str,
+    model_id: &str,
+) -> cinematic_desktop_lib::workflow::model::WorkflowRunDetail {
+    let created = WorkflowRuntime::create_run(
+        root,
+        "scene-builder",
+        "1.0.0",
+        "shot.image_to_video",
+        serde_json::json!({
+            "sceneId": scene_id,
+            "shotId": shot_id,
+            "providerId": provider_id,
+            "modelId": model_id,
+            "prompt": "A measured push-in from the frozen keyframe",
+        }),
+    )
+    .unwrap();
+    let waiting = WorkflowRuntime::advance_run(root, &created.run.id).unwrap();
+    assert_eq!(waiting.run.status, "waiting_for_approval");
+    WorkflowRuntime::approve_run_step(root, &created.run.id, "approve-request", None).unwrap();
+    WorkflowRuntime::advance_run(root, &created.run.id).unwrap()
+}
+
+fn compiled_request_json(root: &Path, run_id: &str) -> String {
+    let conn = open_db(root);
+    conn.query_row(
+        "SELECT output_json FROM workflow_steps
+         WHERE workflow_run_id = ?1 AND step_type = 'compile_request'",
+        [run_id],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn force_provider_failure(root: &Path, run_id: &str) {
+    let conn = open_db(root);
+    conn.execute(
+        "UPDATE provider_jobs SET status = 'failed' WHERE execution_id IN
+         (SELECT id FROM workflow_step_executions WHERE workflow_run_id = ?1)",
+        [run_id],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE workflow_step_executions SET status = 'failed',
+         normalized_error_json = '{\"message\":\"simulated provider failure\"}'
+         WHERE workflow_run_id = ?1",
+        [run_id],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE workflow_steps SET status = 'failed'
+         WHERE workflow_run_id = ?1 AND step_type = 'execute'",
+        [run_id],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE workflow_runs SET status = 'failed',
+         failure_code = 'PROVIDER_EXECUTION_FAILED',
+         failure_message = 'simulated provider failure'
+         WHERE id = ?1",
+        [run_id],
+    )
+    .unwrap();
+}
+
+fn install_i2v_provider(root: &Path, base_url: String) {
+    let mut operations = std::collections::BTreeMap::new();
+    operations.insert(
+        "video.imageToVideo".to_string(),
+        cinematic_desktop_lib::providers::config::EndpointConfig {
+            path_template: "/submit".into(),
+            request_mapping: Some(serde_json::json!({
+                "prompt": "{{prompt}}",
+                "image": "{{image}}",
+            })),
+            response: cinematic_desktop_lib::providers::config::ResponseMapping::default(),
+            job: Some(cinematic_desktop_lib::providers::config::AsyncJobConfig {
+                job_id_path: "result.task_id".into(),
+                status: cinematic_desktop_lib::providers::config::StatusEndpointConfig {
+                    method: "GET".into(),
+                    path_template: "/tasks/{jobId}".into(),
+                    status_path: "result.status".into(),
+                    completed_values: vec!["completed".into()],
+                    failed_values: vec!["failed".into()],
+                    progress_path: Some("result.percent".into()),
+                    error_message_path: None,
+                },
+                output: cinematic_desktop_lib::providers::config::FinalOutputConfig {
+                    fetch_path_template: None,
+                    fetch_method: "GET".into(),
+                    response: cinematic_desktop_lib::providers::config::ResponseMapping {
+                        url_path: Some("result.video_url".into()),
+                        ..Default::default()
+                    },
+                },
+                polling: cinematic_desktop_lib::providers::config::PollingConfig {
+                    interval_ms: 1,
+                    timeout_ms: 30_000,
+                },
+            }),
+            ..Default::default()
+        },
+    );
+    let definition = cinematic_desktop_lib::providers::model::CustomProviderDefinition {
+        provider_id: "loopback_i2v".into(),
+        display_name: "Loopback Image to Video".into(),
+        base_url,
+        purpose: cinematic_desktop_lib::providers::model::CustomProviderPurpose::Video,
+        preset_id: None,
+        runtime: cinematic_desktop_lib::providers::config::ProviderRuntimeConfig {
+            auth: cinematic_desktop_lib::providers::config::AuthConfig::default(),
+            operations,
+            ..Default::default()
+        },
+        api_key: None,
+        api_key_hint: None,
+        models: vec![
+            cinematic_desktop_lib::providers::model::CustomProviderModel {
+                id: "loop-i2v-v1".into(),
+                name: "Loop I2V V1".into(),
+                capabilities: vec!["video.imageToVideo".into()],
+            },
+        ],
+        headers: Vec::new(),
+    };
+    let conn = open_db(root);
+    cinematic_desktop_lib::providers::repository::upsert_custom_provider(&conn, &definition)
+        .unwrap();
+}
+
 fn durable_job(root: &Path, run_id: &str) -> (String, String) {
     let conn = open_db(root);
     conn.query_row(
@@ -59,6 +224,7 @@ fn durable_job(root: &Path, run_id: &str) -> (String, String) {
 
 #[test]
 fn background_video_job_acceptance_full_lifecycle() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -66,13 +232,24 @@ fn background_video_job_acceptance_full_lifecycle() {
 
     // Keyframe pin (the scene must be compiled first).
     let keyframe_asset =
-        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
+        cinematic_desktop_lib::scenes::service::SceneService::ensure_scene_keyframe_asset(
+            root, &scene.id,
+        )
+        .unwrap();
     let keyframe_source = support::test_image(root, "keyframe.png", [9, 8, 7, 255]);
-    let keyframe_version = cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
-        root, &keyframe_asset.id, &keyframe_source, None,
+    let keyframe_version =
+        cinematic_desktop_lib::assets::service::AssetService::import_asset_version(
+            root,
+            &keyframe_asset.id,
+            &keyframe_source,
+            None,
+        )
+        .unwrap();
+    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(
+        root,
+        &keyframe_version.id,
     )
     .unwrap();
-    cinematic_desktop_lib::assets::service::AssetService::promote_asset_version(root, &keyframe_version.id).unwrap();
     CinemaService::set_shot_keyframe(root, &shot.id, Some(&keyframe_version.id)).unwrap();
     CinemaService::compile_scene(
         root,
@@ -92,7 +269,10 @@ fn background_video_job_acceptance_full_lifecycle() {
         "the execution advance must return before provider completion"
     );
     let (provider_job_id, job_status) = durable_job(root, &running.run.id);
-    assert!(!provider_job_id.is_empty(), "durable ProviderJob must exist before returning");
+    assert!(
+        !provider_job_id.is_empty(),
+        "durable ProviderJob must exist before returning"
+    );
     assert_eq!(job_status, "submitted");
 
     // The attempt is durable and non-terminal; the step is running.
@@ -143,7 +323,11 @@ fn background_video_job_acceptance_full_lifecycle() {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(progress, Some(50), "progress must be durable and readable without the runner");
+        assert_eq!(
+            progress,
+            Some(50),
+            "progress must be durable and readable without the runner"
+        );
         assert!(polled_at.is_some());
         let run_status: String = conn
             .query_row(
@@ -176,13 +360,19 @@ fn background_video_job_acceptance_full_lifecycle() {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(preserved, "running", "durable remote job must be preserved by recovery");
+        assert_eq!(
+            preserved, "running",
+            "durable remote job must be preserved by recovery"
+        );
     }
 
     // --- Second tick: the provider completes; the runner captures the
     // artifact and completes attempt, step, and run. ---
     let tick = background::run_pending_jobs(root).unwrap();
-    assert_eq!(tick.completed, 1, "the durable job must complete on the resumed runner");
+    assert_eq!(
+        tick.completed, 1,
+        "the durable job must complete on the resumed runner"
+    );
     let completed = WorkflowRuntime::get_run(root, &running.run.id).unwrap();
     assert_eq!(completed.run.status, "completed");
 
@@ -262,13 +452,9 @@ fn background_video_job_acceptance_full_lifecycle() {
         )
         .unwrap()
     };
-    let promoted = GenerationService::promote_generated_artifact(
-        root,
-        &artifact.id,
-        &video_asset_id,
-        true,
-    )
-    .unwrap();
+    let promoted =
+        GenerationService::promote_generated_artifact(root, &artifact.id, &video_asset_id, true)
+            .unwrap();
     assert_eq!(promoted.status, "canonical");
     CinemaService::set_shot_video(root, &shot.id, Some(&promoted.id)).unwrap();
     {
@@ -282,6 +468,7 @@ fn background_video_job_acceptance_full_lifecycle() {
 
 #[test]
 fn background_video_job_cancellation_is_durable_and_terminal_safe() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -350,11 +537,9 @@ fn background_video_job_cancellation_is_durable_and_terminal_safe() {
             .unwrap();
         assert_eq!(run_status, "cancelled");
         let artifacts: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM generated_artifacts",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(artifacts, 0, "a cancelled job must produce no artifacts");
     }
@@ -366,6 +551,7 @@ fn background_video_job_cancellation_is_durable_and_terminal_safe() {
 
 #[test]
 fn completion_vs_cancellation_race_is_terminal_state_safe() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -455,7 +641,10 @@ fn completion_vs_cancellation_race_is_terminal_state_safe() {
             )
             .unwrap();
         assert_eq!(attempt, "cancelled");
-        assert_eq!(job, "cancelled", "job status must match the attempt outcome");
+        assert_eq!(
+            job, "cancelled",
+            "job status must match the attempt outcome"
+        );
         assert_eq!(run, "cancelled", "the cancel command made the run terminal");
     }
 
@@ -500,6 +689,7 @@ fn completion_vs_cancellation_race_is_terminal_state_safe() {
 
 #[test]
 fn background_video_retry_creates_a_fresh_attempt_after_failure() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -572,7 +762,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
         .unwrap()
     };
     assert_eq!(attempt2_number, 2);
-    assert!(attempt2_key.ends_with(":2"), "retry must use a fresh idempotency key");
+    assert!(
+        attempt2_key.ends_with(":2"),
+        "retry must use a fresh idempotency key"
+    );
     assert_eq!(attempt1_status, "failed", "the old attempt is immutable");
 
     // Execute the retry: a new provider job, and completion through the runner.
@@ -589,7 +782,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
         )
         .unwrap()
     };
-    assert!(job_count >= 2, "retry must create a new ProviderJob, not reuse attempt 1's (found {job_count})");
+    assert!(
+        job_count >= 2,
+        "retry must create a new ProviderJob, not reuse attempt 1's (found {job_count})"
+    );
 
     let mut completed_seen = false;
     for _ in 0..6 {
@@ -599,7 +795,10 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
             break;
         }
     }
-    assert!(completed_seen, "the retried job must complete through the runner");
+    assert!(
+        completed_seen,
+        "the retried job must complete through the runner"
+    );
     let completed = WorkflowRuntime::get_run(root, &run_id).unwrap();
     assert_eq!(completed.run.status, "completed");
 }
@@ -611,6 +810,7 @@ fn background_video_retry_creates_a_fresh_attempt_after_failure() {
 /// error.
 #[test]
 fn retry_double_click_creates_one_attempt_and_no_raw_sqlite_error() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -697,11 +897,15 @@ fn retry_double_click_creates_one_attempt_and_no_raw_sqlite_error() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(attempts, 2, "a double-click must create exactly one new attempt");
+    assert_eq!(
+        attempts, 2,
+        "a double-click must create exactly one new attempt"
+    );
 }
 
 #[test]
 fn two_background_jobs_progress_independently() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -724,7 +928,10 @@ fn two_background_jobs_progress_independently() {
     // one another (job A completes on this tick; job B still has its own
     // poll count).
     let tick = background::run_pending_jobs(root).unwrap();
-    assert!(tick.polled + tick.completed >= 2, "both jobs must be worked in one tick");
+    assert!(
+        tick.polled + tick.completed >= 2,
+        "both jobs must be worked in one tick"
+    );
 
     // Complete B too.
     for _ in 0..4 {
@@ -744,14 +951,14 @@ fn two_background_jobs_progress_independently() {
     // Two distinct artifacts, two result sets, two video candidate versions.
     let conn = open_db(root);
     let result_sets: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM generation_result_sets",
-            [],
-            |row| row.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM generation_result_sets", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     let artifacts: i64 = conn
-        .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM generated_artifacts", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     let video_versions: i64 = conn
         .query_row(
@@ -763,11 +970,15 @@ fn two_background_jobs_progress_independently() {
         .unwrap();
     assert_eq!(result_sets, 2);
     assert_eq!(artifacts, 2);
-    assert_eq!(video_versions, 1, "both runs dedup into the same content version");
+    assert_eq!(
+        video_versions, 1,
+        "both runs dedup into the same content version"
+    );
 }
 
 #[test]
 fn canon_mutation_during_background_execution_never_alters_the_request() {
+    let _guard = background_test_guard();
     let fixture = support::compilable_scene();
     let root = &fixture.root;
     let scene = &fixture.scene;
@@ -827,12 +1038,8 @@ fn canon_mutation_during_background_execution_never_alters_the_request() {
             None,
         )
         .unwrap();
-        cinematic_desktop_lib::canon::service::CanonService::lock_section(
-            root,
-            &section_id,
-            None,
-        )
-        .unwrap();
+        cinematic_desktop_lib::canon::service::CanonService::lock_section(root, &section_id, None)
+            .unwrap();
     }
 
     // Drive the job to completion.
@@ -856,11 +1063,16 @@ fn canon_mutation_during_background_execution_never_alters_the_request() {
         )
         .unwrap()
     };
-    assert_eq!(frozen_request, after_request, "background execution must never re-resolve canon");
+    assert_eq!(
+        frozen_request, after_request,
+        "background execution must never re-resolve canon"
+    );
 
     // The lineage references the run's snapshot, not live canon state.
     let result_sets = GenerationService::list_results(root, Some(&running.run.id)).unwrap();
-    let detail = GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id).unwrap();
+    let detail =
+        GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id)
+            .unwrap();
     let lineage = detail.lineage.unwrap();
     assert_eq!(lineage.workflow_definition_id, "scene.generate_video");
     assert_eq!(lineage.provider_id, "fake_async_video");
@@ -874,19 +1086,62 @@ fn canon_mutation_during_background_execution_never_alters_the_request() {
 mod loopback_provider {
     use std::io::{Read, Write};
     use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    pub struct Observation {
+        submitted_bodies: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Observation {
+        pub fn submit_count(&self) -> usize {
+            self.submitted_bodies.lock().unwrap().len()
+        }
+
+        pub fn received_source_sha256(&self) -> String {
+            use base64::Engine;
+            use sha2::{Digest, Sha256};
+
+            let bodies = self.submitted_bodies.lock().unwrap();
+            let body: serde_json::Value =
+                serde_json::from_str(bodies.first().expect("one provider submission body"))
+                    .unwrap();
+            let data_uri = body["image"]
+                .as_str()
+                .expect("submission carries the source image data URI");
+            let encoded = data_uri
+                .split_once(',')
+                .expect("source image is a data URI")
+                .1;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .unwrap();
+            let mut hasher = Sha256::new();
+            hasher.update(bytes);
+            format!("{:x}", hasher.finalize())
+        }
+    }
 
     pub struct LoopbackServer {
         listener: TcpListener,
+        observation: Observation,
     }
 
     impl LoopbackServer {
         pub fn start() -> Self {
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            Self { listener }
+            Self {
+                listener,
+                observation: Observation::default(),
+            }
         }
 
         pub fn url(&self) -> String {
             format!("http://{}", self.listener.local_addr().unwrap())
+        }
+
+        pub fn observation(&self) -> Observation {
+            self.observation.clone()
         }
 
         /// Serves exactly `total_requests` requests on a background
@@ -894,10 +1149,7 @@ mod loopback_provider {
         /// Polls 1–2 report running (40%); later polls report completed
         /// with the data-URI MP4 (the runner's result fetch re-polls the
         /// same status path and extracts the URL).
-        pub fn serve_in_background(
-            self,
-            total_requests: usize,
-        ) -> std::thread::JoinHandle<()> {
+        pub fn serve_in_background(self, total_requests: usize) -> std::thread::JoinHandle<()> {
             std::thread::spawn(move || {
                 let mut polls = 0;
                 for _ in 0..total_requests {
@@ -917,9 +1169,7 @@ mod loopback_provider {
                         }
                         request.extend_from_slice(&buffer[..read]);
                         if header_end.is_none() {
-                            if let Some(position) =
-                                find_header_end(&request)
-                            {
+                            if let Some(position) = find_header_end(&request) {
                                 header_end = Some(position);
                                 content_length = parse_content_length(&request[..position]);
                             }
@@ -936,6 +1186,15 @@ mod loopback_provider {
                     let method = parts.next().unwrap_or_default().to_string();
                     let path = parts.next().unwrap_or_default().to_string();
                     let body = if method == "POST" && path == "/submit" {
+                        let request_body = header_end
+                            .and_then(|end| request.get(end..))
+                            .unwrap_or_default()
+                            .to_string();
+                        self.observation
+                            .submitted_bodies
+                            .lock()
+                            .unwrap()
+                            .push(request_body);
                         r#"{"result":{"task_id":"loop-job-1"}}"#.to_string()
                     } else if method == "GET" && path.starts_with("/tasks/") {
                         polls += 1;
@@ -947,9 +1206,9 @@ mod loopback_provider {
                                 base64::Engine::encode(
                                     &base64::engine::general_purpose::STANDARD,
                                     [
-                                        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm',
-                                        b'p', b'4', b'2', 0x00, 0x00, 0x00, 0x00, b'm', b'p',
-                                        b'4', b'2', b'i', b's', b'o', b'm',
+                                        0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p',
+                                        b'4', b'2', 0x00, 0x00, 0x00, 0x00, b'm', b'p', b'4', b'2',
+                                        b'i', b's', b'o', b'm',
                                     ]
                                 ),
                             )
@@ -999,6 +1258,7 @@ mod loopback_provider {
 /// failed the job.
 #[test]
 fn declarative_async_job_resumes_through_a_rehydrated_adapter() {
+    let _guard = background_test_guard();
     use loopback_provider::LoopbackServer;
 
     let fixture = support::compilable_scene();
@@ -1066,19 +1326,18 @@ fn declarative_async_job_resumes_through_a_rehydrated_adapter() {
             },
             api_key: None,
             api_key_hint: None,
-            models: vec![cinematic_desktop_lib::providers::model::CustomProviderModel {
-                id: "loop-v1".into(),
-                name: "Loop V1".into(),
-                capabilities: Vec::new(),
-            }],
+            models: vec![
+                cinematic_desktop_lib::providers::model::CustomProviderModel {
+                    id: "loop-v1".into(),
+                    name: "Loop V1".into(),
+                    capabilities: Vec::new(),
+                },
+            ],
             headers: Vec::new(),
         };
         let conn = open_db(root);
-        cinematic_desktop_lib::providers::repository::upsert_custom_provider(
-            &conn,
-            &definition,
-        )
-        .unwrap();
+        cinematic_desktop_lib::providers::repository::upsert_custom_provider(&conn, &definition)
+            .unwrap();
     }
 
     // Serve the whole conversation on a background thread.
@@ -1160,12 +1419,427 @@ fn declarative_async_job_resumes_through_a_rehydrated_adapter() {
 
     // The lineage used the original provider/model provenance from the
     // durable attempt, never today's default provider config.
-    let detail = GenerationService::get_artifact_detail(
-        root,
-        &result_sets[0].artifacts[0].artifact.id,
-    )
-    .unwrap();
+    let detail =
+        GenerationService::get_artifact_detail(root, &result_sets[0].artifacts[0].artifact.id)
+            .unwrap();
     let lineage = detail.lineage.unwrap();
     assert_eq!(lineage.provider_id, "loopback_video");
     assert_eq!(lineage.model_id, "loop-v1");
+}
+
+#[test]
+fn shot_i2v_resumes_through_rehydrated_declarative_adapter_without_resubmit() {
+    let _guard = background_test_guard();
+    use loopback_provider::LoopbackServer;
+
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    let (source_version_id, source_sha256) = pin_shot_keyframe(root, &scene.id, &shot.id);
+    let server = LoopbackServer::start();
+    install_i2v_provider(root, server.url());
+    let observation = server.observation();
+    let server = server.serve_in_background(5);
+
+    let running = start_shot_i2v_run(root, &scene.id, &shot.id, "loopback_i2v", "loop-i2v-v1");
+    assert_eq!(running.run.status, "running");
+    let (operation, attempt_count): (Option<String>, i64) = {
+        let conn = open_db(root);
+        conn.query_row(
+            "SELECT pj.operation,
+                    (SELECT COUNT(*) FROM workflow_step_executions
+                      WHERE workflow_run_id = e.workflow_run_id)
+             FROM provider_jobs pj
+             JOIN workflow_step_executions e ON e.id = pj.execution_id
+             WHERE e.workflow_run_id = ?1",
+            [&running.run.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(operation.as_deref(), Some("video.imageToVideo"));
+    assert_eq!(attempt_count, 1);
+    assert_eq!(observation.submit_count(), 1);
+    assert_eq!(observation.received_source_sha256(), source_sha256);
+
+    ProjectService::open(root).unwrap();
+    background::reset_provider_cache_for_tests();
+    let mut completed_seen = false;
+    for _ in 0..10 {
+        let tick = background::run_pending_jobs(root).unwrap();
+        if tick.completed > 0 {
+            completed_seen = true;
+            break;
+        }
+    }
+    assert!(
+        completed_seen,
+        "the cold adapter must complete the durable I2V job"
+    );
+    server.join().unwrap();
+    assert_eq!(observation.submit_count(), 1, "restart must never resubmit");
+
+    let completed = WorkflowRuntime::get_run(root, &running.run.id).unwrap();
+    assert_eq!(completed.run.status, "completed");
+    let results = GenerationService::list_results(root, Some(&running.run.id)).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].result_set.requested_output_count, 1);
+    assert_eq!(results[0].artifacts.len(), 1);
+    assert_eq!(results[0].artifacts[0].artifact.media_kind, "video");
+    let video_candidates: i64 = {
+        let conn = open_db(root);
+        conn.query_row(
+            "SELECT COUNT(*) FROM asset_versions av
+             JOIN assets a ON a.id = av.asset_id
+             WHERE a.type = 'video' AND a.owner_entity_id = ?1
+               AND av.status = 'candidate'",
+            [&scene.id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        video_candidates, 1,
+        "completion must import one video candidate"
+    );
+    let compiled: serde_json::Value =
+        serde_json::from_str(&compiled_request_json(root, &running.run.id)).unwrap();
+    assert_eq!(compiled["references"][0]["reference"], source_version_id);
+    let shots = CinemaService::list_shots(root, &scene.id).unwrap();
+    assert_eq!(
+        shots[0].keyframe_asset_version_id.as_deref(),
+        Some(source_version_id.as_str())
+    );
+    assert_eq!(
+        shots[0].generated_video_asset_version_id, None,
+        "completion must never auto-pin the Shot video"
+    );
+}
+
+#[test]
+fn shot_i2v_completion_replay_imports_a_missing_candidate_without_duplicate_capture() {
+    let _guard = background_test_guard();
+    background::reset_provider_cache_for_tests();
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    let (source_version_id, _) = pin_shot_keyframe(root, &scene.id, &shot.id);
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
+    let pending = {
+        let conn = open_db(root);
+        background::discover_pending_jobs(&conn)
+            .unwrap()
+            .into_iter()
+            .find(|job| job.workflow_run_id == running.run.id)
+            .unwrap()
+    };
+    let project_id: String = open_db(root)
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
+    let result = ProviderResult {
+        outputs: vec![ProviderOutput {
+            uri: "data:video/mp4;base64,AAAAGGZ0eXBtcDQyAAAAAW1wNDJpc29t".into(),
+            mime_type: "video/mp4".into(),
+            filename: Some("replayed-shot.mp4".into()),
+        }],
+        provider_reported_model: Some("fake-video-v1".into()),
+        metadata: serde_json::json!({}),
+    };
+    let captured = GenerationService::capture_provider_result(
+        root,
+        &GenerationCaptureInput {
+            project_id,
+            workflow_run_id: running.run.id.clone(),
+            workflow_step_key: pending.step_definition_id.clone(),
+            workflow_definition_id: "shot.image_to_video".into(),
+            workflow_version: "1.0.0".into(),
+            skill_id: "scene-builder".into(),
+            skill_version: "1.0.0".into(),
+            compiled_execution_artifact_id: "compiled-shot-i2v".into(),
+            compiled_request_sha256: "a".repeat(64),
+            canon_snapshot_id: None,
+            canon_snapshot_sha256: None,
+            provider_attempt_id: pending.execution_id.clone(),
+            provider_id: pending.provider_id.clone(),
+            model_id: pending.model_id.clone(),
+            source_asset_version_ids: vec![source_version_id],
+            requested_output_count: 1,
+            media_kind: "video".into(),
+        },
+        &result,
+    )
+    .unwrap();
+
+    let count_rows = || {
+        let conn = open_db(root);
+        let result_sets = conn
+            .query_row(
+                "SELECT COUNT(*) FROM generation_result_sets WHERE workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let artifacts = conn
+            .query_row(
+                "SELECT COUNT(*) FROM generated_artifacts ga
+                 JOIN generation_result_sets grs ON grs.id = ga.result_set_id
+                 WHERE grs.workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let lineages = conn
+            .query_row(
+                "SELECT COUNT(*) FROM artifact_lineage al
+                 JOIN generated_artifacts ga ON ga.id = al.artifact_id
+                 JOIN generation_result_sets grs ON grs.id = ga.result_set_id
+                 WHERE grs.workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        let video_versions = conn
+            .query_row(
+                "SELECT COUNT(*) FROM asset_versions av
+                 JOIN assets a ON a.id = av.asset_id
+                 WHERE a.type = 'video' AND a.owner_entity_id = ?1",
+                [&scene.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        (result_sets, artifacts, lineages, video_versions)
+    };
+    assert_eq!(count_rows(), (1, 1, 1, 0));
+
+    let first_replay = completion::complete_attempt(root, &pending, &result).unwrap();
+    assert_eq!(
+        first_replay,
+        completion::CompletionOutcome::Captured {
+            result_set_id: Some(captured.result_set.id.clone()),
+            artifact_ids: vec![captured.artifacts[0].id.clone()],
+        }
+    );
+    assert_eq!(count_rows(), (1, 1, 1, 1));
+
+    completion::complete_attempt(root, &pending, &result).unwrap();
+    assert_eq!(count_rows(), (1, 1, 1, 1));
+}
+
+#[test]
+fn shot_i2v_retry_preserves_exact_source() {
+    let _guard = background_test_guard();
+    background::reset_provider_cache_for_tests();
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    let (source_version_id, _) = pin_shot_keyframe(root, &scene.id, &shot.id);
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
+    let frozen_request = compiled_request_json(root, &running.run.id);
+    force_provider_failure(root, &running.run.id);
+    CinemaService::set_shot_keyframe(root, &shot.id, None).unwrap();
+
+    let retried = retry_workflow_execution(
+        root.to_string_lossy().into(),
+        running.run.id.clone(),
+        "execute".into(),
+    )
+    .unwrap();
+    assert_eq!(retried.run.status, "ready_for_execution");
+    let attempt_2_key: String = {
+        let conn = open_db(root);
+        conn.query_row(
+            "SELECT idempotency_key FROM workflow_step_executions
+             WHERE workflow_run_id = ?1 AND attempt_number = 2",
+            [&running.run.id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert!(attempt_2_key.ends_with(":2"));
+    assert_eq!(compiled_request_json(root, &running.run.id), frozen_request);
+
+    let rerun = WorkflowRuntime::advance_run(root, &running.run.id).unwrap();
+    assert_eq!(rerun.run.status, "running");
+    let submitted_attempt: i64 = {
+        let conn = open_db(root);
+        conn.query_row(
+            "SELECT e.attempt_number FROM provider_jobs pj
+             JOIN workflow_step_executions e ON e.id = pj.execution_id
+             WHERE e.workflow_run_id = ?1 AND pj.status != 'failed'
+             ORDER BY e.attempt_number DESC LIMIT 1",
+            [&running.run.id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        submitted_attempt, 2,
+        "retry must submit the pre-created attempt 2"
+    );
+
+    let mut completed_seen = false;
+    for _ in 0..6 {
+        let tick = background::run_pending_jobs(root).unwrap();
+        if tick.completed > 0 {
+            completed_seen = true;
+            break;
+        }
+    }
+    assert!(completed_seen);
+    let compiled: serde_json::Value = serde_json::from_str(&frozen_request).unwrap();
+    assert_eq!(compiled["references"][0]["reference"], source_version_id);
+}
+
+#[test]
+fn shot_i2v_cancellation_is_truthful_and_terminal_safe() {
+    let _guard = background_test_guard();
+    background::reset_provider_cache_for_tests();
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    pin_shot_keyframe(root, &scene.id, &shot.id);
+    let running = start_shot_i2v_run(
+        root,
+        &scene.id,
+        &shot.id,
+        "fake_async_video",
+        "fake-video-v1",
+    );
+
+    let cancelled = cancel_workflow_execution(
+        root.to_string_lossy().into(),
+        running.run.id.clone(),
+        "execute".into(),
+    )
+    .unwrap();
+    assert_eq!(cancelled.run.status, "cancelled");
+    let tick = background::run_pending_jobs(root).unwrap();
+    assert_eq!(tick.cancelled, 1);
+
+    let (attempt_status, job_status, audit_payload, result_sets): (String, String, String, i64) = {
+        let conn = open_db(root);
+        let (attempt_status, job_status) = conn
+            .query_row(
+                "SELECT e.status, pj.status FROM workflow_step_executions e
+                 JOIN provider_jobs pj ON pj.execution_id = e.id
+                 WHERE e.workflow_run_id = ?1",
+                [&running.run.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let audit_payload = conn
+            .query_row(
+                "SELECT payload_json FROM provider_audit_events
+                 WHERE workflow_run_id = ?1 AND event_type = 'provider.execution.cancelled'
+                 ORDER BY created_at DESC LIMIT 1",
+                [&running.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let result_sets = conn
+            .query_row(
+                "SELECT COUNT(*) FROM generation_result_sets WHERE workflow_run_id = ?1",
+                [&running.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (attempt_status, job_status, audit_payload, result_sets)
+    };
+    assert_eq!(attempt_status, "cancelled");
+    assert_eq!(job_status, "cancelled");
+    let audit_payload: serde_json::Value = serde_json::from_str(&audit_payload).unwrap();
+    assert_eq!(audit_payload["supportsCancel"], false);
+    assert_eq!(audit_payload["remoteCancelled"], false);
+    assert_eq!(result_sets, 0, "cancelled I2V must capture no result set");
+    let shots = CinemaService::list_shots(root, &scene.id).unwrap();
+    assert_eq!(shots[0].generated_video_asset_version_id, None);
+    let idle = background::run_pending_jobs(root).unwrap();
+    assert_eq!(idle.completed + idle.failed + idle.cancelled, 0);
+}
+
+#[test]
+fn shot_i2v_unsupported_selection_has_zero_execution_side_effects() {
+    let _guard = background_test_guard();
+    let fixture = support::compilable_scene();
+    let root = &fixture.root;
+    let scene = &fixture.scene;
+    let shot = &fixture.shots[0];
+    pin_shot_keyframe(root, &scene.id, &shot.id);
+    let created = WorkflowRuntime::create_run(
+        root,
+        "scene-builder",
+        "1.0.0",
+        "shot.image_to_video",
+        serde_json::json!({
+            "sceneId": scene.id,
+            "shotId": shot.id,
+            "providerId": "mock",
+            "modelId": "mock-image-v1",
+            "prompt": "This provider must be rejected before execution starts",
+        }),
+    )
+    .unwrap();
+    WorkflowRuntime::advance_run(root, &created.run.id).unwrap();
+    WorkflowRuntime::approve_run_step(root, &created.run.id, "approve-request", None).unwrap();
+
+    let error = WorkflowRuntime::advance_run(root, &created.run.id).unwrap_err();
+    assert!(matches!(
+        error,
+        cinematic_desktop_lib::error::AppError::ImageToVideoUnsupported
+    ));
+    let (attempts, jobs, run_status, step_status): (i64, i64, String, String) = {
+        let conn = open_db(root);
+        let attempts = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workflow_step_executions WHERE workflow_run_id = ?1",
+                [&created.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let jobs = conn
+            .query_row(
+                "SELECT COUNT(*) FROM provider_jobs pj
+                 JOIN workflow_step_executions e ON e.id = pj.execution_id
+                 WHERE e.workflow_run_id = ?1",
+                [&created.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let run_status = conn
+            .query_row(
+                "SELECT status FROM workflow_runs WHERE id = ?1",
+                [&created.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let step_status = conn
+            .query_row(
+                "SELECT status FROM workflow_steps
+                 WHERE workflow_run_id = ?1 AND step_type = 'execute'",
+                [&created.run.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        (attempts, jobs, run_status, step_status)
+    };
+    assert_eq!(attempts, 0);
+    assert_eq!(jobs, 0);
+    assert_eq!(run_status, "failed");
+    assert_eq!(step_status, "pending");
 }

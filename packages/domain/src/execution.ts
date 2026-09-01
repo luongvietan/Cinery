@@ -5,10 +5,18 @@ import {
 } from "./skill";
 import { z } from "zod";
 
+export type ExecutionReferenceRole =
+  | "world"
+  | "character_look"
+  | "character_sheet"
+  | "prop"
+  | "source_image";
+
 export interface ExecutionReference {
   type: "asset_version" | "canon_snapshot";
   reference: string;
   description: string;
+  role?: ExecutionReferenceRole;
 }
 
 export const executionReferenceSchema = z
@@ -16,6 +24,25 @@ export const executionReferenceSchema = z
     type: z.enum(["asset_version", "canon_snapshot"]),
     reference: z.string().min(1),
     description: z.string().min(1),
+    role: z
+      .enum(["world", "character_look", "character_sheet", "prop", "source_image"])
+      .optional(),
+  })
+  .strict();
+
+export interface ExecutionGenerationParameters {
+  aspectRatio?: string;
+  durationSeconds?: number;
+  fps?: number;
+  seed?: number;
+}
+
+export const executionGenerationParametersSchema = z
+  .object({
+    aspectRatio: z.string().min(1).optional(),
+    durationSeconds: z.number().positive().optional(),
+    fps: z.number().int().positive().optional(),
+    seed: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -54,8 +81,11 @@ export interface ExecutionRequest {
     | "character_outfit"
     | "character_sheet"
     | "world_plate"
-    | "shot_keyframe";
-  mediaType: "image";
+    | "shot_keyframe"
+    | "scene_video"
+    | "shot_image_to_video"
+    | "visual_repair";
+  mediaType: "image" | "video";
   prompt: string;
   references: ExecutionReference[];
   constraints: ExecutionConstraint[];
@@ -66,6 +96,7 @@ export interface ExecutionRequest {
     skillVersion: string;
     operationId: string;
   };
+  generationParameters?: ExecutionGenerationParameters;
 }
 
 export const executionRequestSchema = z
@@ -77,12 +108,16 @@ export const executionRequestSchema = z
       "character_sheet",
       "world_plate",
       "shot_keyframe",
+      "scene_video",
+      "shot_image_to_video",
+      "visual_repair",
     ]),
-    mediaType: z.literal("image"),
+    mediaType: z.enum(["image", "video"]),
     prompt: z.string(),
     references: z.array(executionReferenceSchema),
     constraints: z.array(executionConstraintSchema),
     expectedOutput: expectedOutputDefinitionSchema,
+    generationParameters: executionGenerationParametersSchema.optional(),
     provenance: z
       .object({
         workflowRunId: z.string().min(1),

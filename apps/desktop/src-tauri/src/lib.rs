@@ -89,6 +89,8 @@ pub fn run() {
             cinema::commands::reorder_shots,
             cinema::commands::set_shot_keyframe,
             cinema::commands::set_shot_video,
+            cinema::commands::get_shot_image_to_video_source,
+            cinema::commands::promote_shot_video_candidate,
             cinema::commands::get_scene_readiness,
             cinema::commands::list_shots,
             cinema::commands::compile_cinema,

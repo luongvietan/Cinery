@@ -1,8 +1,8 @@
 use super::credential_store::KeyringCredentialStore;
+use super::http::UreqExecutor;
 use super::model::{CustomProviderDefinition, ProviderCapabilities};
 use super::registry::ProviderRegistry;
 use super::repository::ProviderConfigRecord;
-use super::http::UreqExecutor;
 use super::service::{ProviderConfigurationStatus, ProviderConnectionTestResult, ProviderService};
 use crate::db;
 use crate::error::{AppCommandError, AppError};
@@ -130,7 +130,7 @@ pub fn get_provider_capabilities(
     }
     let provider = ProviderRegistry::builtin()
         .get(&provider_id)
-        .map_err(|error| crate::error::AppError::ProviderExecution(error.message))?;
+        .map_err(|error| crate::error::AppError::ProviderExecution(error.message.clone()))?;
     Ok(provider.capabilities())
 }
 
@@ -202,7 +202,7 @@ pub fn validate_provider_configuration(
     if provider_id == "mock" || provider_id == "dry_run" {
         ProviderRegistry::builtin()
             .get(&provider_id)
-            .map_err(|error| AppError::ProviderExecution(error.message))?;
+            .map_err(|error| AppError::ProviderExecution(error.message.clone()))?;
         return Ok(());
     }
     ProviderService::resolve_credential(&root, command_credential_store().as_ref(), &provider_id)
@@ -353,13 +353,19 @@ pub fn retry_workflow_execution(
     let retry_number = super::repository::next_attempt_number(&tx, &workflow_run_id, &step_id)?;
     super::repository::create_attempt(
         &tx,
-        &workflow_run_id,
-        &step_id,
-        retry_number,
-        &previous.compiled_request_id,
-        &previous.provider_id,
-        &previous.model_id,
-        &ProviderService::idempotency_key(&workflow_run_id, &step_id, retry_number),
+        super::repository::NewExecutionAttempt {
+            workflow_run_id: &workflow_run_id,
+            step_definition_id: &step_id,
+            attempt_number: retry_number,
+            compiled_request_id: &previous.compiled_request_id,
+            provider_id: &previous.provider_id,
+            model_id: &previous.model_id,
+            idempotency_key: &ProviderService::idempotency_key(
+                &workflow_run_id,
+                &step_id,
+                retry_number,
+            ),
+        },
     )?;
     tx.execute(
         "UPDATE workflow_runs SET status = 'ready_for_execution', failure_code = NULL,

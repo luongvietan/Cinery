@@ -367,6 +367,30 @@ export class StatefulTauriFacade {
       }
       throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
     });
+
+    // Conflict-safe shot video promotion (P10.2): pins the exact candidate
+    // version when the expected pin matches; replays are no-ops.
+    this.handlers.set("promote_shot_video_candidate", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) {
+          const expected = (args.expectedCurrentVideoAssetVersionId as string | null) ?? null;
+          if (shot.generatedVideoAssetVersionId !== expected) {
+            throw { code: "PROMOTION_CONFLICT", message: "the Shot video changed before promotion completed" };
+          }
+          const assetVersionId = `video-version-${args.artifactId}`;
+          const previous = shot.generatedVideoAssetVersionId;
+          shot.generatedVideoAssetVersionId = assetVersionId;
+          return {
+            shotId: shot.id,
+            artifactId: args.artifactId,
+            assetVersionId,
+            previousAssetVersionId: previous,
+          };
+        }
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
   }
 
   invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {

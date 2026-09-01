@@ -13,7 +13,6 @@ use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::providers::credential_store::{
     credential_account, credential_reference, CredentialStore, MemoryCredentialStore,
 };
-use cinematic_desktop_lib::providers::repository::ProviderConfigRecord;
 use cinematic_desktop_lib::providers::service::{ProviderService, ResolvedProviderCredential};
 use rusqlite::params;
 use serde_json::json;

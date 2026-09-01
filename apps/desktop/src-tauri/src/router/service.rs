@@ -1,9 +1,11 @@
 use crate::db;
 use crate::error::AppError;
-use crate::providers::credential_store::{credential_account, CredentialStore, KeyringCredentialStore};
-use crate::providers::http::{HttpBody, HttpExecutor, HttpRequest, UreqExecutor};
 use crate::project::repository::read_project;
-use crate::router::model::{RoutedOperation, RouteProductionIntentResult};
+use crate::providers::credential_store::{
+    credential_account, CredentialStore, KeyringCredentialStore,
+};
+use crate::providers::http::{HttpBody, HttpExecutor, HttpRequest, UreqExecutor};
+use crate::router::model::{RouteProductionIntentResult, RoutedOperation};
 use crate::skills::model::{AssetType, Prerequisite, SkillOperation};
 use crate::skills::registry::SkillRegistry;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -103,13 +105,8 @@ fn suggest_operation_via_llm(project_root: &Path, text: &str) -> Result<Option<S
         definition.base_url.trim_end_matches('/')
     );
     let transport = UreqExecutor::new(CLASSIFIER_TIMEOUT);
-    classify_with_transport(
-        &transport,
-        &endpoint,
-        &token,
-        text,
-    )
-    .map_err(|_| AppError::ProviderExecution("the routing classifier request failed".into()))
+    classify_with_transport(&transport, &endpoint, &token, text)
+        .map_err(|_| AppError::ProviderExecution("the routing classifier request failed".into()))
 }
 
 /// The classifier core, transport-injected for deterministic tests. The
@@ -125,7 +122,12 @@ fn classify_with_transport(
     let operation_ids: Vec<String> = registry
         .list()
         .iter()
-        .flat_map(|skill| skill.operations.iter().map(|operation| operation.id.clone()))
+        .flat_map(|skill| {
+            skill
+                .operations
+                .iter()
+                .map(|operation| operation.id.clone())
+        })
         .collect();
     let body = serde_json::json!({
         "model": "gpt-4o-mini",
@@ -148,13 +150,11 @@ fn classify_with_transport(
         body: HttpBody::Json(body),
         max_response_bytes: 10 * 1024 * 1024,
     };
-    let response = transport
-        .execute(request)
-        .map_err(|diagnostic| {
-            AppError::ProviderExecution(super::super::providers::error::redact_secret(&format!(
-                "the routing classifier request failed: {diagnostic}"
-            )))
-        })?;
+    let response = transport.execute(request).map_err(|diagnostic| {
+        AppError::ProviderExecution(super::super::providers::error::redact_secret(&format!(
+            "the routing classifier request failed: {diagnostic}"
+        )))
+    })?;
     if !response.is_success() {
         return Ok(None);
     }
@@ -176,14 +176,14 @@ fn first_llm_provider(
 ) -> Result<Option<crate::providers::model::CustomProviderDefinition>, AppError> {
     let conn = db::open_existing_connection(&project_root.join("project.db"))?;
     let definitions = crate::providers::repository::list_custom_providers(&conn)?;
-    Ok(definitions
-        .into_iter()
-        .find(|definition| definition.purpose == crate::providers::model::CustomProviderPurpose::Llm))
+    Ok(definitions.into_iter().find(|definition| {
+        definition.purpose == crate::providers::model::CustomProviderPurpose::Llm
+    }))
 }
 
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "this", "that", "these", "those", "in", "on", "at", "for", "to", "of",
-    "and", "or", "is", "are", "be", "with", "new", "only", "failed", "run",
+    "a", "an", "the", "this", "that", "these", "those", "in", "on", "at", "for", "to", "of", "and",
+    "or", "is", "are", "be", "with", "new", "only", "failed", "run",
 ];
 
 fn intent_score(text: &str, operation: &SkillOperation) -> i32 {
@@ -274,7 +274,10 @@ fn evaluate_feasibility(
 fn describe_prerequisite(prerequisite: &Prerequisite) -> String {
     match prerequisite {
         Prerequisite::CanonEntityExists { entity_type, .. } => {
-            format!("Create at least one {} entity in Canon", entity_type.as_str())
+            format!(
+                "Create at least one {} entity in Canon",
+                entity_type.as_str()
+            )
         }
         Prerequisite::CanonSectionLocked { .. } => "Lock the relevant Canon section".to_string(),
         Prerequisite::CanonicalAssetExists { asset_type, .. } => match asset_type {
@@ -324,12 +327,10 @@ mod tests {
         assert_eq!(suggestion.operation_id, "character.create_outfit");
         // No canonical face in this fresh project -> blocked.
         assert!(!suggestion.prerequisite_passed);
-        assert!(
-            suggestion
-                .prerequisite_blockers
-                .iter()
-                .any(|blocker| blocker.contains("canonical face lock"))
-        );
+        assert!(suggestion
+            .prerequisite_blockers
+            .iter()
+            .any(|blocker| blocker.contains("canonical face lock")));
     }
 
     #[test]

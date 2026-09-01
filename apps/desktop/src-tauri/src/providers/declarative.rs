@@ -3,17 +3,17 @@
 
 use super::adapter::{GenerationProvider, PollingSpec};
 use super::config::{
-    self, AsyncJobConfig, AuthConfig, AuthMode, CanonicalValues, EndpointConfig,
-    ProviderRuntimeConfig, ReferenceInput, RequestType, ResponseMapping, UrlContext,
-    OPERATION_IMAGE_EDIT, OPERATION_IMAGE_GENERATE, OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE,
+    self, AsyncJobConfig, AuthMode, CanonicalValues, EndpointConfig, ProviderRuntimeConfig,
+    ReferenceInput, RequestType, ResponseMapping, UrlContext, OPERATION_IMAGE_EDIT,
+    OPERATION_IMAGE_GENERATE, OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE,
     OPERATION_VIDEO_IMAGE_TO_VIDEO,
 };
 use super::error::{redact_secret, ProviderError, ProviderErrorKind};
 use super::http::{HttpBody, HttpExecutor, HttpRequest, HttpResponse, MultipartPart};
 use super::model::{
-    CustomProviderModel, ProviderCancellationResult, ProviderCapabilities, ProviderExecutionRequest,
-    ProviderJobRef, ProviderJobStatus, ProviderLifecycle, ProviderOutput, ProviderResult,
-    ProviderSubmission,
+    CustomProviderModel, ProviderCancellationResult, ProviderCapabilities,
+    ProviderExecutionRequest, ProviderJobRef, ProviderJobStatus, ProviderLifecycle, ProviderOutput,
+    ProviderResult, ProviderSubmission,
 };
 use chrono::Utc;
 use std::collections::BTreeMap;
@@ -104,17 +104,9 @@ impl DeclarativeProvider {
         if self.config.operations.contains_key(operation) {
             return Ok(operation.to_string());
         }
-        // A video edit without imageToVideo falls back to plain generation.
-        if operation == OPERATION_VIDEO_IMAGE_TO_VIDEO
-            && self.config.operations.contains_key(OPERATION_VIDEO_GENERATE)
-        {
-            return Ok(OPERATION_VIDEO_GENERATE.to_string());
-        }
         Err(self.error(
             ProviderErrorKind::UnsupportedCapability,
-            format!(
-                "this AI service does not define the required operation ({operation})"
-            ),
+            format!("this AI service does not define the required operation ({operation})"),
             "operation lookup",
         ))
     }
@@ -154,10 +146,7 @@ impl DeclarativeProvider {
         }
     }
 
-    fn reference_inputs(
-        &self,
-        request: &ProviderExecutionRequest,
-    ) -> Vec<ReferenceInput> {
+    fn reference_inputs(&self, request: &ProviderExecutionRequest) -> Vec<ReferenceInput> {
         request
             .reference_attachments
             .iter()
@@ -186,12 +175,13 @@ impl DeclarativeProvider {
             AuthMode::Header => {
                 let name = auth.credential_name.as_deref().unwrap_or_default();
                 if name.is_empty() {
-                    return Err(self.error(
-                        ProviderErrorKind::InvalidRequest,
-                        "header authentication is missing its credential name",
-                        "auth config",
-                    )
-                    .with_operation(operation));
+                    return Err(self
+                        .error(
+                            ProviderErrorKind::InvalidRequest,
+                            "header authentication is missing its credential name",
+                            "auth config",
+                        )
+                        .with_operation(operation));
                 }
                 let key = self.require_api_key(operation)?;
                 headers.push((name.to_string(), key));
@@ -199,12 +189,13 @@ impl DeclarativeProvider {
             AuthMode::Query => {
                 let name = auth.credential_name.as_deref().unwrap_or_default();
                 if name.is_empty() {
-                    return Err(self.error(
-                        ProviderErrorKind::InvalidRequest,
-                        "query authentication is missing its credential name",
-                        "auth config",
-                    )
-                    .with_operation(operation));
+                    return Err(self
+                        .error(
+                            ProviderErrorKind::InvalidRequest,
+                            "query authentication is missing its credential name",
+                            "auth config",
+                        )
+                        .with_operation(operation));
                 }
                 let key = self.require_api_key(operation)?;
                 url = config::with_query_parameter(&url, name, &key);
@@ -254,7 +245,7 @@ impl DeclarativeProvider {
         path_template: &str,
         body: HttpBody,
         values: &CanonicalValues,
-        references: &[ReferenceInput],
+        _references: &[ReferenceInput],
         job_id: Option<&str>,
         extra_headers: Vec<(String, String)>,
     ) -> Result<HttpRequest, ProviderError> {
@@ -321,15 +312,16 @@ impl DeclarativeProvider {
                     )
                     .with_operation(operation)
                 })?;
-                let bytes = config::compile_form_urlencoded(template, values, references)
-                    .map_err(|message| {
+                let bytes = config::compile_form_urlencoded(template, values, references).map_err(
+                    |message| {
                         self.error(
                             ProviderErrorKind::InvalidRequest,
                             message,
                             "request compile",
                         )
                         .with_operation(operation)
-                    })?;
+                    },
+                )?;
                 Ok(HttpBody::Raw {
                     bytes,
                     content_type: "application/x-www-form-urlencoded".into(),
@@ -454,9 +446,7 @@ impl DeclarativeProvider {
             ProviderErrorKind::AuthorizationError => {
                 "the credential is not authorized for this AI service".to_string()
             }
-            ProviderErrorKind::RateLimited => {
-                "the AI service rate-limited the request".to_string()
-            }
+            ProviderErrorKind::RateLimited => "the AI service rate-limited the request".to_string(),
             ProviderErrorKind::ProviderUnavailable => {
                 "the AI service reported a server-side failure".to_string()
             }
@@ -672,15 +662,15 @@ impl DeclarativeProvider {
             )
             .with_operation(operation)
         })?;
-        let (outputs, _request_id) =
-            self.extract_outputs(operation, &mapping, &document)?;
+        let (outputs, _request_id) = self.extract_outputs(operation, &mapping, &document)?;
         if outputs.is_empty() {
-            return Err(self.error(
-                ProviderErrorKind::MalformedProviderResponse,
-                "the AI service returned no outputs for the completed job",
-                redact_secret(&document.to_string()),
-            )
-            .with_operation(operation));
+            return Err(self
+                .error(
+                    ProviderErrorKind::MalformedProviderResponse,
+                    "the AI service returned no outputs for the completed job",
+                    redact_secret(&document.to_string()),
+                )
+                .with_operation(operation));
         }
         Ok(ProviderResult {
             outputs,
@@ -693,7 +683,10 @@ impl DeclarativeProvider {
 
     /// Validation used by "Test connection": runs the configured validate
     /// operation (if any) and returns the outcome without exposing secrets.
-    pub fn run_validation(&self, model_id: Option<&str>) -> Result<ValidationOutcome, ProviderError> {
+    pub fn run_validation(
+        &self,
+        model_id: Option<&str>,
+    ) -> Result<ValidationOutcome, ProviderError> {
         let Some(endpoint) = self.config.operations.get(OPERATION_VALIDATE) else {
             return Ok(ValidationOutcome {
                 performed_network_check: false,
@@ -724,6 +717,7 @@ impl DeclarativeProvider {
             status_code: Some(response.status),
             provider_message: error
                 .provider_message
+                .clone()
                 .or_else(|| Some(redact_secret(&response.text()).chars().take(300).collect())),
         })
     }
@@ -774,7 +768,9 @@ impl GenerationProvider for DeclarativeProvider {
         {
             media_types.push(super::model::ProviderMediaType::Image);
         }
-        if operations.contains_key(OPERATION_VIDEO_GENERATE) {
+        if operations.contains_key(OPERATION_VIDEO_GENERATE)
+            || operations.contains_key(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
             media_types.push(super::model::ProviderMediaType::Video);
         }
         let all_endpoints: Vec<&EndpointConfig> = operations.values().collect();
@@ -809,16 +805,17 @@ impl GenerationProvider for DeclarativeProvider {
         &self,
         request: &ProviderExecutionRequest,
     ) -> Result<ProviderSubmission, ProviderError> {
-        self.capabilities()
-            .supports(request)
-            .map_err(|reason| {
-                self.error(
-                    ProviderErrorKind::UnsupportedCapability,
-                    reason,
-                    "capability check",
-                )
-            })?;
+        self.capabilities().supports(request).map_err(|reason| {
+            self.error(
+                ProviderErrorKind::UnsupportedCapability,
+                reason,
+                "capability check",
+            )
+        })?;
         let operation = self.select_operation(request)?;
+        if operation == OPERATION_VIDEO_IMAGE_TO_VIDEO {
+            self.model_supports(&request.selected_model, OPERATION_VIDEO_IMAGE_TO_VIDEO)?;
+        }
         self.model_supports(&request.selected_model, &operation)?;
         let values = self.canonical_values(request);
         let references = self.reference_inputs(request);
@@ -845,24 +842,23 @@ impl GenerationProvider for DeclarativeProvider {
                     )
                     .with_operation(&operation)
                 })?;
-                let job_id =
-                    config::resolve_json_path(&document, &job_config.job_id_path)
-                        .and_then(|value| {
-                            value
-                                .as_str()
-                                .map(str::to_string)
-                                .or_else(|| value.as_str().is_none().then(|| value.to_string()))
-                        })
-                        .map(|value| value.trim_matches('"').to_string())
-                        .filter(|value| !value.trim().is_empty())
-                        .ok_or_else(|| {
-                            self.error(
-                                ProviderErrorKind::MalformedProviderResponse,
-                                "the AI service response did not contain a job id",
-                                redact_secret(&document.to_string()),
-                            )
-                            .with_operation(&operation)
-                        })?;
+                let job_id = config::resolve_json_path(&document, &job_config.job_id_path)
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_string)
+                            .or_else(|| value.as_str().is_none().then(|| value.to_string()))
+                    })
+                    .map(|value| value.trim_matches('"').to_string())
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        self.error(
+                            ProviderErrorKind::MalformedProviderResponse,
+                            "the AI service response did not contain a job id",
+                            redact_secret(&document.to_string()),
+                        )
+                        .with_operation(&operation)
+                    })?;
                 self.job_operations
                     .lock()
                     .unwrap()
@@ -927,12 +923,13 @@ impl GenerationProvider for DeclarativeProvider {
                 let (outputs, _request_id) =
                     self.extract_outputs(&operation, &endpoint.response, &document)?;
                 if outputs.is_empty() {
-                    return Err(self.error(
-                        ProviderErrorKind::MalformedProviderResponse,
-                        "the AI service returned no outputs",
-                        redact_secret(&document.to_string()),
-                    )
-                    .with_operation(&operation));
+                    return Err(self
+                        .error(
+                            ProviderErrorKind::MalformedProviderResponse,
+                            "the AI service returned no outputs",
+                            redact_secret(&document.to_string()),
+                        )
+                        .with_operation(&operation));
                 }
                 let job_id = self.sync_job_id(request);
                 self.results.lock().unwrap().insert(
@@ -963,16 +960,13 @@ impl GenerationProvider for DeclarativeProvider {
         // The operation comes from the durable job ref first (a rehydrated
         // adapter has no in-memory job→operation map), then from the map
         // populated by this instance's own submissions.
-        let operation = job
-            .operation
-            .clone()
-            .or_else(|| {
-                self.job_operations
-                    .lock()
-                    .unwrap()
-                    .get(&job.provider_job_id)
-                    .cloned()
-            });
+        let operation = job.operation.clone().or_else(|| {
+            self.job_operations
+                .lock()
+                .unwrap()
+                .get(&job.provider_job_id)
+                .cloned()
+        });
         if let Some(operation) = &operation {
             let endpoint = self.config.operations.get(operation).ok_or_else(|| {
                 self.error(
@@ -1015,16 +1009,13 @@ impl GenerationProvider for DeclarativeProvider {
 
     fn fetch_result(&self, job: &ProviderJobRef) -> Result<ProviderResult, ProviderError> {
         // Same durable-first operation resolution as `poll`.
-        let operation = job
-            .operation
-            .clone()
-            .or_else(|| {
-                self.job_operations
-                    .lock()
-                    .unwrap()
-                    .get(&job.provider_job_id)
-                    .cloned()
-            });
+        let operation = job.operation.clone().or_else(|| {
+            self.job_operations
+                .lock()
+                .unwrap()
+                .get(&job.provider_job_id)
+                .cloned()
+        });
         if let Some(operation) = &operation {
             let endpoint = self.config.operations.get(operation).ok_or_else(|| {
                 self.error(
@@ -1060,6 +1051,7 @@ impl GenerationProvider for DeclarativeProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::config::AuthConfig;
     use crate::providers::http::{HttpResponse, TransportFailure};
     use crate::workflow::execution::{ExecutionMediaType, ExecutionTask};
     use std::sync::Mutex;
@@ -1274,7 +1266,6 @@ mod tests {
 
     use crate::providers::cancellation;
     use crate::providers::model::ProviderReferenceAttachment;
-    use std::time::Duration;
 
     fn cloudflare_config() -> ProviderRuntimeConfig {
         let mut operations = BTreeMap::new();
@@ -1358,13 +1349,21 @@ mod tests {
                 .into(),
         }]);
         let provider = provider_with(openai_style_config(), transport.clone());
-        let submission = provider.submit(&provider_request(ExecutionMediaType::Image, "test-model")).unwrap();
+        let submission = provider
+            .submit(&provider_request(ExecutionMediaType::Image, "test-model"))
+            .unwrap();
         assert_eq!(submission.lifecycle, ProviderLifecycle::Submitted);
         let result = provider.fetch_result(&submission.job).unwrap();
         assert_eq!(result.outputs[0].uri, "https://files.example/out.png");
         let request = transport.last_request();
-        assert_eq!(request.url, "https://api.example.test/v1/images/generations");
-        assert_eq!(request.header("Authorization"), Some("Bearer sk-test-secret"));
+        assert_eq!(
+            request.url,
+            "https://api.example.test/v1/images/generations"
+        );
+        assert_eq!(
+            request.header("Authorization"),
+            Some("Bearer sk-test-secret")
+        );
         assert_eq!(request.json_body().unwrap()["model"], "test-model");
         assert_eq!(request.json_body().unwrap()["prompt"], "neutral face plate");
     }
@@ -1471,7 +1470,11 @@ mod tests {
             .submit(&provider_request(ExecutionMediaType::Image, "test-model"))
             .unwrap();
         let request = transport.last_request();
-        assert!(request.url.contains("key=sk-test-secret"), "{}", request.url);
+        assert!(
+            request.url.contains("key=sk-test-secret"),
+            "{}",
+            request.url
+        );
         assert!(request.header("Authorization").is_none());
     }
 
@@ -1730,7 +1733,10 @@ mod tests {
         }
     }
 
-    fn async_video_provider(config: ProviderRuntimeConfig, transport: FakeTransport) -> DeclarativeProvider {
+    fn async_video_provider(
+        config: ProviderRuntimeConfig,
+        transport: FakeTransport,
+    ) -> DeclarativeProvider {
         DeclarativeProvider::new(
             "async-video",
             "https://video.example.test/api",
@@ -1752,6 +1758,79 @@ mod tests {
         request
     }
 
+    fn image_to_video_only_config(interval_ms: u64, timeout_ms: u64) -> ProviderRuntimeConfig {
+        let mut config = async_video_config(interval_ms, timeout_ms);
+        let mut endpoint = config
+            .operations
+            .remove(OPERATION_VIDEO_GENERATE)
+            .expect("fixture starts with video.generate");
+        endpoint.request_mapping = Some(serde_json::json!({
+            "prompt": "{{prompt}}",
+            "image": "{{image}}"
+        }));
+        config
+            .operations
+            .insert(OPERATION_VIDEO_IMAGE_TO_VIDEO.into(), endpoint);
+        config
+    }
+
+    fn shot_image_to_video_request() -> crate::providers::model::ProviderExecutionRequest {
+        let mut request = video_request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "source-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+        request.reference_attachments = vec![png_attachment()];
+        request
+    }
+
+    #[test]
+    fn video_generate_only_adapter_rejects_shot_image_to_video_without_submission() {
+        let transport = FakeTransport::with_responses(vec![]);
+        let provider = async_video_provider(async_video_config(1, 10_000), transport.clone());
+        let mut request = video_request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "source-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+
+        let error = provider.submit(&request).unwrap_err();
+
+        assert_eq!(error.kind, ProviderErrorKind::UnsupportedCapability);
+        assert!(error.message.contains("image-to-video"));
+        assert!(transport.requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn image_to_video_only_adapter_submits_a_shot_source_image() {
+        let transport = FakeTransport::with_responses(vec![FakeResponse {
+            url_contains: "/submit".into(),
+            status: 200,
+            body: r#"{"result":{"task_id":"i2v-task-1"}}"#.into(),
+        }]);
+        let provider =
+            async_video_provider(image_to_video_only_config(1, 10_000), transport.clone());
+
+        let submission = provider.submit(&shot_image_to_video_request()).unwrap();
+
+        assert_eq!(submission.job.provider_job_id, "i2v-task-1");
+        assert_eq!(
+            submission.job.operation.as_deref(),
+            Some(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        );
+        let body = transport.last_request().json_body().unwrap();
+        assert!(body["image"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+    }
+
     #[test]
     fn async_job_submits_polls_and_completes_with_video_url() {
         let transport = FakeTransport::with_responses(vec![
@@ -1768,12 +1847,16 @@ mod tests {
             FakeResponse {
                 url_contains: "/tasks/task-7".into(),
                 status: 200,
-                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/v.mp4"}}"#.into(),
+                body:
+                    r#"{"result":{"status":"completed","video_url":"https://cdn.example/v.mp4"}}"#
+                        .into(),
             },
             FakeResponse {
                 url_contains: "/tasks/task-7".into(),
                 status: 200,
-                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/v.mp4"}}"#.into(),
+                body:
+                    r#"{"result":{"status":"completed","video_url":"https://cdn.example/v.mp4"}}"#
+                        .into(),
             },
         ]);
         let provider = async_video_provider(async_video_config(1, 10_000), transport.clone());
@@ -1807,14 +1890,18 @@ mod tests {
             FakeResponse {
                 url_contains: "/tasks/task-8".into(),
                 status: 200,
-                body: r#"{"result":{"status":"failed","message":"content policy violation"}}"#.into(),
+                body: r#"{"result":{"status":"failed","message":"content policy violation"}}"#
+                    .into(),
             },
         ]);
         let provider = async_video_provider(async_video_config(1, 10_000), transport);
         let submission = provider.submit(&video_request()).unwrap();
         let status = provider.poll(&submission.job).unwrap();
         assert_eq!(status.lifecycle, ProviderLifecycle::Failed);
-        assert_eq!(status.diagnostic.as_deref(), Some("content policy violation"));
+        assert_eq!(
+            status.diagnostic.as_deref(),
+            Some("content policy violation")
+        );
     }
 
     /// P10.1 regression: the background runner rehydrates a *fresh*
@@ -1838,12 +1925,16 @@ mod tests {
             FakeResponse {
                 url_contains: "/tasks/task-rehydrated".into(),
                 status: 200,
-                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#.into(),
+                body:
+                    r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#
+                        .into(),
             },
             FakeResponse {
                 url_contains: "/tasks/task-rehydrated".into(),
                 status: 200,
-                body: r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#.into(),
+                body:
+                    r#"{"result":{"status":"completed","video_url":"https://cdn.example/r.mp4"}}"#
+                        .into(),
             },
         ]);
         let submitting = async_video_provider(async_video_config(1, 10_000), transport.clone());
@@ -1899,7 +1990,9 @@ mod tests {
             body: r#"{"data_url":"data:image/png;base64,aGVsbG8="}"#.into(),
         }]);
         let provider = async_video_provider(config, transport);
-        let submission = provider.submit(&provider_request(ExecutionMediaType::Image, "vid-1")).unwrap();
+        let submission = provider
+            .submit(&provider_request(ExecutionMediaType::Image, "vid-1"))
+            .unwrap();
         assert_eq!(submission.job.operation, None);
         // First poll sees the in-memory result → Succeeded (sync semantics).
         let status = provider.poll(&submission.job).unwrap();
@@ -1948,8 +2041,8 @@ mod tests {
             provider: Arc::new(provider),
             submission: submission.clone(),
         };
-        let error = crate::providers::service::ProviderService::finish_submission(&handle)
-            .unwrap_err();
+        let error =
+            crate::providers::service::ProviderService::finish_submission(&handle).unwrap_err();
         assert!(error.to_string().contains("did not finish within"));
     }
 
@@ -1970,15 +2063,18 @@ mod tests {
         let provider = async_video_provider(async_video_config(1, 30_000), transport);
         let submission = provider.submit(&video_request()).unwrap();
         cancellation::register("async-video", &submission.job.provider_job_id);
-        assert!(cancellation::signal("async-video", &submission.job.provider_job_id));
+        assert!(cancellation::signal(
+            "async-video",
+            &submission.job.provider_job_id
+        ));
         let handle = crate::providers::service::ProviderSubmissionHandle {
             provider_id: "async-video".into(),
             adapter_version: provider.adapter_version(),
             provider: Arc::new(provider),
             submission: submission.clone(),
         };
-        let error = crate::providers::service::ProviderService::finish_submission(&handle)
-            .unwrap_err();
+        let error =
+            crate::providers::service::ProviderService::finish_submission(&handle).unwrap_err();
         assert!(error.to_string().contains("cancelled"));
         cancellation::unregister("async-video", &submission.job.provider_job_id);
     }
@@ -1999,7 +2095,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
         assert_eq!(error.status_code, Some(400));
-        assert_eq!(error.provider_message.as_deref(), Some("prompt is required"));
+        assert_eq!(
+            error.provider_message.as_deref(),
+            Some("prompt is required")
+        );
         assert_eq!(error.operation.as_deref(), Some(OPERATION_IMAGE_GENERATE));
         assert!(!error.display_text().contains("cf-token"));
     }
@@ -2107,7 +2206,10 @@ mod tests {
         assert!(error.message.contains("not supported"));
 
         // And one that declares only video operations rejects image edit.
-        let provider = async_video_provider(async_video_config(1, 10_000), FakeTransport::with_responses(vec![]));
+        let provider = async_video_provider(
+            async_video_config(1, 10_000),
+            FakeTransport::with_responses(vec![]),
+        );
         let error = provider
             .submit(&provider_request(ExecutionMediaType::Image, "vid-1"))
             .unwrap_err();
@@ -2156,16 +2258,20 @@ mod tests {
 
     #[test]
     fn capability_derivation_follows_operations() {
-        let capabilities = cloudflare_provider(FakeTransport::with_responses(vec![])).capabilities();
-        assert!(capabilities.media_types.contains(&super::super::model::ProviderMediaType::Image));
+        let capabilities =
+            cloudflare_provider(FakeTransport::with_responses(vec![])).capabilities();
+        assert!(capabilities
+            .media_types
+            .contains(&super::super::model::ProviderMediaType::Image));
         assert!(!capabilities.supports_image_edit);
         assert_eq!(
             capabilities.supported_models,
             vec!["@cf/black-forest-labs/flux-1-schnell".to_string()]
         );
 
-        let capabilities = provider_with(openai_style_config(), FakeTransport::with_responses(vec![]))
-            .capabilities();
+        let capabilities =
+            provider_with(openai_style_config(), FakeTransport::with_responses(vec![]))
+                .capabilities();
         assert!(capabilities.supports_image_edit);
         assert!(capabilities.supports_reference_image);
         assert!(capabilities.supports_multiple_reference_images);
@@ -2193,7 +2299,9 @@ mod tests {
         let outcome = provider.run_validation(None).unwrap();
         assert!(outcome.performed_network_check);
         let request = transport.last_request();
-        assert!(request.url.contains("/@cf/black-forest-labs/flux-1-schnell"));
+        assert!(request
+            .url
+            .contains("/@cf/black-forest-labs/flux-1-schnell"));
         let body = request.json_body().unwrap();
         assert_eq!(body["prompt"], "simple provider validation test");
         assert_eq!(body["steps"], 1);
@@ -2221,4 +2329,3 @@ mod tests {
         assert!(!text.contains("cf-token"));
     }
 }
-

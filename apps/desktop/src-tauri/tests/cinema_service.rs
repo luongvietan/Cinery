@@ -33,7 +33,7 @@ fn canonical_version(root: &Path, asset_type: &str, pixel: [u8; 4]) -> String {
     version.id
 }
 
-fn locked_character(root: &PathBuf, keys: &[&str]) -> String {
+fn locked_character(root: &Path, keys: &[&str]) -> String {
     let character =
         CanonService::create_entity(root, CanonEntityType::Character, "Mara Keene").unwrap();
     for key in keys {
@@ -116,7 +116,7 @@ fn create_shots_validate_and_auto_order() {
 fn compile_scene_requires_characters_and_shots() {
     let (_temp, root) = project("Red Door");
     let character = locked_character(&root, &["speech", "movement", "stillness"]);
-    let look = canonical_version(&root, "outfit", [10, 10, 10, 255]);
+    let _look = canonical_version(&root, "outfit", [10, 10, 10, 255]);
     let scene = SceneService::create_scene(&root, "Scene 001", "A test scene").unwrap();
 
     // Empty compilation input is rejected (duration validation runs first,
@@ -137,11 +137,10 @@ fn compile_scene_requires_characters_and_shots() {
     let look_asset =
         AssetService::create_asset(&root, "outfit", "Owned Look", Some(character.clone())).unwrap();
     let owned_source = test_image(&root, "owned-look.png", [11, 12, 13, 255]);
-    let owned = AssetService::import_asset_version(&root, &look_asset.id, &owned_source, None)
-        .unwrap();
+    let owned =
+        AssetService::import_asset_version(&root, &look_asset.id, &owned_source, None).unwrap();
     AssetService::promote_asset_version(&root, &owned.id).unwrap();
-    SceneService::add_scene_character(&root, &scene.id, &character, &owned.id, None, None)
-        .unwrap();
+    SceneService::add_scene_character(&root, &scene.id, &character, &owned.id, None, None).unwrap();
     CinemaService::create_shot(&root, &scene.id, None, 4.0, "Establish", None, None).unwrap();
 
     let compilation = CinemaService::compile_scene(

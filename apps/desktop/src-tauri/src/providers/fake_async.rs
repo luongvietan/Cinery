@@ -18,8 +18,8 @@ use std::sync::Mutex;
 /// Minimal MP4 framing: a 24-byte `ftyp` box. Capture only requires valid
 /// ISO-BMFF magic; these bytes are deterministic and tiny.
 const FAKE_MP4_BYTES: &[u8] = &[
-    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p', b'4', b'2', 0x00, 0x00, 0x00,
-    0x00, b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
+    0x00, 0x00, 0x00, 0x18, b'f', b't', b'y', b'p', b'm', b'p', b'4', b'2', 0x00, 0x00, 0x00, 0x00,
+    b'm', b'p', b'4', b'2', b'i', b's', b'o', b'm',
 ];
 
 pub const FAKE_ASYNC_VIDEO_PROVIDER_ID: &str = "fake_async_video";
@@ -58,10 +58,10 @@ impl GenerationProvider for FakeAsyncVideoProvider {
             media_types: vec![ProviderMediaType::Video],
             supports_seed: false,
             supports_negative_prompt: false,
-            supports_reference_image: false,
+            supports_reference_image: true,
             supports_image_edit: false,
             supports_multiple_reference_images: false,
-            supports_image_to_video: false,
+            supports_image_to_video: true,
             supports_cancel: false,
             supports_progress: true,
             supported_aspect_ratios: vec![],
@@ -132,7 +132,10 @@ impl GenerationProvider for FakeAsyncVideoProvider {
             outputs: vec![ProviderOutput {
                 uri: format!(
                     "data:video/mp4;base64,{}",
-                    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, FAKE_MP4_BYTES)
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        FAKE_MP4_BYTES
+                    )
                 ),
                 mime_type: "video/mp4".into(),
                 filename: Some("fake-video.mp4".into()),
@@ -189,5 +192,21 @@ mod tests {
         let result = provider.fetch_result(&submission.job).unwrap();
         assert_eq!(result.outputs.len(), 1);
         assert!(result.outputs[0].uri.starts_with("data:video/mp4;base64,"));
+    }
+
+    #[test]
+    fn deterministic_video_provider_accepts_shot_image_to_video_requests() {
+        let provider = FakeAsyncVideoProvider::default();
+        let mut request = request();
+        request.task = ExecutionTask::ShotImageToVideo;
+        request.references = vec![crate::workflow::execution::ExecutionReference {
+            reference_type: crate::workflow::execution::ExecutionReferenceType::AssetVersion,
+            reference: "keyframe-v1".into(),
+            description: "source keyframe".into(),
+            role: Some(crate::workflow::execution::ReferenceRole::SourceImage),
+        }];
+
+        assert!(provider.capabilities().supports_image_to_video);
+        assert!(provider.submit(&request).is_ok());
     }
 }

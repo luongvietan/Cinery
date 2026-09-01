@@ -1,15 +1,14 @@
 use super::adapter::GenerationProvider;
 use super::cancellation;
+use super::config::{OPERATION_VALIDATE, OPERATION_VIDEO_IMAGE_TO_VIDEO};
 use super::credential_store::{
     credential_account, credential_reference, header_credential_account,
     legacy_header_credential_account, CredentialStore, KeyringCredentialStore,
 };
-use super::config::OPERATION_VALIDATE;
 use super::declarative::DeclarativeProvider;
 use super::error::{ProviderError, ProviderErrorKind};
-use super::http::{HttpExecutor, HttpRequest, HttpResponse, UreqExecutor};
+use super::http::{HttpExecutor, UreqExecutor};
 use super::model::*;
-use super::model::CustomProviderPurpose;
 use super::presets::preset_by_id;
 use super::registry::ProviderRegistry;
 use crate::db;
@@ -75,6 +74,19 @@ pub struct ProviderSubmissionHandle {
     pub adapter_version: u32,
     pub provider: Arc<dyn GenerationProvider>,
     pub submission: ProviderSubmission,
+}
+
+/// Everything the provider submission path needs to route one compiled
+/// execution request to its adapter. Field order mirrors the previous
+/// positional arguments of `submit_provider_request`.
+pub struct ProviderSubmitRequest<'a> {
+    pub request: &'a ExecutionRequest,
+    pub project_root: Option<&'a Path>,
+    pub step_id: &'a str,
+    pub compiled_request_id: &'a str,
+    pub provider_id: &'a str,
+    pub model_id: &'a str,
+    pub attempt_number: i64,
 }
 
 pub struct ProviderService;
@@ -794,30 +806,14 @@ impl ProviderService {
     /// rehydrates the builtin OpenAI adapter after a restart. The secret is
     /// resolved from the project's keyring entry (or developer environment
     /// fallback) and never persisted.
-    pub fn resolve_openai_execution_token(
-        project_root: &Path,
-    ) -> Result<String, AppError> {
+    pub fn resolve_openai_execution_token(project_root: &Path) -> Result<String, AppError> {
         Self::resolve_openai_token(Some(project_root), None)
     }
 
     pub fn execute_compiled_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
+        submit: ProviderSubmitRequest<'_>,
     ) -> Result<ProviderExecutionOutcome, AppError> {
-        let handle = Self::submit_compiled_request(
-            request,
-            project_root,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )?;
+        let handle = Self::submit_compiled_request(submit)?;
         let (status, result) = Self::finish_submission(&handle)?;
         Ok(ProviderExecutionOutcome {
             provider_id: handle.provider_id,
@@ -829,65 +825,41 @@ impl ProviderService {
     }
 
     pub fn submit_compiled_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
+        submit: ProviderSubmitRequest<'_>,
     ) -> Result<ProviderSubmissionHandle, AppError> {
-        Self::submit_prepared_request(
-            request,
-            project_root,
-            None,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )
+        Self::submit_prepared_request(submit, None)
     }
 
     /// Submission with attachments already resolved by the caller (the
     /// workflow runtime owns project-root access). The secret is resolved
     /// from the vault when the caller supplies a credential store.
     pub fn submit_prepared_request(
-        request: &ExecutionRequest,
-        project_root: Option<&Path>,
+        submit: ProviderSubmitRequest<'_>,
         credentials: Option<&dyn CredentialStore>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
-        Self::submit_provider_request(
-            request,
-            Vec::new(),
-            project_root,
-            credentials,
-            step_id,
-            compiled_request_id,
-            provider_id,
-            model_id,
-            attempt_number,
-        )
+        Self::submit_provider_request(submit, Vec::new(), credentials)
     }
 
     /// Full submission path: caller-supplied verified attachments plus an
     /// optional credential store.
     pub fn submit_provider_request(
-        request: &ExecutionRequest,
+        submit: ProviderSubmitRequest<'_>,
         reference_attachments: Vec<ProviderReferenceAttachment>,
-        project_root: Option<&Path>,
         credentials: Option<&dyn CredentialStore>,
-        step_id: &str,
-        compiled_request_id: &str,
-        provider_id: &str,
-        model_id: &str,
-        attempt_number: i64,
     ) -> Result<ProviderSubmissionHandle, AppError> {
+        let ProviderSubmitRequest {
+            request,
+            project_root,
+            step_id,
+            compiled_request_id,
+            provider_id,
+            model_id,
+            attempt_number,
+        } = submit;
+        if request.task == crate::workflow::execution::ExecutionTask::ShotImageToVideo {
+            let root = project_root.ok_or(AppError::ImageToVideoUnsupported)?;
+            Self::validate_image_to_video_selection(root, provider_id, model_id)?;
+        }
         let mut registry = ProviderRegistry::builtin();
         match provider_id {
             // Local test/diagnostic providers need no external credential.
@@ -920,7 +892,7 @@ impl ProviderService {
             &Self::idempotency_key(&request.provenance.workflow_run_id, step_id, attempt_number),
             request,
         )
-        .map_err(|message| AppError::ProviderExecution(message))?;
+        .map_err(AppError::ProviderExecution)?;
         provider_request.reference_attachments = reference_attachments;
         provider
             .capabilities()
@@ -1072,7 +1044,7 @@ impl ProviderService {
         provider_id: &str,
     ) -> Result<Option<CustomProviderDefinition>, AppError> {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
-        super::repository::get_custom_provider(&conn, provider_id).map_err(Into::into)
+        super::repository::get_custom_provider(&conn, provider_id)
     }
 
     /// Capability lookup that also resolves user-defined AI services. Used by
@@ -1091,6 +1063,53 @@ impl ProviderService {
         }
     }
 
+    /// Validates a chosen service/model pair before an image-to-video
+    /// submission. Custom models with an empty capability list inherit every
+    /// operation declared by their service; non-empty lists are restrictive.
+    pub fn validate_image_to_video_selection(
+        project_root: &Path,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<(), AppError> {
+        if let Ok(provider) = ProviderRegistry::builtin().get(provider_id) {
+            let capabilities = provider.capabilities();
+            if capabilities.supports_image_to_video
+                && (capabilities.supported_models.is_empty()
+                    || capabilities
+                        .supported_models
+                        .iter()
+                        .any(|model| model == model_id))
+            {
+                return Ok(());
+            }
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+
+        let definition = Self::load_custom_definition(project_root, provider_id)?
+            .ok_or(AppError::ImageToVideoUnsupported)?;
+        if !definition
+            .runtime
+            .operations
+            .contains_key(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+        let model = definition
+            .models
+            .iter()
+            .find(|model| model.id == model_id)
+            .ok_or(AppError::ImageToVideoUnsupported)?;
+        if !model.capabilities.is_empty()
+            && !model
+                .capabilities
+                .iter()
+                .any(|capability| capability == OPERATION_VIDEO_IMAGE_TO_VIDEO)
+        {
+            return Err(AppError::ImageToVideoUnsupported);
+        }
+        Ok(())
+    }
+
     /// Default model for a provider, from its config record or its custom
     /// definition's first model. No credential access is required.
     pub fn default_model_for(
@@ -1100,9 +1119,9 @@ impl ProviderService {
         let conn = db::open_existing_connection(&project_root.join("project.db"))?;
         let config = super::repository::get_provider_config(&conn, provider_id)?;
         let custom = super::repository::get_custom_provider(&conn, provider_id)?;
-        Ok(config
-            .and_then(|record| record.default_model)
-            .or_else(|| custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))))
+        Ok(config.and_then(|record| record.default_model).or_else(|| {
+            custom.and_then(|definition| definition.models.first().map(|model| model.id.clone()))
+        }))
     }
 
     /// Waits for a submission to finish: polls with the provider's suggested
@@ -1131,9 +1150,7 @@ impl ProviderService {
         let mut status = provider.poll(&submission.job).map_err(provider_error)?;
         let mut saw_progress = matches!(
             status.lifecycle,
-            ProviderLifecycle::Queued
-                | ProviderLifecycle::Submitted
-                | ProviderLifecycle::Running
+            ProviderLifecycle::Queued | ProviderLifecycle::Submitted | ProviderLifecycle::Running
         );
         loop {
             if options.cancelled.is_some_and(|check| check()) {
@@ -1253,21 +1270,32 @@ fn restore_secret_states<S: CredentialStore + ?Sized>(
     Ok(())
 }
 
+fn provider_error(error: ProviderError) -> AppError {
+    // Human-readable, secret-free text the UI can show verbatim.
+    AppError::ProviderExecution(error.display_text())
+}
+
 #[cfg(test)]
 mod connection_tests {
     use super::*;
     use crate::project::service::ProjectService;
+    use crate::providers::config::{
+        EndpointConfig, ResponseMapping, OPERATION_VIDEO_IMAGE_TO_VIDEO,
+    };
     use crate::providers::credential_store::MemoryCredentialStore;
-    use crate::providers::http::TransportFailure;
+    use crate::providers::http::{HttpRequest, HttpResponse, TransportFailure};
     use crate::providers::presets::preset_by_id;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::Mutex;
 
+    /// Recorded request: (url, body, headers).
+    type RecordedRequest = (String, String, Vec<(String, String)>);
+
     /// Deterministic executor: records requests, returns a scripted status.
     #[derive(Default, Clone)]
     struct RecordingExecutor {
-        requests: std::sync::Arc<Mutex<Vec<(String, String, Vec<(String, String)>)>>>,
+        requests: std::sync::Arc<Mutex<Vec<RecordedRequest>>>,
         status: u16,
         body: String,
     }
@@ -1361,9 +1389,13 @@ mod connection_tests {
         .unwrap();
         let transport = RecordingExecutor::with_status(200);
 
-        let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "image_provider")
-                .unwrap();
+        let result = ProviderService::test_connection(
+            &root,
+            &credentials,
+            transport.clone(),
+            "image_provider",
+        )
+        .unwrap();
 
         assert!(result.connected);
         assert_eq!(result.status_code, Some(200));
@@ -1391,7 +1423,8 @@ mod connection_tests {
         let transport = RecordingExecutor::with_status(200);
 
         let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare").unwrap();
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare")
+                .unwrap();
 
         assert!(result.connected);
         let (method, url, headers) = transport.requests.lock().unwrap().remove(0);
@@ -1420,9 +1453,13 @@ mod connection_tests {
             r#"{"errors":[{"message":"prompt is required","code":7002}]}"#,
         );
 
-        let result =
-            ProviderService::test_connection(&root, &credentials, transport.clone(), "cloudflare_err")
-                .unwrap();
+        let result = ProviderService::test_connection(
+            &root,
+            &credentials,
+            transport.clone(),
+            "cloudflare_err",
+        )
+        .unwrap();
 
         assert!(!result.connected);
         assert_eq!(result.status_code, Some(400));
@@ -1444,9 +1481,13 @@ mod connection_tests {
         .unwrap();
         for status in [401u16, 403] {
             let transport = RecordingExecutor::with_status(status);
-            let result =
-                ProviderService::test_connection(&root, &credentials, transport.clone(), "auth_provider")
-                    .unwrap();
+            let result = ProviderService::test_connection(
+                &root,
+                &credentials,
+                transport.clone(),
+                "auth_provider",
+            )
+            .unwrap();
             assert!(!result.connected);
             assert_eq!(result.status_code, Some(status));
         }
@@ -1463,8 +1504,9 @@ mod connection_tests {
         ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         let transport = RecordingExecutor::default();
 
-        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "no_auth")
-            .unwrap_err();
+        let error =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "no_auth")
+                .unwrap_err();
 
         assert!(error
             .to_string()
@@ -1496,6 +1538,62 @@ mod connection_tests {
     }
 
     #[test]
+    fn image_to_video_selection_returns_a_typed_error_for_unsupported_provider_or_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        ProjectService::create(&root, "I2V selection").unwrap();
+        let credentials = MemoryCredentialStore::new();
+        let mut definition = openai_compatible_definition("i2v_provider");
+        definition.runtime.operations.insert(
+            OPERATION_VIDEO_IMAGE_TO_VIDEO.into(),
+            EndpointConfig {
+                path_template: "/video/i2v".into(),
+                request_mapping: Some(serde_json::json!({"prompt": "{{prompt}}"})),
+                response: ResponseMapping {
+                    url_path: Some("url".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        definition.models[0].capabilities = vec![OPERATION_VIDEO_IMAGE_TO_VIDEO.into()];
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+
+        ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1")
+            .unwrap();
+
+        definition.models[0].capabilities = vec!["video.generate".into()];
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1"),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(
+                &root,
+                "i2v_provider",
+                "missing-model"
+            ),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
+
+        definition.models[0].capabilities.clear();
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1")
+            .unwrap();
+
+        definition
+            .runtime
+            .operations
+            .remove(OPERATION_VIDEO_IMAGE_TO_VIDEO);
+        ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
+        assert!(matches!(
+            ProviderService::validate_image_to_video_selection(&root, "i2v_provider", "model-v1"),
+            Err(AppError::ImageToVideoUnsupported)
+        ));
+    }
+
+    #[test]
     fn provider_definitions_expose_masked_hint_without_the_secret() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
@@ -1503,8 +1601,8 @@ mod connection_tests {
         let credentials = MemoryCredentialStore::new();
         let mut definition = openai_compatible_definition("hinted");
         definition.api_key = Some("sk-j9mlQwErTyXzray".into());
-        let saved = ProviderService::upsert_custom_provider(&root, &credentials, &definition)
-            .unwrap();
+        let saved =
+            ProviderService::upsert_custom_provider(&root, &credentials, &definition).unwrap();
         assert_eq!(saved.api_key, None);
         assert_eq!(saved.api_key_hint.as_deref(), Some("sk-j9ml•••ray"));
 
@@ -1573,8 +1671,9 @@ mod connection_tests {
         .unwrap();
         let transport = RecordingExecutor::default();
 
-        let error = ProviderService::test_connection(&root, &credentials, transport.clone(), "tampered")
-            .unwrap_err();
+        let error =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "tampered")
+                .unwrap_err();
 
         assert!(error.to_string().contains("must not contain credentials"));
         assert!(transport.requests.lock().unwrap().is_empty());
@@ -1613,7 +1712,10 @@ mod connection_tests {
             .unwrap()
             .is_none());
         let transport = RecordingExecutor::default();
-        assert!(ProviderService::test_connection(&root, &credentials, transport.clone(), "moving").is_err());
+        assert!(
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "moving")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1704,8 +1806,9 @@ mod connection_tests {
         )
         .unwrap();
         let transport = RecordingExecutor::with_status(200);
-        let result = ProviderService::test_connection(&root, &credentials, transport.clone(), "legacy_img")
-            .unwrap();
+        let result =
+            ProviderService::test_connection(&root, &credentials, transport.clone(), "legacy_img")
+                .unwrap();
         assert!(result.connected, "legacy rows validate through /models");
         assert_eq!(result.endpoint, "https://old.example.test/v1/models");
     }
@@ -1742,9 +1845,4 @@ mod connection_tests {
             matches!(redirect_target.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
         );
     }
-}
-
-fn provider_error(error: ProviderError) -> AppError {
-    // Human-readable, secret-free text the UI can show verbatim.
-    AppError::ProviderExecution(error.display_text())
 }
