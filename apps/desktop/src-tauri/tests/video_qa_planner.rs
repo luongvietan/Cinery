@@ -85,7 +85,7 @@ fn frozen_context_compiles_to_a_byte_stable_video_plan() {
             .map(|check| check.id.as_str())
             .collect::<Vec<_>>(),
         vec![
-            "character:character-7:temporal-identity",
+            "character:character-7:look-v1:temporal-identity",
             "video:camera-motion-adherence",
             "video:deformation",
             "video:flicker",
@@ -120,6 +120,30 @@ fn identity_and_camera_checks_require_their_exact_frozen_evidence() {
         .checks
         .iter()
         .any(|check| check.id == "video:camera-motion-adherence"));
+}
+
+#[test]
+fn identity_checks_distinguish_exact_versions_of_the_same_reference_asset() {
+    let mut frozen = context();
+    frozen.references.push(reference(
+        "character-7",
+        "look-v2",
+        "character_look_reference",
+    ));
+
+    let plan = VideoQaCheckPlanner::compile(&frozen).unwrap();
+
+    assert_eq!(
+        plan.checks
+            .iter()
+            .filter(|check| check.id.contains("temporal-identity"))
+            .map(|check| check.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "character:character-7:look-v1:temporal-identity",
+            "character:character-7:look-v2:temporal-identity",
+        ]
+    );
 }
 
 #[test]

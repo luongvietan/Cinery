@@ -96,7 +96,10 @@ impl VideoQaCheckPlanner {
             .filter(|reference| is_identity_reference(reference))
         {
             checks.push(QaCheckDefinition {
-                id: format!("character:{}:temporal-identity", identity.asset_id),
+                id: format!(
+                    "character:{}:{}:temporal-identity",
+                    identity.asset_id, identity.asset_version_id
+                ),
                 check_type: QaCheckType::IdentityTemporalConsistency,
                 source: QaCheckSource::CanonicalReference,
                 key: identity.asset_id.clone(),
