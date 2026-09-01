@@ -14,6 +14,8 @@ import { joinProjectRelativePath } from "../assets/paths";
 import { GenerationResultCard } from "../generation/GenerationResultCard";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
 import type { GeneratedArtifactDetail, GenerationResultSetDetail } from "@cinematic/domain";
+import { getAssetWithVersions, listAssets } from "../assets/api";
+import { VideoQaPanel } from "../qa/VideoQaPanel";
 
 interface ShotImageToVideoProps {
   projectRootPath: string;
@@ -24,7 +26,11 @@ interface ShotImageToVideoProps {
 
 interface ResultState {
   detail: WorkflowRunDetail;
-  artifacts: GeneratedArtifactDetail[];
+  artifacts: Array<{
+    detail: GeneratedArtifactDetail;
+    assetVersionId: string | null;
+    versionNumber: number | null;
+  }>;
 }
 
 function isActiveRun(run: ResultState | null): boolean {
@@ -170,7 +176,32 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     } catch {
       // The run view still shows the completed run without candidates.
     }
-    return { detail, artifacts };
+    const candidates = artifacts.map((artifact) => ({
+      detail: artifact,
+      assetVersionId: null as string | null,
+      versionNumber: null as number | null,
+    }));
+    if (candidates.length === 0) return { detail, artifacts: candidates };
+    try {
+      const assets = await listAssets(projectRootPath);
+      const videoAssets = assets.filter((asset) => asset.type === "video" && asset.ownerEntityId === sceneId);
+      const versionSets = await Promise.all(
+        videoAssets.map((asset) => getAssetWithVersions(projectRootPath, asset.id)),
+      );
+      for (const candidate of candidates) {
+        const version = versionSets
+          .flatMap((asset) => asset.versions)
+          .find((entry) => entry.sha256 === candidate.detail.artifact.sha256);
+        if (version) {
+          candidate.assetVersionId = version.id;
+          candidate.versionNumber = version.versionNumber;
+        }
+      }
+    } catch {
+      // The generated candidate remains reviewable even if its imported
+      // AssetVersion projection is temporarily unavailable.
+    }
+    return { detail, artifacts: candidates };
   }
 
   function handleRunChange(next: WorkflowRunDetail) {
@@ -295,21 +326,21 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
                 The run completed but produced no reviewable candidates.
               </p>
             ) : (
-              run.artifacts.map((detail) => (
-                  <div key={detail.artifact.id} style={{ display: "grid", gap: "var(--space-4)" }}>
+              run.artifacts.map((candidate) => (
+                  <div key={candidate.detail.artifact.id} style={{ display: "grid", gap: "var(--space-4)" }}>
                     <GenerationResultCard
                       projectRootPath={projectRootPath}
-                      detail={detail}
+                      detail={candidate.detail}
                       selected={false}
                       onSelect={() => {}}
                     />
                     <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center" }}>
                       <button
                         type="button"
-                        onClick={() => void handleUseForShot(detail.artifact.id)}
+                        onClick={() => void handleUseForShot(candidate.detail.artifact.id)}
                         disabled={promoting !== null}
                       >
-                        {promoting === detail.artifact.id ? "Pinning…" : "Use for Shot"}
+                        {promoting === candidate.detail.artifact.id ? "Pinning…" : "Use for Shot"}
                       </button>
                       {shot.generatedVideoAssetVersionId ? (
                         <span style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
@@ -317,6 +348,13 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
                         </span>
                       ) : null}
                     </div>
+                    {candidate.assetVersionId && candidate.versionNumber !== null ? (
+                      <VideoQaPanel
+                        projectRootPath={projectRootPath}
+                        assetVersionId={candidate.assetVersionId}
+                        versionLabel={`candidate V${String(candidate.versionNumber).padStart(2, "0")}`}
+                      />
+                    ) : null}
                   </div>
               ))
             )}

@@ -82,4 +82,43 @@ describe("StatefulTauriFacade", () => {
       facade.invoke("promote_shot_video_candidate", { shotId: shot.id, artifactId: "artifact-2", expectedCurrentVideoAssetVersionId: null }),
     ).rejects.toMatchObject({ code: "PROMOTION_CONFLICT" });
   });
+
+  it("models generic candidate-local Video QA workflow, rerun, and raw-preserving review", async () => {
+    const facade = new StatefulTauriFacade();
+    const input = { assetVersionId: "video-v1", adapterId: "mock" };
+
+    const first = await facade.invoke<{ run: { id: string; status: string } }>("create_workflow_run", {
+      skillId: "video-qa", skillVersion: "1.0.0", operationId: "asset.run_video_qa", input,
+    });
+    const duplicate = await facade.invoke<{ run: { id: string } }>("create_workflow_run", {
+      skillId: "video-qa", skillVersion: "1.0.0", operationId: "asset.run_video_qa", input,
+    });
+    expect(duplicate.run.id).toBe(first.run.id);
+    expect(await facade.invoke("list_qa_runs", { assetVersionId: "video-v2" })).toEqual([]);
+
+    const waiting = await facade.invoke<{ run: { status: string } }>("advance_workflow_run", { workflowRunId: first.run.id });
+    expect(waiting.run.status).toBe("waiting_for_approval");
+    await facade.invoke("approve_workflow_step", { workflowRunId: first.run.id, stepDefinitionId: "approve-video-qa" });
+    const completed = await facade.invoke<{ run: { status: string } }>("advance_workflow_run", { workflowRunId: first.run.id });
+    expect(completed.run.status).toBe("completed");
+
+    const history = await facade.invoke<Array<{ id: string; assetVersionId: string; overallStatus: string }>>("list_qa_runs", { assetVersionId: "video-v1" });
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ assetVersionId: "video-v1", overallStatus: "fail" });
+    const detail = await facade.invoke<{ checks: Array<{ checkId: string; status: string }> }>("get_qa_run", { qaRunId: history[0].id });
+    expect(detail.checks[0]).toMatchObject({ checkId: "video:integrity", status: "fail" });
+
+    const reviewed = await facade.invoke<{ run: { overallStatus: string }; checks: Array<{ status: string; reviewStatus: string }> }>("review_qa_check", {
+      qaRunId: history[0].id, checkId: "video:integrity", reviewStatus: "overridden_pass", note: "Reviewed frames",
+    });
+    expect(reviewed.run.overallStatus).toBe("pass");
+    expect(reviewed.checks[0]).toMatchObject({ status: "fail", reviewStatus: "overridden_pass" });
+
+    const rerun = await facade.invoke<{ run: { id: string } }>("create_workflow_run", {
+      skillId: "video-qa", skillVersion: "1.0.0", operationId: "asset.run_video_qa", input,
+    });
+    expect(rerun.run.id).not.toBe(first.run.id);
+    await expect(facade.invoke("create_video_qa_workflow", { assetVersionId: "video-v1" }))
+      .rejects.toMatchObject({ code: "UNKNOWN_COMMAND" });
+  });
 });

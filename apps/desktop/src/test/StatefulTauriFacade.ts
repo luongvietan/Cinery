@@ -46,6 +46,58 @@ interface ResultSetState {
   promotedToAssetId: Record<string, string>;
 }
 
+interface WorkflowRunState {
+  id: string;
+  status: string;
+  operationId: string;
+  skillId: string;
+  skillVersion: string;
+  inputJson: string;
+  createdAt: string;
+}
+
+interface QaCheckState {
+  id: string;
+  qaRunId: string;
+  checkId: string;
+  checkType: string;
+  source: string;
+  requirement: { label: string };
+  status: string;
+  confidence: number | null;
+  observed: string;
+  reason: string;
+  repairHint: string | null;
+  reviewStatus: string;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+}
+
+interface QaRunState {
+  id: string;
+  projectId: string;
+  assetId: string;
+  assetVersionId: string;
+  mediaKind: "video";
+  workflowRunId: string;
+  status: string;
+  overallStatus: string | null;
+  adapterId: string;
+  adapterVersion: string;
+  modelId: string;
+  executionLocation: string;
+  checkPlan: Record<string, unknown>;
+  contextSnapshot: Record<string, unknown>;
+  rawResponseMetadata: null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  checks: QaCheckState[];
+}
+
 export interface DesktopFixtureState {
   projectId: string;
   assets: AssetState[];
@@ -66,7 +118,8 @@ export interface DesktopFixtureState {
   }>;
   resultSets: ResultSetState[];
   compilations: Array<{ id: string; sceneId: string; exportSha256: string }>;
-  workflowRuns: Array<{ id: string; status: string; operationId: string }>;
+  workflowRuns: WorkflowRunState[];
+  qaRuns: QaRunState[];
 }
 
 export class StatefulTauriFacade {
@@ -82,6 +135,7 @@ export class StatefulTauriFacade {
       resultSets: [],
       compilations: [],
       workflowRuns: [],
+      qaRuns: [],
     };
     this.registerHandlers();
   }
@@ -108,6 +162,47 @@ export class StatefulTauriFacade {
       createdAt: "now",
       updatedAt: "now",
     };
+  }
+
+  private workflowDetail(run: WorkflowRunState) {
+    const approvalStatus = run.status === "waiting_for_approval"
+      ? "waiting"
+      : ["ready_for_execution", "running", "completed"].includes(run.status) ? "completed" : "pending";
+    return {
+      run: {
+        ...run,
+        projectId: this.state.projectId,
+        prerequisiteReportJson: null,
+        contextSnapshotJson: null,
+        currentStepIndex: run.status === "completed" ? 6 : 4,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: "now",
+        completedAt: run.status === "completed" ? "now" : null,
+      },
+      steps: run.operationId === "asset.run_video_qa" ? [
+        {
+          id: `${run.id}-compile`, workflowRunId: run.id, stepDefinitionId: "compile-request",
+          stepIndex: 2, stepType: "compile_request", status: "completed", inputJson: null,
+          outputJson: JSON.stringify({
+            executionLocation: "local", adapterId: "mock", modelId: "mock-video-qa",
+            evidenceMode: "direct_video", request: { references: [] },
+          }), startedAt: "now", completedAt: "now",
+        },
+        {
+          id: `${run.id}-approval`, workflowRunId: run.id, stepDefinitionId: "approve-video-qa",
+          stepIndex: 3, stepType: "approval", status: approvalStatus, inputJson: null,
+          outputJson: null, startedAt: null, completedAt: approvalStatus === "completed" ? "now" : null,
+        },
+      ] : [],
+      events: [],
+      providerExecutions: [],
+    };
+  }
+
+  private qaDetail(run: QaRunState) {
+    const { checks, ...record } = run;
+    return { run: record, checks };
   }
 
   private registerHandlers() {
@@ -137,6 +232,12 @@ export class StatefulTauriFacade {
       })),
     );
 
+    this.handlers.set("get_asset_with_versions", (args) => {
+      const asset = this.state.assets.find((candidate) => candidate.id === args.assetId);
+      if (!asset) throw { code: "ASSET_NOT_FOUND", message: "asset not found" };
+      return { asset, versions: asset.versions };
+    });
+
     this.handlers.set("promote_asset_version", (args) => {
       const versionId = String(args.assetVersionId);
       for (const asset of this.state.assets) {
@@ -152,6 +253,131 @@ export class StatefulTauriFacade {
 
     // --- P10.1 durable background provider jobs (observed, never executed here) ---
     this.handlers.set("list_provider_jobs", () => []);
+
+    // --- shared workflow lifecycle + candidate-local Video QA ---
+    this.handlers.set("create_workflow_run", (args) => {
+      const input = (args.input as Record<string, unknown>) ?? {};
+      const operationId = String(args.operationId);
+      const inputJson = JSON.stringify(input);
+      const existing = this.state.workflowRuns.find((run) =>
+        run.operationId === operationId
+        && run.inputJson === inputJson
+        && !["completed", "cancelled", "failed", "rejected"].includes(run.status),
+      );
+      if (existing) return this.workflowDetail(existing);
+
+      const run: WorkflowRunState = {
+        id: this.nextId("workflow"),
+        status: "created",
+        operationId,
+        skillId: String(args.skillId),
+        skillVersion: String(args.skillVersion),
+        inputJson,
+        createdAt: `now-${this.counter}`,
+      };
+      this.state.workflowRuns.push(run);
+      if (operationId === "asset.run_video_qa") {
+        const assetVersionId = String(input.assetVersionId);
+        const qaRunId = this.nextId("qa");
+        this.state.qaRuns.push({
+          id: qaRunId,
+          projectId: this.state.projectId,
+          assetId: "video-asset",
+          assetVersionId,
+          mediaKind: "video",
+          workflowRunId: run.id,
+          status: "queued",
+          overallStatus: null,
+          adapterId: String(input.adapterId ?? "mock"),
+          adapterVersion: "1",
+          modelId: String(input.modelId ?? "mock-video-qa"),
+          executionLocation: "local",
+          checkPlan: {
+            schemaVersion: 1, assetId: "video-asset", assetVersionId, ownerEntityId: null,
+            assetType: "video", referenceAssetVersionIds: [], checks: [{
+              id: "video:integrity", checkType: "video_integrity", source: "artifact_detection",
+              key: "integrity", label: "Video integrity", requirement: "Video decodes continuously.",
+              validatorHint: null, blocking: true, referenceAssetVersionIds: [],
+            }], createdAt: "now",
+          },
+          contextSnapshot: {},
+          rawResponseMetadata: null,
+          errorCode: null,
+          errorMessage: null,
+          createdAt: `now-${this.counter}`,
+          startedAt: null,
+          completedAt: null,
+          checks: [],
+        });
+      }
+      return this.workflowDetail(run);
+    });
+
+    this.handlers.set("list_workflow_runs", () => this.state.workflowRuns.map((run) => this.workflowDetail(run).run));
+
+    this.handlers.set("get_workflow_run", (args) => {
+      const run = this.state.workflowRuns.find((candidate) => candidate.id === args.workflowRunId);
+      if (!run) throw { code: "WORKFLOW_RUN_NOT_FOUND", message: "workflow run not found" };
+      return this.workflowDetail(run);
+    });
+
+    this.handlers.set("advance_workflow_run", (args) => {
+      const run = this.state.workflowRuns.find((candidate) => candidate.id === args.workflowRunId);
+      if (!run) throw { code: "WORKFLOW_RUN_NOT_FOUND", message: "workflow run not found" };
+      if (run.status === "created") run.status = "waiting_for_approval";
+      else if (run.status === "ready_for_execution") {
+        run.status = "completed";
+        const qaRun = this.state.qaRuns.find((candidate) => candidate.workflowRunId === run.id);
+        if (qaRun) {
+          qaRun.status = "succeeded";
+          qaRun.overallStatus = "fail";
+          qaRun.startedAt = "now";
+          qaRun.completedAt = "now";
+          qaRun.checks = [{
+            id: this.nextId("qa-check"), qaRunId: qaRun.id, checkId: "video:integrity",
+            checkType: "video_integrity", source: "artifact_detection", requirement: { label: "Video integrity" },
+            status: "fail", confidence: 0.9, observed: "Decode discontinuity found.",
+            reason: "A frame boundary is broken.", repairHint: null, reviewStatus: "unreviewed",
+            reviewNote: null, reviewedAt: null, createdAt: "now",
+          }];
+        }
+      }
+      return this.workflowDetail(run);
+    });
+
+    this.handlers.set("approve_workflow_step", (args) => {
+      const run = this.state.workflowRuns.find((candidate) => candidate.id === args.workflowRunId);
+      if (!run) throw { code: "WORKFLOW_RUN_NOT_FOUND", message: "workflow run not found" };
+      run.status = "ready_for_execution";
+      return this.workflowDetail(run);
+    });
+
+    this.handlers.set("list_qa_runs", (args) => this.state.qaRuns
+      .filter((run) => run.assetVersionId === args.assetVersionId)
+      .map((run) => this.qaDetail(run).run));
+
+    this.handlers.set("get_qa_run", (args) => {
+      const run = this.state.qaRuns.find((candidate) => candidate.id === args.qaRunId);
+      if (!run) throw { code: "QA_RUN_NOT_FOUND", message: "QA run not found" };
+      return this.qaDetail(run);
+    });
+
+    this.handlers.set("review_qa_check", (args) => {
+      const run = this.state.qaRuns.find((candidate) => candidate.id === args.qaRunId);
+      const check = run?.checks.find((candidate) => candidate.checkId === args.checkId);
+      if (!run || !check) throw { code: "QA_CHECK_NOT_FOUND", message: "QA check not found" };
+      check.reviewStatus = String(args.reviewStatus);
+      check.reviewNote = (args.note as string | null) ?? null;
+      check.reviewedAt = "now";
+      const effectiveStatuses = run.checks.map((candidate) => {
+        if (candidate.reviewStatus === "overridden_pass") return "pass";
+        if (candidate.reviewStatus === "overridden_fail") return "fail";
+        return candidate.status;
+      });
+      run.overallStatus = effectiveStatuses.includes("fail") ? "fail"
+        : effectiveStatuses.includes("uncertain") ? "needs_review" : "pass";
+      return this.qaDetail(run);
+    });
 
     // --- generation ---
     this.handlers.set("list_generation_results", (args) => {

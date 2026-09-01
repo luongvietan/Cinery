@@ -9,6 +9,7 @@ export const qaRunStatusSchema = z.enum([
 ]);
 
 export const qaOverallStatusSchema = z.enum(["pass", "fail", "needs_review"]);
+export const qaMediaKindSchema = z.enum(["image", "video"]);
 export const qaCheckStatusSchema = z.enum([
   "pass",
   "fail",
@@ -34,6 +35,16 @@ export const qaCheckTypeSchema = z.enum([
   "composition_requirement",
   "watermark",
   "unexpected_artifact",
+  "video_integrity",
+  "start_frame_continuity",
+  "identity_temporal_consistency",
+  "reference_temporal_consistency",
+  "motion_adherence",
+  "camera_motion_adherence",
+  "temporal_coherence",
+  "unexpected_cut",
+  "flicker",
+  "deformation_or_warping",
 ]);
 export const qaReviewStatusSchema = z.enum([
   "unreviewed",
@@ -94,6 +105,7 @@ export const qaRunRecordSchema = z
     projectId: z.string().min(1),
     assetId: z.string().min(1),
     assetVersionId: z.string().min(1),
+    mediaKind: qaMediaKindSchema,
     workflowRunId: z.string().min(1).nullable(),
     status: qaRunStatusSchema,
     overallStatus: qaOverallStatusSchema.nullable(),

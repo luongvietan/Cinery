@@ -1,5 +1,6 @@
 export type QaRunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type QaOverallStatus = "pass" | "fail" | "needs_review";
+export type QaMediaKind = "image" | "video";
 export type QaCheckStatus = "pass" | "fail" | "uncertain" | "not_applicable";
 export type QaCheckSource =
   | "visual_lock"
@@ -24,7 +25,17 @@ export type QaCheckType =
   | "background_requirement"
   | "composition_requirement"
   | "watermark"
-  | "unexpected_artifact";
+  | "unexpected_artifact"
+  | "video_integrity"
+  | "start_frame_continuity"
+  | "identity_temporal_consistency"
+  | "reference_temporal_consistency"
+  | "motion_adherence"
+  | "camera_motion_adherence"
+  | "temporal_coherence"
+  | "unexpected_cut"
+  | "flicker"
+  | "deformation_or_warping";
 
 export interface QaCheckDefinition {
   id: string;
@@ -81,6 +92,7 @@ export interface QaRunRecord {
   projectId: string;
   assetId: string;
   assetVersionId: string;
+  mediaKind: QaMediaKind;
   workflowRunId: string | null;
   status: QaRunStatus;
   overallStatus: QaOverallStatus | null;
