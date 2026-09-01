@@ -241,7 +241,7 @@ impl VideoQaAdapter for OpenAiCompatibleVideoQaAdapter {
                 VideoQaAdapterErrorKind::Network,
                 "Video QA request was rejected",
             )
-            .with_diagnostic(redact(&response.text(), &self.bearer_token)));
+            .with_diagnostic(format!("HTTP {}", response.status)));
         }
         let document = response.json().map_err(|error| {
             VideoQaAdapterError::new(

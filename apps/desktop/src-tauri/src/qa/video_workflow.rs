@@ -10,6 +10,7 @@ use super::normalizer::QaResponseNormalizer;
 use super::repository;
 use super::video_check_planner::VideoQaCheckPlanner;
 use super::video_context::resolve_video_qa_context;
+use crate::diagnostics::DiagnosticsRedactor;
 use crate::error::AppError;
 use crate::providers;
 use crate::video_qa::evidence::{EvidenceMode, TemporalDecoderAvailability};
@@ -17,7 +18,11 @@ use chrono::Utc;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::path::Path;
+
+const MAX_PERSISTED_DIAGNOSTIC_BYTES: usize = 512;
+const INVALID_RESPONSE_MESSAGE: &str = "Video QA response failed structural validation";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -192,27 +197,29 @@ pub(crate) fn execute(
     })?;
     let raw = adapter.analyze(&compiled.request).map_err(|error| {
         let safe_metadata = adapter_failure_metadata(&error);
-        let message = error.to_string();
+        let message = adapter_failure_message(error.kind);
         let _ = repository::mark_run_failed(
             conn,
             &compiled.qa_run_id,
             "QA_ADAPTER_FAILED",
-            &message,
+            message,
             Some(&safe_metadata),
             &Utc::now().to_rfc3339(),
         );
-        AppError::ProviderExecution(message)
+        AppError::ProviderExecution(message.into())
     })?;
-    let normalized = QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text)
-        .inspect_err(|error| {
+    let normalized =
+        QaResponseNormalizer::normalize(&compiled.plan, &raw.response_text).map_err(|_| {
+            let safe_metadata = invalid_response_metadata(&compiled.plan, &raw.response_text);
             let _ = repository::mark_run_failed(
                 conn,
                 &compiled.qa_run_id,
                 "INVALID_VLM_RESPONSE",
-                &error.to_string(),
-                Some(&raw.metadata),
+                INVALID_RESPONSE_MESSAGE,
+                Some(&safe_metadata),
                 &Utc::now().to_rfc3339(),
             );
+            AppError::ProviderExecution(INVALID_RESPONSE_MESSAGE.into())
         })?;
     let completed_at = Utc::now().to_rfc3339();
     let checks = super::workflow::normalized_check_records(
@@ -307,9 +314,9 @@ fn build_adapter(
         "mock" => Ok(Box::new(MockVideoQaAdapter::new(success_response(
             &compiled.plan,
         )))),
-        "mock_invalid_response" => Ok(Box::new(MockVideoQaAdapter::new(
-            serde_json::json!({"schemaVersion": 1, "checks": []}),
-        ))),
+        "mock_invalid_response" => Ok(Box::new(
+            MockVideoQaAdapter::new(hostile_invalid_response()),
+        )),
         "mock_adapter_failure" => Ok(Box::new(FailingVideoQaAdapter {
             model_id: compiled.model_id.clone(),
         })),
@@ -363,7 +370,123 @@ fn success_response(plan: &QaCheckPlan) -> Value {
 fn adapter_failure_metadata(error: &VideoQaAdapterError) -> Value {
     serde_json::json!({
         "adapterErrorKind": error.kind,
-        "diagnostic": error.diagnostic,
+        "failureCode": adapter_failure_code(error.kind),
+        "diagnostic": error
+            .diagnostic
+            .as_deref()
+            .and_then(sanitize_persisted_diagnostic),
+    })
+}
+
+fn adapter_failure_code(kind: VideoQaAdapterErrorKind) -> &'static str {
+    match kind {
+        VideoQaAdapterErrorKind::UnsupportedCapability => "adapter_unsupported_capability",
+        VideoQaAdapterErrorKind::InvalidRequest => "adapter_invalid_request",
+        VideoQaAdapterErrorKind::Authentication => "adapter_authentication",
+        VideoQaAdapterErrorKind::Network => "adapter_network",
+        VideoQaAdapterErrorKind::MalformedResponse => "adapter_malformed_response",
+    }
+}
+
+fn adapter_failure_message(kind: VideoQaAdapterErrorKind) -> &'static str {
+    match kind {
+        VideoQaAdapterErrorKind::UnsupportedCapability => {
+            "Video QA adapter does not support the requested evidence"
+        }
+        VideoQaAdapterErrorKind::InvalidRequest => "Video QA adapter rejected the request",
+        VideoQaAdapterErrorKind::Authentication => "Video QA adapter authentication failed",
+        VideoQaAdapterErrorKind::Network => "Video QA adapter request failed",
+        VideoQaAdapterErrorKind::MalformedResponse => {
+            "Video QA adapter returned an invalid response"
+        }
+    }
+}
+
+fn sanitize_persisted_diagnostic(diagnostic: &str) -> Option<String> {
+    let redacted = DiagnosticsRedactor::redact_string(diagnostic);
+    let mut sanitized = String::with_capacity(redacted.len().min(MAX_PERSISTED_DIAGNOSTIC_BYTES));
+    let mut previous_was_space = true;
+    for character in redacted.chars() {
+        let safe = if character.is_ascii_alphanumeric()
+            || matches!(
+                character,
+                ' ' | '.' | ',' | ':' | ';' | '/' | '-' | '_' | '(' | ')' | '[' | ']'
+            ) {
+            character
+        } else if character.is_whitespace() || character.is_control() {
+            ' '
+        } else {
+            '?'
+        };
+        if safe == ' ' && previous_was_space {
+            continue;
+        }
+        if sanitized.len() + safe.len_utf8() > MAX_PERSISTED_DIAGNOSTIC_BYTES {
+            break;
+        }
+        sanitized.push(safe);
+        previous_was_space = safe == ' ';
+    }
+    let sanitized = sanitized.trim().to_string();
+    (!sanitized.is_empty()).then_some(sanitized)
+}
+
+fn invalid_response_metadata(plan: &QaCheckPlan, response_text: &str) -> Value {
+    let planned_check_count = plan.checks.len();
+    let (validation_code, reported_check_count) = match serde_json::from_str::<Value>(response_text)
+    {
+        Err(_) => ("malformed_json", None),
+        Ok(document) => {
+            if document.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
+                ("unsupported_schema", None)
+            } else if let Some(checks) = document.get("checks").and_then(Value::as_array) {
+                let expected_ids = plan
+                    .checks
+                    .iter()
+                    .map(|check| check.id.as_str())
+                    .collect::<BTreeSet<_>>();
+                let mut seen = BTreeSet::new();
+                let identities_match = checks.iter().all(|check| {
+                    check
+                        .get("checkId")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| expected_ids.contains(id) && seen.insert(id))
+                });
+                let code = if !identities_match {
+                    "check_identity_mismatch"
+                } else if checks.len() != planned_check_count {
+                    "check_count_mismatch"
+                } else {
+                    "invalid_check_result"
+                };
+                (code, Some(checks.len()))
+            } else {
+                ("invalid_checks", None)
+            }
+        }
+    };
+    serde_json::json!({
+        "validationCode": validation_code,
+        "plannedCheckCount": planned_check_count,
+        "reportedCheckCount": reported_check_count,
+    })
+}
+
+fn hostile_invalid_response() -> Value {
+    let untrusted_id = format!(
+        "<script>Authorization: Bearer sk-untrusted-{}</script>\0",
+        "x".repeat(4_096)
+    );
+    serde_json::json!({
+        "schemaVersion": 1,
+        "checks": [{
+            "checkId": untrusted_id,
+            "status": "pass",
+            "confidence": 1.0,
+            "observed": "untrusted",
+            "reason": "untrusted",
+            "repairHint": null
+        }]
     })
 }
 
@@ -426,6 +549,9 @@ impl VideoQaAdapter for FailingVideoQaAdapter {
             VideoQaAdapterErrorKind::Network,
             "Video QA mock adapter failed",
         )
-        .with_diagnostic("deterministic safe diagnostic"))
+        .with_diagnostic(format!(
+            "Authorization: Bearer sk-review-secret\r\n<script>{}</script>\0",
+            "x".repeat(4_096)
+        )))
     }
 }

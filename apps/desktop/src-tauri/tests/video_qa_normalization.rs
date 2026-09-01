@@ -149,6 +149,21 @@ impl HttpExecutor for FixtureTransport {
     }
 }
 
+struct RejectedTransport {
+    body: Vec<u8>,
+}
+
+impl HttpExecutor for RejectedTransport {
+    fn execute(&self, _request: HttpRequest) -> Result<HttpResponse, TransportFailure> {
+        Ok(HttpResponse {
+            status: 503,
+            body: self.body.clone(),
+            content_type: Some("text/plain".into()),
+            headers: vec![],
+        })
+    }
+}
+
 fn request(path: &str, sha256: &str, size_bytes: u64) -> VideoQaRequest {
     VideoQaRequest {
         request_id: "video-qa-request-1".into(),
@@ -232,6 +247,43 @@ fn production_adapter_transfers_only_task_zero_bound_direct_video_evidence() {
     assert!(descriptor["references"][0].get("localPath").is_none());
     assert!(!format!("{parts:?}").contains(&*reference_path.to_string_lossy()));
     assert!(!format!("{parts:?}").contains("secret"));
+}
+
+#[test]
+fn production_adapter_does_not_copy_a_rejected_response_body_into_diagnostics() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("candidate.mp4");
+    let bytes = [
+        0, 0, 0, 16, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0, 0, 0, 0,
+    ];
+    std::fs::write(&source, bytes).unwrap();
+    let sha256 = format!("{:x}", Sha256::digest(bytes));
+    let hostile_body = format!(
+        "provider-body-marker Authorization: Bearer sk-provider-secret {}",
+        "x".repeat(8_192)
+    );
+    let adapter = OpenAiCompatibleVideoQaAdapter::with_transport(
+        "https://video.example/v1",
+        "configured-secret",
+        "video-qa-model",
+        EvidenceMode::DirectVideo,
+        TemporalDecoderAvailability::Unavailable,
+        RejectedTransport {
+            body: hostile_body.into_bytes(),
+        },
+    )
+    .unwrap();
+
+    let error = adapter
+        .analyze(&request(
+            &source.to_string_lossy(),
+            &sha256,
+            bytes.len() as u64,
+        ))
+        .unwrap_err();
+
+    assert_eq!(error.diagnostic.as_deref(), Some("HTTP 503"));
+    assert!(!error.to_string().contains("provider-body-marker"));
 }
 
 #[test]

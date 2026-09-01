@@ -377,29 +377,62 @@ fn identical_active_request_is_deduplicated_but_terminal_request_is_an_explicit_
 }
 
 #[test]
-fn adapter_and_normalization_failures_persist_safe_diagnostics_without_phantom_checks() {
-    for (adapter_id, expected_code, has_raw_metadata) in [
-        ("mock_adapter_failure", "QA_ADAPTER_FAILED", true),
-        ("mock_invalid_response", "INVALID_VLM_RESPONSE", true),
-    ] {
-        let fixture = Fixture::new();
-        let run_id = fixture.create(adapter_id);
-        fixture.wait_for_approval(&run_id);
-        fixture.approve(&run_id);
+fn external_adapter_failure_persists_only_stable_bounded_sanitized_diagnostics() {
+    let fixture = Fixture::new();
+    let run_id = fixture.create("mock_adapter_failure");
+    fixture.wait_for_approval(&run_id);
+    fixture.approve(&run_id);
 
-        assert!(WorkflowRuntime::advance_run(&fixture.root, &run_id).is_err());
-        let failed = fixture.qa_run(&run_id);
-        assert_eq!(failed.run.status, QaRunStatus::Failed);
-        assert_eq!(failed.run.error_code.as_deref(), Some(expected_code));
-        assert_eq!(failed.run.raw_response_metadata.is_some(), has_raw_metadata);
-        assert!(failed.checks.is_empty());
-        assert!(!failed
-            .run
-            .error_message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("secret"));
-    }
+    assert!(WorkflowRuntime::advance_run(&fixture.root, &run_id).is_err());
+    let failed = fixture.qa_run(&run_id);
+    assert_eq!(failed.run.status, QaRunStatus::Failed);
+    assert_eq!(failed.run.error_code.as_deref(), Some("QA_ADAPTER_FAILED"));
+    assert_eq!(
+        failed.run.error_message.as_deref(),
+        Some("Video QA adapter request failed")
+    );
+    assert!(failed.checks.is_empty());
+
+    let metadata = failed.run.raw_response_metadata.unwrap();
+    assert_eq!(metadata["adapterErrorKind"], "network");
+    assert_eq!(metadata["failureCode"], "adapter_network");
+    let diagnostic = metadata["diagnostic"].as_str().unwrap();
+    assert!(diagnostic.len() <= 512);
+    assert!(diagnostic.contains("[REDACTED]"));
+    assert!(!diagnostic.contains("sk-review-secret"));
+    assert!(!diagnostic.contains('<'));
+    assert!(!diagnostic.contains('>'));
+    assert!(!diagnostic.chars().any(char::is_control));
+}
+
+#[test]
+fn invalid_response_persists_only_structural_codes_and_counts_for_untrusted_check_ids() {
+    let fixture = Fixture::new();
+    let run_id = fixture.create("mock_invalid_response");
+    fixture.wait_for_approval(&run_id);
+    fixture.approve(&run_id);
+
+    assert!(WorkflowRuntime::advance_run(&fixture.root, &run_id).is_err());
+    let failed = fixture.qa_run(&run_id);
+    assert_eq!(failed.run.status, QaRunStatus::Failed);
+    assert_eq!(
+        failed.run.error_code.as_deref(),
+        Some("INVALID_VLM_RESPONSE")
+    );
+    assert_eq!(
+        failed.run.error_message.as_deref(),
+        Some("Video QA response failed structural validation")
+    );
+    assert!(failed.checks.is_empty());
+
+    let metadata = failed.run.raw_response_metadata.unwrap();
+    assert_eq!(metadata["validationCode"], "check_identity_mismatch");
+    assert_eq!(metadata["reportedCheckCount"], 1);
+    assert!(metadata["plannedCheckCount"].as_u64().unwrap() > 1);
+    let persisted = metadata.to_string();
+    assert!(persisted.len() < 256);
+    assert!(!persisted.contains("sk-untrusted"));
+    assert!(!persisted.contains("script"));
 }
 
 #[test]
