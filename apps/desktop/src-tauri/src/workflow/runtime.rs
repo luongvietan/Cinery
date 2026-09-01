@@ -408,6 +408,10 @@ impl WorkflowRuntime {
                             serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "video_qa_context" => {
+                            serde_json::to_string(&resolve_video_qa_contract_context(&input)?)
+                                .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         "visual_qa_repair_context" => {
                             let context = crate::qa::repair_workflow::resolve(
                                 &conn,
@@ -605,6 +609,10 @@ impl WorkflowRuntime {
                             ))
                             .map_err(|error| AppError::Database(error.to_string()))?
                         }
+                        "video_qa_v1" => serde_json::to_string(&compile_video_qa_contract_request(
+                            &context_json,
+                        )?)
+                        .map_err(|error| AppError::Database(error.to_string()))?,
                         "visual_qa_repair_v1" => {
                             let context: crate::qa::repair_workflow::RepairWorkflowContext =
                                 serde_json::from_str(&context_json).map_err(|error| {
@@ -2308,6 +2316,11 @@ fn execute_ready(
     if operation.id == "asset.run_visual_qa" {
         return execute_visual_qa_ready(conn, project_id, detail, operation);
     }
+    if operation.id == "asset.run_video_qa" {
+        return Err(AppError::WorkflowExecutorNotFound(
+            "video_qa_execution".to_string(),
+        ));
+    }
     if operation.id == "asset.repair_failed_qa" {
         return execute_visual_repair_ready(conn, project_root, project_id, detail, operation);
     }
@@ -3055,11 +3068,54 @@ fn validate_visual_qa_input(input: &Value) -> Result<(), AppError> {
 }
 
 fn validate_video_qa_input(input: &Value) -> Result<(), AppError> {
-    let input = serde_json::from_value::<crate::qa::models::RunVideoQaInput>(input.clone())
-        .map_err(|error| {
-            AppError::WorkflowInputInvalid(format!("invalid video QA input: {error}"))
-        })?;
+    let input = parse_video_qa_input(input)?;
     input.validate().map_err(AppError::WorkflowInputInvalid)
+}
+
+fn parse_video_qa_input(input: &Value) -> Result<crate::qa::models::RunVideoQaInput, AppError> {
+    serde_json::from_value(input.clone())
+        .map_err(|error| AppError::WorkflowInputInvalid(format!("invalid video QA input: {error}")))
+}
+
+/// Temporary Task 1 boundary: this records only the already-validated,
+/// immutable input identity. Task 2 replaces it with provenance-backed context.
+fn resolve_video_qa_contract_context(input: &Value) -> Result<Value, AppError> {
+    let input = parse_video_qa_input(input)?;
+    Ok(serde_json::json!({
+        "schemaVersion": 1,
+        "mediaKind": crate::qa::models::QaMediaKind::Video,
+        "target": {
+            "assetVersionId": input.asset_version_id,
+        },
+        "adapter": {
+            "id": input.adapter_id,
+            "providerId": input.provider_id,
+            "modelId": input.model_id,
+        },
+    }))
+}
+
+/// Temporary Task 1 boundary: preserve the exact validated target and adapter
+/// through approval without attempting provenance lookup or media preparation.
+fn compile_video_qa_contract_request(context_json: &str) -> Result<Value, AppError> {
+    let context: Value = serde_json::from_str(context_json)
+        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let target = context
+        .get("target")
+        .filter(|value| value.is_object())
+        .cloned()
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("video QA target is missing".into()))?;
+    let adapter = context
+        .get("adapter")
+        .filter(|value| value.is_object())
+        .cloned()
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("video QA adapter is missing".into()))?;
+    Ok(serde_json::json!({
+        "schemaVersion": 1,
+        "mediaKind": crate::qa::models::QaMediaKind::Video,
+        "target": target,
+        "adapter": adapter,
+    }))
 }
 
 fn validate_visual_repair_input(input: &Value) -> Result<(), AppError> {
@@ -3246,6 +3302,46 @@ mod tests {
         ] {
             assert!(validate_video_qa_input(&input).is_err());
         }
+    }
+
+    #[test]
+    fn video_qa_run_advances_through_contract_context_and_compilation_to_approval() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("video-qa-contract");
+        ProjectService::create(&root, "Video QA Contract").unwrap();
+
+        let created = WorkflowRuntime::create_run(
+            &root,
+            "video-qa",
+            "1.0.0",
+            "asset.run_video_qa",
+            serde_json::json!({
+                "assetVersionId": "video-version-1",
+                "adapterId": "mock",
+                "providerId": "mock-provider",
+                "modelId": "mock-video-qa-v1"
+            }),
+        )
+        .unwrap();
+
+        let waiting = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
+
+        assert_eq!(waiting.run.status, "waiting_for_approval");
+        let context: Value =
+            serde_json::from_str(waiting.run.context_snapshot_json.as_deref().unwrap()).unwrap();
+        assert_eq!(context["target"]["assetVersionId"], "video-version-1");
+        assert_eq!(context["mediaKind"], "video");
+        let request: Value = serde_json::from_str(
+            waiting
+                .steps
+                .iter()
+                .find(|step| step.step_type == "compile_request")
+                .and_then(|step| step.output_json.as_deref())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(request["target"]["assetVersionId"], "video-version-1");
+        assert_eq!(request["adapter"]["id"], "mock");
     }
 
     #[test]
