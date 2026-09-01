@@ -1,5 +1,7 @@
 use super::errors::QaError;
-use super::models::{QaCheckPlan, QaCheckResult, QaCheckStatus, QaOverallStatus, VisualQaResult};
+use super::models::{
+    QaCheckPlan, QaCheckResult, QaCheckStatus, QaEvaluatorResult, QaOverallStatus,
+};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,7 +26,7 @@ impl QaResponseNormalizer {
         if plan.schema_version != 1 {
             return Err(invalid("unsupported QA check-plan schema version"));
         }
-        let response: VisualQaResult = serde_json::from_str(response_text)
+        let response: QaEvaluatorResult = serde_json::from_str(response_text)
             .map_err(|error| invalid(format!("malformed QA response: {error}")))?;
         if response.schema_version != 1 {
             return Err(invalid("unsupported QA response schema version"));

@@ -148,7 +148,7 @@ pub struct QaCheckResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-pub struct VisualQaResult {
+pub struct QaEvaluatorResult {
     pub schema_version: u32,
     pub checks: Vec<QaCheckResult>,
     pub model_summary: Option<String>,
@@ -179,6 +179,46 @@ pub struct VisualQaRequest {
     pub checks: Vec<QaCheckDefinition>,
     pub response_schema_version: u32,
 }
+
+/// Immutable media identity supplied to a Video QA adapter.  The adapter
+/// verifies this identity immediately before transferring evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaMedia {
+    pub asset_version_id: String,
+    pub local_path: String,
+    pub mime_type: String,
+    pub content_sha256: String,
+    pub size_bytes: u64,
+}
+
+/// Immutable reference identity declared to a Video QA evaluator.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaReference {
+    pub asset_version_id: String,
+    pub local_path: String,
+    pub mime_type: String,
+    pub content_sha256: String,
+    pub size_bytes: u64,
+    pub purpose: String,
+}
+
+/// Versioned evaluator input for a single generated-video candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaRequest {
+    pub request_id: String,
+    pub target: VideoQaMedia,
+    pub references: Vec<VideoQaReference>,
+    pub checks: Vec<QaCheckDefinition>,
+    pub response_schema_version: u32,
+}
+
+/// Video evaluators emit the same strict, versioned check-result schema as
+/// image evaluators. Keeping this an alias preserves image QA wire semantics.
+pub type VisualQaResult = QaEvaluatorResult;
+pub type VideoQaResult = QaEvaluatorResult;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
