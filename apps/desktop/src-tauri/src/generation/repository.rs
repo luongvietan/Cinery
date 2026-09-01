@@ -125,6 +125,55 @@ pub fn get_artifact_for_project(
     .map_err(db_error)
 }
 
+/// Resolves the generated artifact that was durably promoted into one exact
+/// AssetVersion. The project scope comes from the authoritative result set,
+/// not from a mutable asset or Shot pin.
+pub fn get_artifact_for_promoted_asset_version(
+    conn: &Connection,
+    project_id: &str,
+    asset_version_id: &str,
+) -> Result<Option<GeneratedArtifact>, AppError> {
+    conn.query_row(
+        "SELECT a.id, a.result_set_id, a.ordinal, a.media_kind, a.mime_type,
+                a.width, a.height, a.byte_size, a.sha256, a.storage_path,
+                a.capture_status, a.capture_error_code, a.created_at
+         FROM artifact_promotions p
+         JOIN generated_artifacts a ON a.id = p.artifact_id
+         JOIN generation_result_sets r ON r.id = a.result_set_id
+         WHERE p.asset_version_id = ?1 AND r.project_id = ?2",
+        params![asset_version_id, project_id],
+        row_to_artifact,
+    )
+    .optional()
+    .map_err(db_error)
+}
+
+pub fn list_sources(
+    conn: &Connection,
+    artifact_id: &str,
+) -> Result<Vec<GeneratedArtifactSource>, AppError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT artifact_id, asset_version_id, role, ordinal
+             FROM generated_artifact_sources
+             WHERE artifact_id = ?1 ORDER BY ordinal",
+        )
+        .map_err(db_error)?;
+    let sources = statement
+        .query_map([artifact_id], |row| {
+            Ok(GeneratedArtifactSource {
+                artifact_id: row.get(0)?,
+                asset_version_id: row.get(1)?,
+                role: row.get(2)?,
+                ordinal: row.get(3)?,
+            })
+        })
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    Ok(sources)
+}
+
 pub fn get_result_set_for_project(
     conn: &Connection,
     project_id: &str,

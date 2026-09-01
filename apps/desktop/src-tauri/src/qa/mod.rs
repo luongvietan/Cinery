@@ -9,4 +9,5 @@ pub mod repair;
 pub mod repair_workflow;
 pub mod repository;
 pub mod service;
+pub mod video_context;
 pub mod workflow;

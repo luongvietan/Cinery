@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fmt, str::FromStr};
 
+use crate::workflow::execution::ExecutionGenerationParameters;
+
 macro_rules! string_enum {
     ($name:ident { $($variant:ident => $value:literal),+ $(,)? }) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +53,7 @@ string_enum!(QaMediaKind {
     Video => "video",
 });
 
+#[allow(clippy::derivable_impls)]
 impl Default for QaMediaKind {
     fn default() -> Self {
         Self::Image
@@ -197,6 +200,73 @@ pub struct RunVideoQaInput {
     pub provider_id: Option<String>,
     #[serde(default)]
     pub model_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaContextRequest {
+    pub project_id: String,
+    pub asset_version_id: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaTargetContext {
+    pub asset_id: String,
+    pub asset_version_id: String,
+    pub asset_type: String,
+    pub file_path: String,
+    pub mime_type: String,
+    pub content_sha256: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoQaReferenceContext {
+    pub asset_id: String,
+    pub asset_version_id: String,
+    pub asset_type: String,
+    pub file_path: String,
+    pub mime_type: String,
+    pub content_sha256: String,
+    pub size_bytes: u64,
+    pub purpose: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoGenerationOrigin {
+    pub workflow_run_id: String,
+    pub operation_id: String,
+    pub provider_attempt_id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub compiled_request_sha256: String,
+    pub source_asset_version_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoGenerationIntent {
+    pub prompt: String,
+    pub generation_parameters: ExecutionGenerationParameters,
+    pub expected_duration_seconds: Option<f32>,
+    pub motion_requirement: Option<String>,
+    pub camera_requirement: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedVideoQaContext {
+    pub schema_version: u32,
+    pub target: VideoQaTargetContext,
+    pub origin: VideoGenerationOrigin,
+    pub source_keyframe: Option<VideoQaReferenceContext>,
+    pub references: Vec<VideoQaReferenceContext>,
+    pub generation_intent: VideoGenerationIntent,
+    pub created_at: String,
 }
 
 impl RunVideoQaInput {
