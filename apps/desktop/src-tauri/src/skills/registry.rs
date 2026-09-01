@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::skills::builtin::character_builder::builtin_character_builder;
 use crate::skills::builtin::scene_builder::builtin_scene_builder;
+use crate::skills::builtin::video_qa::builtin_video_qa;
 use crate::skills::builtin::visual_qa::builtin_visual_qa;
 use crate::skills::builtin::world_builder::builtin_world_builder;
 use crate::skills::model::{SkillDefinition, SkillOperation};
@@ -16,6 +17,7 @@ impl SkillRegistry {
     pub fn builtin() -> Result<Self, AppError> {
         let definitions = [
             builtin_character_builder(),
+            builtin_video_qa(),
             builtin_visual_qa(),
             builtin_world_builder(),
             builtin_scene_builder(),
@@ -188,6 +190,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
         operation.id.as_str(),
         "character.create_face_lock"
             | "asset.run_visual_qa"
+            | "asset.run_video_qa"
             | "asset.repair_failed_qa"
             | "world.create_plate"
             | "scene.create_keyframe"
@@ -234,6 +237,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "character_outfit_context"
                         | "character_sheet_context"
                         | "visual_qa_context"
+                        | "video_qa_context"
                         | "visual_qa_repair_context"
                         | "world_plate_context"
                         | "scene_keyframe_context"
@@ -252,6 +256,7 @@ fn validate_workflow(operation: &SkillOperation) -> Result<(), AppError> {
                         | "character_outfit_v1"
                         | "character_sheet_v1"
                         | "visual_qa_v1"
+                        | "video_qa_v1"
                         | "visual_qa_repair_v1"
                         | "world_plate_v1"
                         | "scene_keyframe_v1"
@@ -324,7 +329,7 @@ mod tests {
         assert_eq!(skill.id, "character-builder");
         assert_eq!(skill.version, "1.1.0");
         assert_eq!(operation.id, "character.create_face_lock");
-        assert_eq!(registry.list().len(), 4);
+        assert_eq!(registry.list().len(), 5);
     }
 
     #[test]
@@ -362,6 +367,19 @@ mod tests {
 
         assert_eq!(skill.id, "visual-qa");
         assert_eq!(operation.input_schema_id, "run_visual_qa");
+        assert!(operation.expected_output.is_none());
+    }
+
+    #[test]
+    fn builtin_registry_resolves_the_versioned_video_qa_operation() {
+        let registry = SkillRegistry::builtin().unwrap();
+        let (skill, operation) = registry
+            .find_operation("video-qa", "1.0.0", "asset.run_video_qa")
+            .unwrap();
+
+        assert_eq!(skill.id, "video-qa");
+        assert_eq!(skill.version, "1.0.0");
+        assert_eq!(operation.input_schema_id, "run_video_qa");
         assert!(operation.expected_output.is_none());
     }
 

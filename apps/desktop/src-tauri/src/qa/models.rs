@@ -46,6 +46,17 @@ string_enum!(QaOverallStatus {
     NeedsReview => "needs_review",
 });
 
+string_enum!(QaMediaKind {
+    Image => "image",
+    Video => "video",
+});
+
+impl Default for QaMediaKind {
+    fn default() -> Self {
+        Self::Image
+    }
+}
+
 string_enum!(QaCheckStatus {
     Pass => "pass",
     Fail => "fail",
@@ -73,6 +84,15 @@ string_enum!(QaCheckType {
     CompositionRequirement => "composition_requirement",
     Watermark => "watermark",
     UnexpectedArtifact => "unexpected_artifact",
+    VideoIntegrity => "video_integrity",
+    TemporalContinuity => "temporal_continuity",
+    ReferenceContinuity => "reference_continuity",
+    MotionConsistency => "motion_consistency",
+    CameraMotion => "camera_motion",
+    TemporalCoherence => "temporal_coherence",
+    UnexpectedCut => "unexpected_cut",
+    Flicker => "flicker",
+    Deformation => "deformation",
 });
 
 string_enum!(QaReviewStatus {
@@ -166,6 +186,35 @@ pub struct VisualExpectation {
     pub validator_hint: Option<String>,
 }
 
+/// Versioned input contract for Video QA. Credentials and mutable project
+/// paths are intentionally excluded from persisted workflow input.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunVideoQaInput {
+    pub asset_version_id: String,
+    pub adapter_id: String,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub model_id: Option<String>,
+}
+
+impl RunVideoQaInput {
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, value) in [
+            ("assetVersionId", Some(self.asset_version_id.as_str())),
+            ("adapterId", Some(self.adapter_id.as_str())),
+            ("providerId", self.provider_id.as_deref()),
+            ("modelId", self.model_id.as_deref()),
+        ] {
+            if value.is_some_and(|value| value.trim().is_empty()) {
+                return Err(format!("{field} must be a non-empty string when provided"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QaRunRecord {
@@ -173,6 +222,8 @@ pub struct QaRunRecord {
     pub project_id: String,
     pub asset_id: String,
     pub asset_version_id: String,
+    #[serde(default)]
+    pub media_kind: QaMediaKind,
     pub workflow_run_id: Option<String>,
     pub status: QaRunStatus,
     pub overall_status: Option<QaOverallStatus>,
@@ -225,4 +276,38 @@ impl QaCheckRecord {
 pub struct QaRunDetail {
     pub run: QaRunRecord,
     pub checks: Vec<QaCheckRecord>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_qa_run_json_defaults_media_kind_to_image() {
+        let legacy = serde_json::json!({
+            "id": "qa-1",
+            "projectId": "project-1",
+            "assetId": "asset-1",
+            "assetVersionId": "version-1",
+            "workflowRunId": null,
+            "status": "succeeded",
+            "overallStatus": "pass",
+            "adapterId": "mock",
+            "adapterVersion": "1",
+            "modelId": "mock-vlm",
+            "executionLocation": "local",
+            "checkPlan": {},
+            "contextSnapshot": {},
+            "rawResponseMetadata": null,
+            "errorCode": null,
+            "errorMessage": null,
+            "createdAt": "2026-09-01T00:00:00Z",
+            "startedAt": null,
+            "completedAt": null
+        });
+
+        let record: QaRunRecord = serde_json::from_value(legacy).unwrap();
+
+        assert_eq!(record.media_kind, QaMediaKind::Image);
+    }
 }

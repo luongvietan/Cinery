@@ -66,6 +66,7 @@ impl WorkflowRuntime {
             "create_outfit" => validate_outfit_input(&input)?,
             "create_character_sheet" => validate_character_sheet_input(&input)?,
             "run_visual_qa" => validate_visual_qa_input(&input)?,
+            "run_video_qa" => validate_video_qa_input(&input)?,
             "repair_failed_qa" => validate_visual_repair_input(&input)?,
             "create_world_plate" => validate_world_plate_input(&input)?,
             "create_scene_keyframe" => validate_scene_keyframe_input(&input)?,
@@ -3053,6 +3054,14 @@ fn validate_visual_qa_input(input: &Value) -> Result<(), AppError> {
     Ok(())
 }
 
+fn validate_video_qa_input(input: &Value) -> Result<(), AppError> {
+    let input = serde_json::from_value::<crate::qa::models::RunVideoQaInput>(input.clone())
+        .map_err(|error| {
+            AppError::WorkflowInputInvalid(format!("invalid video QA input: {error}"))
+        })?;
+    input.validate().map_err(AppError::WorkflowInputInvalid)
+}
+
 fn validate_visual_repair_input(input: &Value) -> Result<(), AppError> {
     for key in ["projectRootPath", "qaRunId", "providerId", "modelId"] {
         if input
@@ -3210,6 +3219,34 @@ mod tests {
     use crate::project::service::ProjectService;
     use crate::skills::model::TbdGuard;
     use tempfile::tempdir;
+
+    #[test]
+    fn video_qa_input_requires_exact_target_and_rejects_credentials() {
+        assert!(validate_video_qa_input(&serde_json::json!({
+            "assetVersionId": "video-version-1",
+            "adapterId": "mock",
+            "providerId": "mock-provider",
+            "modelId": "mock-video-qa-v1"
+        }))
+        .is_ok());
+
+        for input in [
+            serde_json::json!({"adapterId": "mock"}),
+            serde_json::json!({"assetVersionId": "video-version-1"}),
+            serde_json::json!({
+                "assetVersionId": "video-version-1",
+                "adapterId": "mock",
+                "apiKey": "sk-not-allowed"
+            }),
+            serde_json::json!({
+                "assetVersionId": "video-version-1",
+                "adapterId": "mock",
+                "credential": "not-allowed"
+            }),
+        ] {
+            assert!(validate_video_qa_input(&input).is_err());
+        }
+    }
 
     #[test]
     fn guarded_operation_blocks_launch_without_creating_a_run() {

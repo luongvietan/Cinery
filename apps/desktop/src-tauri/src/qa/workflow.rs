@@ -2,8 +2,8 @@ use super::adapters::{MockVisualQaAdapter, OpenAiCompatibleVisualQaAdapter, Visu
 use super::check_planner::QaCheckPlanner;
 use super::context::{resolve_qa_context, QaPlanningRequest, ResolvedQaContext};
 use super::models::{
-    QaCheckPlan, QaCheckRecord, QaReviewStatus, QaRunRecord, QaRunStatus, VisualExpectation,
-    VisualQaMedia, VisualQaReference, VisualQaRequest,
+    QaCheckPlan, QaCheckRecord, QaMediaKind, QaReviewStatus, QaRunRecord, QaRunStatus,
+    VisualExpectation, VisualQaMedia, VisualQaReference, VisualQaRequest,
 };
 use super::normalizer::QaResponseNormalizer;
 use super::repository;
@@ -82,6 +82,7 @@ pub fn resolve_and_persist(
             project_id: project_id.into(),
             asset_id: resolved.target.asset_id.clone(),
             asset_version_id: resolved.target.asset_version_id.clone(),
+            media_kind: QaMediaKind::Image,
             workflow_run_id: Some(workflow_run_id.into()),
             status: QaRunStatus::Queued,
             overall_status: None,

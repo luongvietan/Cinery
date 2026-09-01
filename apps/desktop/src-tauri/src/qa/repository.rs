@@ -331,6 +331,7 @@ fn row_to_run(row: &Row<'_>) -> rusqlite::Result<QaRunRecord> {
         project_id: row.get(1)?,
         asset_id: row.get(2)?,
         asset_version_id: row.get(3)?,
+        media_kind: super::models::QaMediaKind::Image,
         workflow_run_id: row.get(4)?,
         status: parse_enum(5, row.get::<_, String>(5)?)?,
         overall_status: row
