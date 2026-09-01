@@ -16,6 +16,7 @@ use crate::workflow::context::{
     resolve_character_face_lock_context, resolve_character_outfit_context,
     resolve_character_sheet_context, resolve_scene_keyframe_context, resolve_world_plate_context,
 };
+use crate::workflow::execution::ExecutionGenerationParameters;
 use crate::workflow::executor::{DryRunExecutor, ExecutionExecutor};
 use crate::workflow::model::{
     WorkflowCharacterOption, WorkflowContextSnapshot, WorkflowRunDetail, WorkflowRunRecord,
@@ -3152,6 +3153,50 @@ fn validate_shot_image_to_video_input(input: &Value) -> Result<(), AppError> {
             )));
         }
     }
+    if let Some(parameters) = input.get("generationParameters") {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.values().any(Value::is_null))
+        {
+            return Err(AppError::WorkflowInputInvalid(
+                "generationParameters must not contain null values".into(),
+            ));
+        }
+        let parameters: ExecutionGenerationParameters = serde_json::from_value(parameters.clone())
+            .map_err(|error| {
+                AppError::WorkflowInputInvalid(format!(
+                    "generationParameters must contain valid typed values: {error}"
+                ))
+            })?;
+
+        if let Some(duration_seconds) = parameters.duration_seconds {
+            if !duration_seconds.is_finite() || !(0.5..=30.0).contains(&duration_seconds) {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.durationSeconds must be between 0.5 and 30".into(),
+                ));
+            }
+        }
+        if let Some(fps) = parameters.fps {
+            if !(1..=120).contains(&fps) {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.fps must be between 1 and 120".into(),
+                ));
+            }
+        }
+        if let Some(aspect_ratio) = parameters.aspect_ratio {
+            let Some((width, height)) = aspect_ratio.split_once(':') else {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.aspectRatio must use WIDTH:HEIGHT".into(),
+                ));
+            };
+            let valid = |part: &str| part.parse::<u32>().is_ok_and(|value| value > 0);
+            if !valid(width) || !valid(height) || aspect_ratio.matches(':').count() != 1 {
+                return Err(AppError::WorkflowInputInvalid(
+                    "generationParameters.aspectRatio must use positive WIDTH:HEIGHT".into(),
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -4294,6 +4339,40 @@ mod tests {
                 "seed": 314159
             })
         );
+    }
+
+    #[test]
+    fn shot_i2v_rejects_invalid_generation_parameters_before_creating_a_run() {
+        let fixture = shot_i2v_fixture();
+        let invalid_parameters = [
+            serde_json::json!({ "durationSeconds": null }),
+            serde_json::json!({ "durationSeconds": 0.25 }),
+            serde_json::json!({ "durationSeconds": 30.5 }),
+            serde_json::json!({ "fps": 0 }),
+            serde_json::json!({ "fps": 121 }),
+            serde_json::json!({ "seed": -1 }),
+            serde_json::json!({ "aspectRatio": "landscape" }),
+            serde_json::json!({ "aspectRatio": "0:9" }),
+        ];
+
+        for parameters in invalid_parameters {
+            let mut input = shot_i2v_input(&fixture, "A measured push-in");
+            input["generationParameters"] = parameters;
+            assert!(matches!(
+                WorkflowRuntime::create_run(
+                    &fixture.root,
+                    "scene-builder",
+                    "1.0.0",
+                    "shot.image_to_video",
+                    input,
+                ),
+                Err(AppError::WorkflowInputInvalid(_))
+            ));
+        }
+
+        assert!(WorkflowRuntime::list_runs(&fixture.root)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

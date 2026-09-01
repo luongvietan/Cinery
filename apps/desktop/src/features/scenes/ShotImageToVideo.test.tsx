@@ -212,6 +212,30 @@ describe("ShotImageToVideo", () => {
     expect(screen.getByText("Add or generate a keyframe first.")).toBeInTheDocument();
   });
 
+  it("does not allow generation with a blank motion prompt", async () => {
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Generate Video" })).toBeDisabled();
+    expect(screen.getByText("Add a motion description first.")).toBeInTheDocument();
+  });
+
+  it("does not allow generation with a duration outside the supported range", async () => {
+    const user = userEvent.setup();
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
+    const duration = await screen.findByLabelText("Duration (s)");
+    await user.clear(duration);
+    await user.type(duration, "120");
+
+    expect(screen.getByRole("button", { name: "Generate Video" })).toBeDisabled();
+    expect(screen.getByText("Duration must be between 0.5 and 30 seconds.")).toBeInTheDocument();
+  });
+
   it("creates the exact Shot I2V payload once on rapid clicks", async () => {
     let resolveCreation!: (detail: WorkflowRunDetail) => void;
     vi.mocked(createWorkflowRun).mockImplementationOnce(
@@ -245,6 +269,7 @@ describe("ShotImageToVideo", () => {
     render(
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot({ generatedVideoAssetVersionId: "current-pin" })} onShotChanged={onShotChanged} />,
     );
+    await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
     await user.click(await screen.findByRole("button", { name: "Generate Video" }));
     const useForShot = await screen.findByRole("button", { name: "Use for Shot" });
     await user.click(useForShot);
@@ -335,6 +360,7 @@ describe("ShotImageToVideo", () => {
         <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
       );
       await waitFor(() => expect(getWorkflowRun).toHaveBeenCalledWith("C:/project", "run-1"));
+      await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
       const button = await screen.findByRole("button", { name: "Generate Video" });
       await waitFor(() => expect(button).toBeEnabled());
       await user.click(button);

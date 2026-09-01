@@ -31,6 +31,13 @@ function isActiveRun(run: ResultState | null): boolean {
   return run !== null && !["completed", "cancelled", "failed", "rejected"].includes(run.detail.run.status);
 }
 
+function parseDurationSeconds(value: string): number | null {
+  const durationSeconds = Number(value);
+  return Number.isFinite(durationSeconds) && durationSeconds >= 0.5 && durationSeconds <= 30
+    ? durationSeconds
+    : null;
+}
+
 /**
  * Shot-local image-to-video panel: pick an I2V-capable AI service, animate
  * the shot's exact pinned keyframe, review the video candidates, then pin
@@ -118,7 +125,17 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     // Synchronous double-click guard: while a creation is in flight (ref)
     // or a run is active (state), further clicks never create a second
     // payload. Terminal runs stay visible but do not block a new generation.
-    if (creatingRef.current || isActiveRun(run) || !source || !selection.providerId || !selection.modelId) return;
+    const trimmedPrompt = prompt.trim();
+    const durationSeconds = parseDurationSeconds(duration);
+    if (
+      creatingRef.current
+      || isActiveRun(run)
+      || !source
+      || !selection.providerId
+      || !selection.modelId
+      || !trimmedPrompt
+      || durationSeconds === null
+    ) return;
     creatingRef.current = true;
     setCreating(true);
     setError(null);
@@ -128,8 +145,8 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         shotId: shot.id,
         providerId: selection.providerId,
         modelId: selection.modelId,
-        prompt: prompt.trim(),
-        generationParameters: { durationSeconds: Number(duration) || shot.durationSeconds },
+        prompt: trimmedPrompt,
+        generationParameters: { durationSeconds },
       });
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
       setRun(await resolveRun(waiting));
@@ -185,6 +202,17 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
   }
 
   const runActive = isActiveRun(run);
+  const durationSeconds = parseDurationSeconds(duration);
+  const disabledReason = !source
+    ? "Add or generate a keyframe first."
+    : !prompt.trim()
+      ? "Add a motion description first."
+      : durationSeconds === null
+        ? "Duration must be between 0.5 and 30 seconds."
+        : null;
+  const generationDisabled = Boolean(
+    disabledReason || creating || runActive || !selection.providerId || !selection.modelId,
+  );
 
   return (
     <div className="shot-i2v" style={{ display: "grid", gap: "var(--space-8)", marginTop: "var(--space-8)" }}>
@@ -249,7 +277,11 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         </>
       ) : null}
 
-      <button type="button" onClick={() => void handleGenerate()} disabled={!source || creating || runActive || !selection.providerId || !selection.modelId}>
+      {disabledReason && disabledReason !== "Add or generate a keyframe first." ? (
+        <p role="status" style={{ margin: 0, color: "var(--c-muted)" }}>{disabledReason}</p>
+      ) : null}
+
+      <button type="button" onClick={() => void handleGenerate()} disabled={generationDisabled}>
         {creating ? "Generating…" : "Generate Video"}
       </button>
 
