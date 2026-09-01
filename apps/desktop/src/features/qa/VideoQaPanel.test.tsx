@@ -203,8 +203,31 @@ describe("VideoQaPanel", () => {
     expect(api.approveQaWorkflow).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Approve and Run Video QA" }));
 
-    expect(api.approveQaWorkflow).toHaveBeenCalledWith("C:/project", "workflow-v1", "approve-video-qa");
+    expect(api.approveQaWorkflow).toHaveBeenCalledWith(
+      "C:/project",
+      "workflow-v1",
+      "approve-video-qa",
+      "Video QA evidence disclosure reviewed",
+    );
     expect(api.advanceQaWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the approved state visible when advancing after approval fails", async () => {
+    const waiting = workflowDetail("waiting_for_approval");
+    const ready = workflowDetail("ready_for_execution");
+    vi.mocked(api.advanceQaWorkflow).mockResolvedValueOnce(waiting).mockRejectedValueOnce(new Error("advance failed"));
+    vi.mocked(api.approveQaWorkflow).mockResolvedValue(ready);
+    const user = userEvent.setup();
+    render(<VideoQaPanel projectRootPath="C:/project" assetVersionId="video-v1" versionLabel="V01" />);
+
+    await user.click(await screen.findByRole("button", { name: "Run Video QA" }));
+    await user.click(await screen.findByRole("button", { name: "Approve and Run Video QA" }));
+
+    expect(api.approveQaWorkflow).toHaveBeenCalledTimes(1);
+    expect(await screen.findByRole("alert")).toHaveTextContent("advance failed");
+    // The stale "waiting_for_approval" screen must not reappear -- retrying
+    // it would resubmit the same (already-decided) approval.
+    expect(screen.queryByRole("button", { name: "Approve and Run Video QA" })).not.toBeInTheDocument();
   });
 
   it("allows an explicit rerun after terminal workflow history", async () => {

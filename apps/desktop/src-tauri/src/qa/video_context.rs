@@ -5,6 +5,7 @@ use super::models::{
     VideoQaReferenceContext, VideoQaTargetContext,
 };
 use crate::error::AppError;
+use crate::generation::model::GeneratedArtifact;
 use crate::generation::repository as generation_repository;
 use crate::workflow::execution::{
     ExecutionGenerationParameters, ExecutionMediaType, ExecutionReferenceType, ExecutionRequest,
@@ -52,12 +53,42 @@ pub fn resolve_video_qa_context(
     }
     verify_target_file(project_root, &target)?;
 
-    let artifact = generation_repository::get_artifact_for_promoted_asset_version(
+    // An explicit promotion (e.g. "Use for Shot") unambiguously names its
+    // artifact -- no further disambiguation needed. Absent one,
+    // completion-time import never records that association, so fall back
+    // to content identity; because deterministic mock/dry-run providers can
+    // emit byte-identical output for unrelated Scenes, that fallback must
+    // additionally confirm the producing run's own Scene owns this exact
+    // target asset (`require_scene_match`).
+    if let Some(promoted) = generation_repository::get_artifact_for_promoted_asset_version(
         conn,
         &request.project_id,
-        &request.asset_version_id,
-    )?
-    .ok_or(AppError::VideoQaProvenanceUnsupported)?;
+        &target.asset_version_id,
+    )? {
+        return resolve_from_artifact(conn, request, &target, &promoted, false);
+    }
+
+    let mut last_error = AppError::VideoQaProvenanceUnsupported;
+    for artifact in generation_repository::list_video_artifacts_by_content(
+        conn,
+        &request.project_id,
+        &target.content_sha256,
+    )? {
+        match resolve_from_artifact(conn, request, &target, &artifact, true) {
+            Ok(context) => return Ok(context),
+            Err(error) => last_error = error,
+        }
+    }
+    Err(last_error)
+}
+
+fn resolve_from_artifact(
+    conn: &Connection,
+    request: &VideoQaContextRequest,
+    target: &VideoQaTargetContext,
+    artifact: &GeneratedArtifact,
+    require_scene_match: bool,
+) -> Result<ResolvedVideoQaContext, AppError> {
     let result_set = generation_repository::get_result_set_for_project(
         conn,
         &request.project_id,
@@ -66,8 +97,15 @@ pub fn resolve_video_qa_context(
     .ok_or(AppError::VideoQaProvenanceUnsupported)?;
     let lineage = generation_repository::get_lineage(conn, &artifact.id)?
         .ok_or(AppError::VideoQaProvenanceUnsupported)?;
-    let promotion = generation_repository::find_promotion(conn, &artifact.id)?
-        .ok_or(AppError::VideoQaProvenanceUnsupported)?;
+    // A promotion may or may not exist yet (QA can run before explicit
+    // promotion); when it does, it must agree with the exact target.
+    if let Some(promotion) = generation_repository::find_promotion(conn, &artifact.id)? {
+        if promotion.asset_id != target.asset_id
+            || promotion.asset_version_id != target.asset_version_id
+        {
+            return Err(AppError::VideoQaProvenanceUnsupported);
+        }
+    }
     let sources = generation_repository::list_sources(conn, &artifact.id)?;
 
     if artifact.media_kind != "video"
@@ -76,8 +114,6 @@ pub fn resolve_video_qa_context(
         || artifact.sha256 != target.content_sha256
         || artifact.byte_size < 0
         || artifact.byte_size as u64 != target.size_bytes
-        || promotion.asset_id != target.asset_id
-        || promotion.asset_version_id != target.asset_version_id
         || result_set.media_kind != "video"
         || result_set.workflow_run_id != lineage.workflow_run_id
         || result_set.provider_attempt_id != lineage.provider_attempt_id
@@ -164,6 +200,24 @@ pub fn resolve_video_qa_context(
         return Err(AppError::VideoQaProvenanceUnsupported);
     }
 
+    // Without an explicit promotion, content identity alone cannot
+    // disambiguate: deterministic mock/dry-run providers can emit
+    // byte-identical output for unrelated shots. Require the frozen
+    // producing run to name the exact Scene that owns the target's video
+    // asset (the same "one video asset per Scene" resolution completion
+    // import and Shot promotion already use).
+    if require_scene_match {
+        let scene_id = frozen_input
+            .get("sceneId")
+            .or_else(|| frozen_input.get("scene_id"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or(AppError::VideoQaProvenanceUnsupported)?;
+        if !scene_owns_video_asset(conn, &request.project_id, scene_id, &target.asset_id)? {
+            return Err(AppError::VideoQaProvenanceUnsupported);
+        }
+    }
+
     let mut references = Vec::with_capacity(compiled.references.len());
     for reference in &compiled.references {
         if reference.reference_type != ExecutionReferenceType::AssetVersion
@@ -190,7 +244,7 @@ pub fn resolve_video_qa_context(
     let expected_duration_seconds = compiled.generation_parameters.duration_seconds;
     Ok(ResolvedVideoQaContext {
         schema_version: VIDEO_QA_CONTEXT_SCHEMA_VERSION,
-        target,
+        target: target.clone(),
         origin: VideoGenerationOrigin {
             workflow_run_id: lineage.workflow_run_id,
             operation_id: workflow.operation_id,
@@ -370,6 +424,23 @@ fn verify_target_file(project_root: &Path, target: &VideoQaTargetContext) -> Res
         ));
     }
     Ok(())
+}
+
+fn scene_owns_video_asset(
+    conn: &Connection,
+    project_id: &str,
+    scene_id: &str,
+    asset_id: &str,
+) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT 1 FROM assets
+         WHERE id = ?1 AND project_id = ?2 AND type = 'video' AND owner_entity_id = ?3",
+        params![asset_id, project_id, scene_id],
+        |_| Ok(()),
+    )
+    .optional()
+    .map_err(db_error)
+    .map(|found| found.is_some())
 }
 
 fn purpose(role: Option<&ReferenceRole>) -> &'static str {

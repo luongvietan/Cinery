@@ -148,6 +148,40 @@ pub fn get_artifact_for_promoted_asset_version(
     .map_err(db_error)
 }
 
+/// Resolves candidate video artifacts by exact content identity, scoped to
+/// the project. Completion-time import (`import_scene_video_candidate`)
+/// never records an `artifact_promotions` row -- that stays an explicit
+/// human "Use for Shot" / promote action -- so provenance resolution for an
+/// unpromoted candidate must fall back to content identity here. Ordered
+/// oldest-first to match `AssetService::import_media_version`'s dedup
+/// semantics (the first producing artifact is authoritative). Callers must
+/// still disambiguate by owning Scene: deterministic mock/dry-run providers
+/// can legitimately emit byte-identical output for unrelated shots.
+pub fn list_video_artifacts_by_content(
+    conn: &Connection,
+    project_id: &str,
+    sha256: &str,
+) -> Result<Vec<GeneratedArtifact>, AppError> {
+    let mut statement = conn
+        .prepare(
+            "SELECT a.id, a.result_set_id, a.ordinal, a.media_kind, a.mime_type,
+                    a.width, a.height, a.byte_size, a.sha256, a.storage_path,
+                    a.capture_status, a.capture_error_code, a.created_at
+             FROM generated_artifacts a
+             JOIN generation_result_sets r ON r.id = a.result_set_id
+             WHERE r.project_id = ?1 AND a.sha256 = ?2 AND a.media_kind = 'video'
+               AND a.capture_status = 'available'
+             ORDER BY a.created_at ASC, a.id ASC",
+        )
+        .map_err(db_error)?;
+    let artifacts = statement
+        .query_map(params![project_id, sha256], row_to_artifact)
+        .map_err(db_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(db_error)?;
+    Ok(artifacts)
+}
+
 pub fn list_sources(
     conn: &Connection,
     artifact_id: &str,

@@ -133,8 +133,18 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
     setCreating(true);
     setError(null);
     try {
-      await api.approveQaWorkflow(projectRootPath, workflow.run.id, "approve-video-qa");
-      const next = await api.advanceQaWorkflow(projectRootPath, workflow.run.id);
+      const approved = await api.approveQaWorkflow(
+        projectRootPath,
+        workflow.run.id,
+        "approve-video-qa",
+        "Video QA evidence disclosure reviewed",
+      );
+      // Store the approval immediately: if advancing fails below, the panel
+      // must reflect the true (already-approved) server state rather than
+      // a stale "waiting_for_approval" that would re-submit the same
+      // approval and hit "already decided" on retry.
+      setWorkflow(approved);
+      const next = await api.advanceQaWorkflow(projectRootPath, approved.run.id);
       setWorkflow(next);
       if (TERMINAL_WORKFLOW_STATUSES.includes(next.run.status)) await loadQa();
     } catch (reason: unknown) {

@@ -99,12 +99,13 @@ export function approveQaWorkflow(
   projectRootPath: string,
   workflowRunId: string,
   stepDefinitionId: string,
+  note = "Visual QA media disclosure reviewed",
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("approve_workflow_step", {
     projectRootPath,
     workflowRunId,
     stepDefinitionId,
-    note: "Visual QA media disclosure reviewed",
+    note,
   });
 }
 

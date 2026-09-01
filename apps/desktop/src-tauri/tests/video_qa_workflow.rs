@@ -1,3 +1,4 @@
+use cinematic_desktop_lib::cinema::promotion::promote_shot_video_candidate;
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
 use cinematic_desktop_lib::qa::models::{
@@ -33,7 +34,26 @@ impl Fixture {
             root,
             project_id,
         };
-        fixture.insert_generated_video();
+        fixture.insert_generated_video(true);
+        fixture
+    }
+
+    /// Matches the real completion-time state: the candidate is imported
+    /// but never explicitly promoted ("Use for Shot" is a separate, later
+    /// human action). QA must be runnable here -- this is the golden-path
+    /// precondition.
+    fn new_unpromoted() -> Self {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("video-qa-workflow-unpromoted");
+        let project_id = ProjectService::create(&root, "Video QA Workflow Unpromoted")
+            .unwrap()
+            .id;
+        let fixture = Self {
+            _temp: temp,
+            root,
+            project_id,
+        };
+        fixture.insert_generated_video(false);
         fixture
     }
 
@@ -91,7 +111,7 @@ impl Fixture {
             .unwrap()
     }
 
-    fn insert_generated_video(&self) {
+    fn insert_generated_video(&self, with_promotion: bool) {
         let keyframe = b"immutable keyframe K1";
         let video = b"video candidate V1";
         insert_asset_version(
@@ -112,6 +132,15 @@ impl Fixture {
             "assets/video-v1.mp4",
             video,
         );
+        // The video asset is owned by its scene (matches
+        // `find_or_create_scene_video_asset` at completion-time import),
+        // which unpromoted Video QA provenance resolution relies on.
+        self.conn()
+            .execute(
+                "UPDATE assets SET owner_entity_id = 'scene-1' WHERE id = 'video-asset'",
+                [],
+            )
+            .unwrap();
         let generated_path = self.root.join("generated/run-1/attempt-1/0001.mp4");
         fs::create_dir_all(generated_path.parent().unwrap()).unwrap();
         fs::write(generated_path, video).unwrap();
@@ -245,13 +274,15 @@ impl Fixture {
             params![compiled_hash, CREATED_AT],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO artifact_promotions
-             (id, artifact_id, asset_id, asset_version_id, set_canonical, created_at)
-             VALUES ('promotion-1', 'artifact-1', 'video-asset', 'video-v1', 0, ?1)",
-            [CREATED_AT],
-        )
-        .unwrap();
+        if with_promotion {
+            conn.execute(
+                "INSERT INTO artifact_promotions
+                 (id, artifact_id, asset_id, asset_version_id, set_canonical, created_at)
+                 VALUES ('promotion-1', 'artifact-1', 'video-asset', 'video-v1', 0, ?1)",
+                [CREATED_AT],
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -542,4 +573,32 @@ fn reopen_fails_interrupted_non_durable_video_qa_without_external_reexecution() 
             .status,
         "failed"
     );
+}
+
+/// The real golden path: a completion-time-imported candidate (no
+/// `artifact_promotions` row yet -- "Use for Shot" is a separate, later
+/// human action) must support the full Video QA workflow end to end, and
+/// explicit promotion must still succeed afterward regardless of the QA
+/// outcome. This is the exact sequence the P10.3 spec requires and that the
+/// promotion-only provenance resolution used to make impossible.
+#[test]
+fn runs_qa_and_still_allows_explicit_promotion_for_an_unpromoted_candidate() {
+    let fixture = Fixture::new_unpromoted();
+    let run_id = fixture.create("mock");
+    fixture.wait_for_approval(&run_id);
+    fixture.approve(&run_id);
+
+    let completed = WorkflowRuntime::advance_run(&fixture.root, &run_id).unwrap();
+    assert_eq!(completed.run.status, "completed");
+    let qa = fixture.qa_run(&run_id);
+    assert_eq!(qa.run.status, QaRunStatus::Succeeded);
+    assert_eq!(qa.run.asset_version_id, "video-v1");
+
+    // The fixture's `scene_shots` row already carries 'video-v1' as its
+    // generated-video pin (fixture shorthand for "the candidate exists"),
+    // so that is the expected current pin for this compare-and-set.
+    let promoted =
+        promote_shot_video_candidate(&fixture.root, "shot-1", "artifact-1", Some("video-v1"))
+            .unwrap();
+    assert_eq!(promoted.asset_version_id, "video-v1");
 }
