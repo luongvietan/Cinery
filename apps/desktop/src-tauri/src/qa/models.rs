@@ -88,14 +88,15 @@ string_enum!(QaCheckType {
     Watermark => "watermark",
     UnexpectedArtifact => "unexpected_artifact",
     VideoIntegrity => "video_integrity",
-    TemporalContinuity => "temporal_continuity",
-    ReferenceContinuity => "reference_continuity",
-    MotionConsistency => "motion_consistency",
-    CameraMotion => "camera_motion",
+    StartFrameContinuity => "start_frame_continuity",
+    IdentityTemporalConsistency => "identity_temporal_consistency",
+    ReferenceTemporalConsistency => "reference_temporal_consistency",
+    MotionAdherence => "motion_adherence",
+    CameraMotionAdherence => "camera_motion_adherence",
     TemporalCoherence => "temporal_coherence",
     UnexpectedCut => "unexpected_cut",
     Flicker => "flicker",
-    Deformation => "deformation",
+    DeformationOrWarping => "deformation_or_warping",
 });
 
 string_enum!(QaReviewStatus {
