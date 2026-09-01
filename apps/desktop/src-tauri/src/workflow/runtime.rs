@@ -131,6 +131,20 @@ impl WorkflowRuntime {
                 &report,
             );
         }
+        if operation.id == "asset.run_video_qa" {
+            return Self::create_video_qa_run(
+                &mut conn,
+                RunIdentity {
+                    project_id: &project.id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input,
+                operation,
+                &report,
+            );
+        }
         let run_id = WorkflowRepository::create_run(
             &mut conn,
             NewWorkflowRun {
@@ -255,6 +269,74 @@ impl WorkflowRuntime {
         transaction
             .commit()
             .map_err(|error| AppError::Database(error.to_string()))?;
+        WorkflowRepository::get_run(conn, project_id, &run_id)
+    }
+
+    /// Reuses only an identical active request for the same exact AssetVersion.
+    /// Terminal history is never reused: another create call is an explicit
+    /// rerun and receives a new workflow/QA identity.
+    fn create_video_qa_run(
+        conn: &mut Connection,
+        identity: RunIdentity<'_>,
+        input: Value,
+        operation: &crate::skills::model::SkillOperation,
+        report: &crate::workflow::model::PrerequisiteReport,
+    ) -> Result<WorkflowRunDetail, AppError> {
+        let RunIdentity {
+            project_id,
+            skill_id,
+            skill_version,
+            operation_id,
+        } = identity;
+        let normalized: crate::qa::models::RunVideoQaInput = serde_json::from_value(input)
+            .map_err(|error| {
+                AppError::WorkflowInputInvalid(format!("invalid video QA input: {error}"))
+            })?;
+        let frozen = serde_json::to_value(normalized)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let input_json = serde_json::to_string(&frozen)
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT id FROM workflow_runs
+                 WHERE project_id = ?1 AND skill_id = ?2 AND skill_version = ?3
+                   AND operation_id = ?4 AND input_json = ?5
+                   AND status IN ('created', 'running', 'waiting_for_approval',
+                                  'ready_for_execution')
+                 ORDER BY created_at DESC, id DESC LIMIT 1",
+                params![
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                    input_json
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        if let Some(run_id) = existing {
+            transaction.rollback().map_err(db_error)?;
+            return WorkflowRepository::get_run(conn, project_id, &run_id);
+        }
+        let run_id = WorkflowRepository::create_run_in_transaction(
+            &transaction,
+            NewWorkflowRun {
+                identity: RunIdentity {
+                    project_id,
+                    skill_id,
+                    skill_version,
+                    operation_id,
+                },
+                input: &frozen,
+                prerequisite_report: report,
+                steps: &operation.workflow,
+            },
+        )?;
+        transaction.commit().map_err(db_error)?;
         WorkflowRepository::get_run(conn, project_id, &run_id)
     }
 
@@ -409,7 +491,14 @@ impl WorkflowRuntime {
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
                         "video_qa_context" => {
-                            serde_json::to_string(&resolve_video_qa_contract_context(&input)?)
+                            let context = crate::qa::video_workflow::resolve_and_persist(
+                                &conn,
+                                project_root,
+                                &project.id,
+                                workflow_run_id,
+                                &input,
+                            )?;
+                            serde_json::to_string(&context)
                                 .map_err(|error| AppError::Database(error.to_string()))?
                         }
                         "visual_qa_repair_context" => {
@@ -609,10 +698,17 @@ impl WorkflowRuntime {
                             ))
                             .map_err(|error| AppError::Database(error.to_string()))?
                         }
-                        "video_qa_v1" => serde_json::to_string(&compile_video_qa_contract_request(
-                            &context_json,
-                        )?)
-                        .map_err(|error| AppError::Database(error.to_string()))?,
+                        "video_qa_v1" => {
+                            let context: crate::qa::video_workflow::VideoQaWorkflowContext =
+                                serde_json::from_str(&context_json).map_err(|error| {
+                                    AppError::WorkflowRunInconsistent(error.to_string())
+                                })?;
+                            serde_json::to_string(&crate::qa::video_workflow::compile_request(
+                                project_root,
+                                &context,
+                            ))
+                            .map_err(|error| AppError::Database(error.to_string()))?
+                        }
                         "visual_qa_repair_v1" => {
                             let context: crate::qa::repair_workflow::RepairWorkflowContext =
                                 serde_json::from_str(&context_json).map_err(|error| {
@@ -1000,6 +1096,153 @@ fn execute_visual_qa_ready(
         Some(complete_step_id),
         None,
         &completed_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+    WorkflowRepository::get_run(conn, project_id, &detail.run.id)
+}
+
+fn execute_video_qa_ready(
+    conn: &mut Connection,
+    project_id: &str,
+    detail: WorkflowRunDetail,
+    operation: &crate::skills::model::SkillOperation,
+) -> Result<WorkflowRunDetail, AppError> {
+    let execute_index = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "execute" && step.status == "pending")
+        .map(|step| step.step_index)
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("execute step is missing".into()))?;
+    let request_json = detail
+        .steps
+        .iter()
+        .find(|step| step.step_type == "compile_request")
+        .and_then(|step| step.output_json.clone())
+        .ok_or_else(|| AppError::WorkflowRunInconsistent("compiled request is missing".into()))?;
+    let compiled: crate::qa::video_workflow::CompiledVideoQaRequest =
+        serde_json::from_str(&request_json)
+            .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
+    let (execute_step_id, complete_step_id) = match (
+        operation.workflow.get(execute_index as usize),
+        operation.workflow.get(execute_index as usize + 1),
+    ) {
+        (
+            Some(crate::workflow::model::WorkflowStepDefinition::Execute { id, .. }),
+            Some(crate::workflow::model::WorkflowStepDefinition::Complete { id: complete_id }),
+        ) => (id.as_str(), complete_id.as_str()),
+        _ => {
+            return Err(AppError::WorkflowRunInconsistent(
+                "video QA execute/complete definitions are missing".into(),
+            ))
+        }
+    };
+    let started_at = Utc::now().to_rfc3339();
+    let execution_payload = serde_json::json!({
+        "qaRunId": compiled.qa_run_id,
+        "executionLocation": compiled.execution_location,
+        "adapterId": compiled.adapter_id,
+        "modelId": compiled.model_id,
+        "evidenceMode": compiled.evidence_mode,
+    })
+    .to_string();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    tx.execute(
+        "UPDATE workflow_runs SET status = 'running', updated_at = ?1 WHERE id = ?2",
+        params![started_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    mark_step(&tx, &detail.run.id, execute_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(execute_step_id),
+        None,
+        &started_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_started",
+        Some(execute_step_id),
+        Some(&execution_payload),
+        &started_at,
+    )?;
+    tx.commit().map_err(db_error)?;
+
+    let completion = crate::qa::video_workflow::execute(conn, &compiled)?;
+    let result_json = serde_json::to_string(&completion.result)
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let completed_payload = serde_json::json!({"qaRunId": completion.result.qa_run_id}).to_string();
+    let complete_index = execute_index + 1;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(db_error)?;
+    crate::qa::repository::complete_run_in_transaction(
+        &tx,
+        &completion.result.qa_run_id,
+        completion.result.overall_status,
+        &completion.raw_response_metadata,
+        &completion.checks,
+        &completion.completed_at,
+    )?;
+    mark_step(
+        &tx,
+        &detail.run.id,
+        execute_index,
+        "completed",
+        Some(&result_json),
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "execution_completed",
+        Some(execute_step_id),
+        Some(&completed_payload),
+        &completion.completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(execute_step_id),
+        None,
+        &completion.completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "running", None)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_started",
+        Some(complete_step_id),
+        None,
+        &completion.completed_at,
+    )?;
+    mark_step(&tx, &detail.run.id, complete_index, "completed", None)?;
+    tx.execute(
+        "UPDATE workflow_runs
+         SET status = 'completed', current_step_index = ?1, completed_at = ?2, updated_at = ?2
+         WHERE id = ?3",
+        params![complete_index + 1, completion.completed_at, detail.run.id],
+    )
+    .map_err(db_error)?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "step_completed",
+        Some(complete_step_id),
+        None,
+        &completion.completed_at,
+    )?;
+    append_event_in_transaction(
+        &tx,
+        &detail.run.id,
+        "run_completed",
+        Some(complete_step_id),
+        None,
+        &completion.completed_at,
     )?;
     tx.commit().map_err(db_error)?;
     WorkflowRepository::get_run(conn, project_id, &detail.run.id)
@@ -2317,9 +2560,7 @@ fn execute_ready(
         return execute_visual_qa_ready(conn, project_id, detail, operation);
     }
     if operation.id == "asset.run_video_qa" {
-        return Err(AppError::WorkflowExecutorNotFound(
-            "video_qa_execution".to_string(),
-        ));
+        return execute_video_qa_ready(conn, project_id, detail, operation);
     }
     if operation.id == "asset.repair_failed_qa" {
         return execute_visual_repair_ready(conn, project_root, project_id, detail, operation);
@@ -3077,47 +3318,6 @@ fn parse_video_qa_input(input: &Value) -> Result<crate::qa::models::RunVideoQaIn
         .map_err(|error| AppError::WorkflowInputInvalid(format!("invalid video QA input: {error}")))
 }
 
-/// Temporary Task 1 boundary: this records only the already-validated,
-/// immutable input identity. Task 2 replaces it with provenance-backed context.
-fn resolve_video_qa_contract_context(input: &Value) -> Result<Value, AppError> {
-    let input = parse_video_qa_input(input)?;
-    Ok(serde_json::json!({
-        "schemaVersion": 1,
-        "mediaKind": crate::qa::models::QaMediaKind::Video,
-        "target": {
-            "assetVersionId": input.asset_version_id,
-        },
-        "adapter": {
-            "id": input.adapter_id,
-            "providerId": input.provider_id,
-            "modelId": input.model_id,
-        },
-    }))
-}
-
-/// Temporary Task 1 boundary: preserve the exact validated target and adapter
-/// through approval without attempting provenance lookup or media preparation.
-fn compile_video_qa_contract_request(context_json: &str) -> Result<Value, AppError> {
-    let context: Value = serde_json::from_str(context_json)
-        .map_err(|error| AppError::WorkflowRunInconsistent(error.to_string()))?;
-    let target = context
-        .get("target")
-        .filter(|value| value.is_object())
-        .cloned()
-        .ok_or_else(|| AppError::WorkflowRunInconsistent("video QA target is missing".into()))?;
-    let adapter = context
-        .get("adapter")
-        .filter(|value| value.is_object())
-        .cloned()
-        .ok_or_else(|| AppError::WorkflowRunInconsistent("video QA adapter is missing".into()))?;
-    Ok(serde_json::json!({
-        "schemaVersion": 1,
-        "mediaKind": crate::qa::models::QaMediaKind::Video,
-        "target": target,
-        "adapter": adapter,
-    }))
-}
-
 fn validate_visual_repair_input(input: &Value) -> Result<(), AppError> {
     for key in ["projectRootPath", "qaRunId", "providerId", "modelId"] {
         if input
@@ -3305,7 +3505,7 @@ mod tests {
     }
 
     #[test]
-    fn video_qa_run_advances_through_contract_context_and_compilation_to_approval() {
+    fn video_qa_run_requires_a_resolvable_exact_target_before_approval() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("video-qa-contract");
         ProjectService::create(&root, "Video QA Contract").unwrap();
@@ -3324,24 +3524,10 @@ mod tests {
         )
         .unwrap();
 
-        let waiting = WorkflowRuntime::advance_run(&root, &created.run.id).unwrap();
-
-        assert_eq!(waiting.run.status, "waiting_for_approval");
-        let context: Value =
-            serde_json::from_str(waiting.run.context_snapshot_json.as_deref().unwrap()).unwrap();
-        assert_eq!(context["target"]["assetVersionId"], "video-version-1");
-        assert_eq!(context["mediaKind"], "video");
-        let request: Value = serde_json::from_str(
-            waiting
-                .steps
-                .iter()
-                .find(|step| step.step_type == "compile_request")
-                .and_then(|step| step.output_json.as_deref())
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(request["target"]["assetVersionId"], "video-version-1");
-        assert_eq!(request["adapter"]["id"], "mock");
+        assert!(matches!(
+            WorkflowRuntime::advance_run(&root, &created.run.id),
+            Err(AppError::AssetVersionNotFound)
+        ));
     }
 
     #[test]

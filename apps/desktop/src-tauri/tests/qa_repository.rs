@@ -1,7 +1,7 @@
 use cinematic_desktop_lib::db::migrations::run_migrations;
 use cinematic_desktop_lib::qa::models::{
-    QaCheckRecord, QaCheckSource, QaCheckStatus, QaCheckType, QaOverallStatus, QaReviewStatus,
-    QaRunRecord, QaRunStatus,
+    QaCheckRecord, QaCheckSource, QaCheckStatus, QaCheckType, QaMediaKind, QaOverallStatus,
+    QaReviewStatus, QaRunRecord, QaRunStatus,
 };
 use cinematic_desktop_lib::qa::repository;
 use cinematic_desktop_lib::qa::service::QaService;
@@ -35,6 +35,7 @@ fn qa_history_round_trips_and_review_preserves_model_result() {
         project_id: "project-1".into(),
         asset_id: "asset-1".into(),
         asset_version_id: "version-1".into(),
+        media_kind: QaMediaKind::Image,
         workflow_run_id: None,
         status: QaRunStatus::Succeeded,
         overall_status: Some(QaOverallStatus::Fail),
@@ -108,6 +109,7 @@ fn qa_history_is_scoped_to_the_exact_asset_version() {
         project_id: "project-1".into(),
         asset_id: "asset-1".into(),
         asset_version_id: "version-1".into(),
+        media_kind: QaMediaKind::Image,
         workflow_run_id: None,
         status: QaRunStatus::Queued,
         overall_status: None,
@@ -165,6 +167,7 @@ fn qa_history_survives_database_close_and_reopen() {
             project_id: "project-1".into(),
             asset_id: "asset-1".into(),
             asset_version_id: "version-1".into(),
+            media_kind: QaMediaKind::Image,
             workflow_run_id: None,
             status: QaRunStatus::Queued,
             overall_status: None,
@@ -200,6 +203,7 @@ fn human_override_recomputes_effective_overall_without_rewriting_model_status() 
         project_id: "project-1".into(),
         asset_id: "asset-1".into(),
         asset_version_id: "version-1".into(),
+        media_kind: QaMediaKind::Image,
         workflow_run_id: None,
         status: QaRunStatus::Succeeded,
         overall_status: Some(QaOverallStatus::Fail),

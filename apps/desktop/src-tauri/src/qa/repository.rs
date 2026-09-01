@@ -1,7 +1,7 @@
 use super::errors::QaError;
 use super::models::{QaCheckRecord, QaReviewStatus, QaRunDetail, QaRunRecord};
 use crate::error::AppError;
-use rusqlite::{params, types::Type, Connection, OptionalExtension, Row};
+use rusqlite::{params, types::Type, Connection, OptionalExtension, Row, Transaction};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::{fmt::Display, str::FromStr};
@@ -182,35 +182,56 @@ pub fn complete_run(
     completed_at: &str,
 ) -> Result<(), AppError> {
     let transaction = conn.transaction().map_err(db_error)?;
+    complete_run_in_transaction(
+        &transaction,
+        qa_run_id,
+        overall,
+        raw_response_metadata,
+        checks,
+        completed_at,
+    )?;
+    transaction.commit().map_err(db_error)
+}
+
+/// Writes every normalized check and the terminal QA aggregate as one unit.
+/// The caller may compose this with the owning workflow's terminal transition
+/// by passing its existing transaction.
+pub(crate) fn complete_run_in_transaction(
+    conn: &Transaction<'_>,
+    qa_run_id: &str,
+    overall: super::models::QaOverallStatus,
+    raw_response_metadata: &serde_json::Value,
+    checks: &[QaCheckRecord],
+    completed_at: &str,
+) -> Result<(), AppError> {
     for check in checks {
-        transaction
-            .execute(
-                "INSERT INTO qa_checks
+        conn.execute(
+            "INSERT INTO qa_checks
                  (id, qa_run_id, check_id, check_type, source, requirement_json, status,
                   confidence, observed, reason, repair_hint, review_status, review_note,
                   reviewed_at, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-                params![
-                    check.id,
-                    check.qa_run_id,
-                    check.check_id,
-                    check.check_type.as_str(),
-                    check.source.as_str(),
-                    check.requirement.to_string(),
-                    check.status.as_str(),
-                    check.confidence,
-                    check.observed,
-                    check.reason,
-                    check.repair_hint,
-                    check.review_status.as_str(),
-                    check.review_note,
-                    check.reviewed_at,
-                    check.created_at,
-                ],
-            )
-            .map_err(db_error)?;
+            params![
+                check.id,
+                check.qa_run_id,
+                check.check_id,
+                check.check_type.as_str(),
+                check.source.as_str(),
+                check.requirement.to_string(),
+                check.status.as_str(),
+                check.confidence,
+                check.observed,
+                check.reason,
+                check.repair_hint,
+                check.review_status.as_str(),
+                check.review_note,
+                check.reviewed_at,
+                check.created_at,
+            ],
+        )
+        .map_err(db_error)?;
     }
-    let changed = transaction
+    let changed = conn
         .execute(
             "UPDATE qa_runs
              SET status = 'succeeded', overall_status = ?1, raw_response_metadata_json = ?2,
@@ -227,7 +248,7 @@ pub fn complete_run(
     if changed == 0 {
         return Err(QaError::RunNotFound.into());
     }
-    transaction.commit().map_err(db_error)
+    Ok(())
 }
 
 pub fn mark_run_failed(
@@ -326,12 +347,18 @@ fn list_checks(conn: &Connection, qa_run_id: &str) -> Result<Vec<QaCheckRecord>,
 }
 
 fn row_to_run(row: &Row<'_>) -> rusqlite::Result<QaRunRecord> {
+    let check_plan: Value = parse_json(11, row.get(11)?)?;
+    let media_kind = if check_plan.get("assetType").and_then(Value::as_str) == Some("video") {
+        super::models::QaMediaKind::Video
+    } else {
+        super::models::QaMediaKind::Image
+    };
     Ok(QaRunRecord {
         id: row.get(0)?,
         project_id: row.get(1)?,
         asset_id: row.get(2)?,
         asset_version_id: row.get(3)?,
-        media_kind: super::models::QaMediaKind::Image,
+        media_kind,
         workflow_run_id: row.get(4)?,
         status: parse_enum(5, row.get::<_, String>(5)?)?,
         overall_status: row
@@ -342,7 +369,7 @@ fn row_to_run(row: &Row<'_>) -> rusqlite::Result<QaRunRecord> {
         adapter_version: row.get(8)?,
         model_id: row.get(9)?,
         execution_location: row.get(10)?,
-        check_plan: parse_json(11, row.get(11)?)?,
+        check_plan,
         context_snapshot: parse_json(12, row.get(12)?)?,
         raw_response_metadata: row
             .get::<_, Option<String>>(13)?

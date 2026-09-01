@@ -11,4 +11,5 @@ pub mod repository;
 pub mod service;
 pub mod video_check_planner;
 pub mod video_context;
+pub mod video_workflow;
 pub mod workflow;

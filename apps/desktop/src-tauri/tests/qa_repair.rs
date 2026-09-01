@@ -1,7 +1,7 @@
 use cinematic_desktop_lib::qa::{
     models::{
         QaCheckDefinition, QaCheckPlan, QaCheckRecord, QaCheckSource, QaCheckStatus, QaCheckType,
-        QaOverallStatus, QaReviewStatus, QaRunDetail, QaRunRecord, QaRunStatus,
+        QaMediaKind, QaOverallStatus, QaReviewStatus, QaRunDetail, QaRunRecord, QaRunStatus,
     },
     repair::RepairCompiler,
 };
@@ -118,6 +118,7 @@ fn detail() -> QaRunDetail {
             project_id: "project-1".into(),
             asset_id: "asset-1".into(),
             asset_version_id: "version-1".into(),
+            media_kind: QaMediaKind::Image,
             workflow_run_id: Some("workflow-qa-1".into()),
             status: QaRunStatus::Succeeded,
             overall_status: Some(QaOverallStatus::Fail),
