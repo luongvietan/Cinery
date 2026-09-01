@@ -3,7 +3,7 @@ use super::{
     VideoQaCapabilities,
 };
 use crate::providers::http::{HttpBody, HttpExecutor, HttpRequest, MultipartPart, UreqExecutor};
-use crate::qa::models::VideoQaRequest;
+use crate::qa::models::{VideoQaReference, VideoQaRequest};
 use crate::video_qa::evidence::{
     prepare_packaged_evidence, EvidenceMode, EvidencePathError, PreparedEvidence,
     TemporalDecoderAvailability,
@@ -138,9 +138,11 @@ impl OpenAiCompatibleVideoQaAdapter {
             ));
         }
 
+        let (references, reference_parts) = verified_reference_parts(&request.references)?;
         let descriptor = serde_json::json!({
             "requestId": request.request_id,
             "schemaVersion": request.response_schema_version,
+            "model": self.model_id,
             "evidenceMode": evidence_mode_name(self.evidence_mode),
             "target": {
                 "assetVersionId": request.target.asset_version_id,
@@ -148,7 +150,7 @@ impl OpenAiCompatibleVideoQaAdapter {
                 "contentSha256": binding.source_content_sha256,
                 "sizeBytes": binding.size_bytes,
             },
-            "references": request.references,
+            "references": references,
             "checks": request.checks,
         });
         let descriptor = serde_json::to_vec(&descriptor).map_err(|error| {
@@ -158,7 +160,7 @@ impl OpenAiCompatibleVideoQaAdapter {
             )
             .with_diagnostic(error.to_string())
         })?;
-        Ok(vec![
+        let mut parts = vec![
             MultipartPart {
                 field_name: "request".into(),
                 file_name: None,
@@ -171,7 +173,9 @@ impl OpenAiCompatibleVideoQaAdapter {
                 content_type: Some(binding.mime_type.into()),
                 bytes,
             },
-        ])
+        ];
+        parts.extend(reference_parts);
+        Ok(parts)
     }
 }
 
@@ -265,6 +269,58 @@ impl VideoQaAdapter for OpenAiCompatibleVideoQaAdapter {
             }),
         })
     }
+}
+
+fn verified_reference_parts(
+    references: &[VideoQaReference],
+) -> Result<(Vec<serde_json::Value>, Vec<MultipartPart>), VideoQaAdapterError> {
+    let mut descriptors = Vec::with_capacity(references.len());
+    let mut parts = Vec::with_capacity(references.len());
+    for (index, reference) in references.iter().enumerate() {
+        if !is_safe_mime_type(&reference.mime_type) {
+            return Err(VideoQaAdapterError::new(
+                VideoQaAdapterErrorKind::InvalidRequest,
+                "Declared reference evidence has an invalid media type",
+            ));
+        }
+        let bytes = std::fs::read(&reference.local_path).map_err(|_| {
+            VideoQaAdapterError::new(
+                VideoQaAdapterErrorKind::InvalidRequest,
+                "Declared reference evidence could not be read",
+            )
+        })?;
+        let sha256 = format!("{:x}", Sha256::digest(&bytes));
+        if sha256 != reference.content_sha256 || bytes.len() as u64 != reference.size_bytes {
+            return Err(VideoQaAdapterError::new(
+                VideoQaAdapterErrorKind::InvalidRequest,
+                "Declared reference evidence does not match its immutable identity",
+            ));
+        }
+        let field_name = format!("reference_{index}");
+        descriptors.push(serde_json::json!({
+            "assetVersionId": reference.asset_version_id,
+            "mimeType": reference.mime_type,
+            "contentSha256": reference.content_sha256,
+            "sizeBytes": reference.size_bytes,
+            "purpose": reference.purpose,
+            "fieldName": field_name,
+        }));
+        parts.push(MultipartPart {
+            field_name,
+            file_name: Some(format!("reference-{index}")),
+            content_type: Some(reference.mime_type.clone()),
+            bytes,
+        });
+    }
+    Ok((descriptors, parts))
+}
+
+fn is_safe_mime_type(value: &str) -> bool {
+    !value.is_empty()
+        && value.contains('/')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'+' | b'-'))
 }
 
 fn evidence_error(error: EvidencePathError) -> VideoQaAdapterError {

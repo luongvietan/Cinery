@@ -6,7 +6,7 @@ use cinematic_desktop_lib::qa::adapters::{
 };
 use cinematic_desktop_lib::qa::models::{
     QaCheckDefinition, QaCheckPlan, QaCheckSource, QaCheckType, QaOverallStatus, VideoQaMedia,
-    VideoQaRequest,
+    VideoQaReference, VideoQaRequest,
 };
 use cinematic_desktop_lib::qa::normalizer::QaResponseNormalizer;
 use cinematic_desktop_lib::video_qa::evidence::{
@@ -169,11 +169,15 @@ fn request(path: &str, sha256: &str, size_bytes: u64) -> VideoQaRequest {
 fn production_adapter_transfers_only_task_zero_bound_direct_video_evidence() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("candidate.mp4");
+    let reference_path = directory.path().join("source-keyframe.png");
     let bytes = [
         0, 0, 0, 16, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0, 0, 0, 0,
     ];
+    let reference_bytes = [137, 80, 78, 71];
     std::fs::write(&source, bytes).unwrap();
+    std::fs::write(&reference_path, reference_bytes).unwrap();
     let sha256 = format!("{:x}", Sha256::digest(bytes));
+    let reference_sha256 = format!("{:x}", Sha256::digest(reference_bytes));
     let requests = Arc::new(Mutex::new(Vec::new()));
     let adapter = OpenAiCompatibleVideoQaAdapter::with_transport(
         "https://video.example/v1",
@@ -187,13 +191,16 @@ fn production_adapter_transfers_only_task_zero_bound_direct_video_evidence() {
     )
     .unwrap();
 
-    let raw = adapter
-        .analyze(&request(
-            &source.to_string_lossy(),
-            &sha256,
-            bytes.len() as u64,
-        ))
-        .unwrap();
+    let mut evaluator_request = request(&source.to_string_lossy(), &sha256, bytes.len() as u64);
+    evaluator_request.references = vec![VideoQaReference {
+        asset_version_id: "keyframe-v1".into(),
+        local_path: reference_path.to_string_lossy().into(),
+        mime_type: "image/png".into(),
+        content_sha256: reference_sha256,
+        size_bytes: reference_bytes.len() as u64,
+        purpose: "source_keyframe".into(),
+    }];
+    let raw = adapter.analyze(&evaluator_request).unwrap();
 
     assert_eq!(adapter.evidence_mode(), EvidenceMode::DirectVideo);
     assert_eq!(adapter.execution_location(), "cloud:video.example");
@@ -209,8 +216,65 @@ fn production_adapter_transfers_only_task_zero_bound_direct_video_evidence() {
         .unwrap();
     assert_eq!(video.content_type.as_deref(), Some("video/mp4"));
     assert_eq!(video.bytes, bytes);
-    assert!(parts.iter().any(|part| part.field_name == "request"));
+    let reference = parts
+        .iter()
+        .find(|part| part.field_name == "reference_0")
+        .expect("each declared reference must be transferred");
+    assert_eq!(reference.content_type.as_deref(), Some("image/png"));
+    assert_eq!(reference.bytes, reference_bytes);
+    let request = parts
+        .iter()
+        .find(|part| part.field_name == "request")
+        .unwrap();
+    let descriptor: serde_json::Value = serde_json::from_slice(&request.bytes).unwrap();
+    assert_eq!(descriptor["model"], "video-qa-model");
+    assert_eq!(descriptor["references"][0]["assetVersionId"], "keyframe-v1");
+    assert!(descriptor["references"][0].get("localPath").is_none());
+    assert!(!format!("{parts:?}").contains(&*reference_path.to_string_lossy()));
     assert!(!format!("{parts:?}").contains("secret"));
+}
+
+#[test]
+fn production_adapter_rejects_a_reference_identity_mismatch_before_network() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("candidate.mp4");
+    let reference_path = directory.path().join("source-keyframe.png");
+    let bytes = [
+        0, 0, 0, 16, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm', 0, 0, 0, 0,
+    ];
+    let reference_bytes = [137, 80, 78, 71];
+    std::fs::write(&source, bytes).unwrap();
+    std::fs::write(&reference_path, reference_bytes).unwrap();
+    let sha256 = format!("{:x}", Sha256::digest(bytes));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let adapter = OpenAiCompatibleVideoQaAdapter::with_transport(
+        "https://video.example/v1",
+        "secret",
+        "video-qa-model",
+        EvidenceMode::DirectVideo,
+        TemporalDecoderAvailability::Unavailable,
+        FixtureTransport {
+            requests: requests.clone(),
+        },
+    )
+    .unwrap();
+    let mut evaluator_request = request(&source.to_string_lossy(), &sha256, bytes.len() as u64);
+    evaluator_request.references = vec![VideoQaReference {
+        asset_version_id: "keyframe-v1".into(),
+        local_path: reference_path.to_string_lossy().into(),
+        mime_type: "image/png".into(),
+        content_sha256: "not-the-file-hash".into(),
+        size_bytes: reference_bytes.len() as u64,
+        purpose: "source_keyframe".into(),
+    }];
+
+    let error = adapter.analyze(&evaluator_request).unwrap_err();
+
+    assert_eq!(
+        error.kind,
+        cinematic_desktop_lib::qa::adapters::VideoQaAdapterErrorKind::InvalidRequest
+    );
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[test]
