@@ -354,7 +354,8 @@ fn immutable_video_qa_golden_path_survives_review_promotion_and_later_mutation()
     assert_eq!(reviewed.checks[0].review_status, QaReviewStatus::Confirmed);
 
     // --- Explicit promotion: independent of, and after, QA. ---
-    let promoted_v1 = promote_shot_video_candidate(root, &shot.id, &artifact_v1.id, None).unwrap();
+    let promoted_v1 =
+        promote_shot_video_candidate(root, &shot.id, &artifact_v1.id, None, None).unwrap();
     assert_eq!(promoted_v1.asset_version_id, v1);
     assert_eq!(
         shot_row(root, &shot.id)
@@ -394,7 +395,7 @@ fn immutable_video_qa_golden_path_survives_review_promotion_and_later_mutation()
 
     // --- Explicitly promote V2, superseding V1's Shot pin. ---
     let promoted_v2 =
-        promote_shot_video_candidate(root, &shot.id, &artifact_v2.id, Some(&v1)).unwrap();
+        promote_shot_video_candidate(root, &shot.id, &artifact_v2.id, Some(&v1), None).unwrap();
     assert_eq!(promoted_v2.asset_version_id, v2);
     assert_eq!(
         shot_row(root, &shot.id)

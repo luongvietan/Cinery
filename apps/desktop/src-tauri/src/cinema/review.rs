@@ -45,11 +45,14 @@ pub struct PromotionRisk {
 
 impl PromotionRisk {
     /// True when the candidate carries a production risk a human must
-    /// explicitly acknowledge: failed/needs-review QA or stale inputs.
+    /// explicitly acknowledge: failed or needs-review QA, or stale inputs.
+    /// QA never having run is NOT a risk — a fresh candidate is normal.
     pub fn is_exceptional(&self) -> bool {
-        self.qa_overall_status.as_deref() != Some("pass")
-            || !self.source_shot_version_current
-            || !self.source_keyframe_is_current_pin
+        let qa_is_risky = matches!(
+            self.qa_overall_status.as_deref(),
+            Some("fail") | Some("needs_review")
+        );
+        qa_is_risky || !self.source_shot_version_current || !self.source_keyframe_is_current_pin
     }
 }
 
@@ -296,10 +299,10 @@ pub mod read_model {
                  rv.state, \
                  (SELECT overall_status FROM qa_runs \
                    WHERE asset_version_id = av.id AND overall_status IS NOT NULL \
-                     AND media_kind = 'video' \
+                     AND json_extract(check_plan_json, '$.assetType') = 'video' \
                    ORDER BY created_at DESC, id DESC LIMIT 1) AS qa_overall, \
                  (SELECT COUNT(*) FROM qa_runs \
-                   WHERE asset_version_id = av.id AND media_kind = 'video') AS qa_count, \
+                   WHERE asset_version_id = av.id AND json_extract(check_plan_json, '$.assetType') = 'video') AS qa_count, \
                  al.workflow_run_id, al.provider_id, al.model_id, \
                  (SELECT asset_version_id FROM generated_artifact_sources \
                    WHERE artifact_id = al.artifact_id \
@@ -978,24 +981,21 @@ mod tests {
             let version = fixture.video_version_id();
             reject_candidate(&conn, &fixture.project_id(), &version, None).unwrap();
 
-            // Promote the rejected candidate: canonical, yet still rejected.
-            let promoted = crate::cinema::promotion::promote_shot_video_candidate(
+            // The gate refuses to promote a rejected candidate...
+            let error = crate::cinema::promotion::promote_shot_video_candidate(
                 &fixture.root,
                 &fixture.shot_id,
                 &fixture.artifact_id,
                 None,
+                None,
             )
-            .unwrap();
-            assert_eq!(promoted.asset_version_id, version);
-
-            let candidates = list_shot_video_candidates(
-                &conn,
-                &fixture.shot_id,
-                Some(&promoted.asset_version_id),
-            )
-            .unwrap();
-            assert_eq!(candidates[0].review_state, CandidateReviewState::Rejected);
-            assert!(candidates[0].is_canonical);
+            .unwrap_err();
+            assert_eq!(error.code(), "CANDIDATE_REJECTED");
+            // ...and the pin is untouched by the refused promotion.
+            assert_eq!(
+                resolve_canonical_video_version(&conn, &fixture.shot_id).unwrap(),
+                None
+            );
         }
 
         #[test]
@@ -1109,6 +1109,7 @@ mod tests {
                 &fixture.shot_id,
                 &fixture.artifact_id,
                 None,
+                None,
             )
             .unwrap();
             assert_eq!(
@@ -1131,7 +1132,7 @@ mod tests {
                 adapter_version: Some("1".to_string()),
                 model_id: Some("mock-video-qa-v1".to_string()),
                 execution_location: "local".to_string(),
-                check_plan: serde_json::json!({}),
+                check_plan: serde_json::json!({"assetType": "video"}),
                 context_snapshot: serde_json::json!({}),
                 raw_response_metadata: None,
                 error_code: None,
@@ -1211,6 +1212,7 @@ mod tests {
                 &fixture.root,
                 &fixture.shot_id,
                 &fixture.artifact_id,
+                None,
                 None,
             )
             .unwrap();

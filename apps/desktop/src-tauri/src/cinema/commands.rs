@@ -165,18 +165,22 @@ pub fn get_shot_image_to_video_source(
 /// Promotes one exact captured `shot.image_to_video` candidate onto the
 /// Shot's video pin under explicit human review. Conflict-safe: a stale
 /// expected pin returns `PROMOTION_CONFLICT` without overwriting the winner.
+/// An exceptional candidate (QA failed/needs-review, stale frozen inputs)
+/// requires a non-empty `override_reason`, audited as a QA override.
 #[tauri::command]
 pub fn promote_shot_video_candidate(
     project_root_path: String,
     shot_id: String,
     artifact_id: String,
     expected_current_video_asset_version_id: Option<String>,
+    override_reason: Option<String>,
 ) -> Result<crate::cinema::promotion::ShotVideoPromotionResult, AppCommandError> {
     crate::cinema::promotion::promote_shot_video_candidate(
         root_path(&project_root_path)?,
         &shot_id,
         &artifact_id,
         expected_current_video_asset_version_id.as_deref(),
+        override_reason.as_deref(),
     )
     .map_err(AppCommandError::from)
 }

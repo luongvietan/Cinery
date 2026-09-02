@@ -413,14 +413,20 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
         shot.id.clone(),
         artifact_id.clone(),
         Some("stale".into()),
+        None,
     )
     .unwrap_err();
     assert_eq!(error.code, "PROMOTION_CONFLICT");
 
     // Promote with the real (null) expected pin.
-    let promoted =
-        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id.clone(), None)
-            .unwrap();
+    let promoted = promote_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        artifact_id.clone(),
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!(promoted.shot_id, shot.id);
     assert_eq!(promoted.artifact_id, artifact_id);
     assert_eq!(promoted.previous_asset_version_id, None);
@@ -445,6 +451,7 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
         shot.id.clone(),
         artifact_id.clone(),
         Some(promoted.asset_version_id.clone()),
+        None,
     )
     .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
@@ -452,7 +459,8 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     // Same-artifact replay wins even without an expected pin while the Shot
     // still holds the promoted version (hardened final-review semantics).
     let replayed =
-        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None).unwrap();
+        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None, None)
+            .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
 }
 
@@ -598,9 +606,27 @@ fn shot_video_review_commands_reject_restore_and_resolve() {
     let candidates = list_shot_video_candidates(f.root.clone(), shot.id.clone()).unwrap();
     assert_eq!(candidates[0].review_state.as_str(), "rejected");
 
-    // Rejecting the canonical is refused: promote first, then try.
+    // A rejected candidate cannot be promoted (domain gate), and the
+    // refused promotion leaves the pin untouched.
+    let rejected_promotion = promote_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        artifact_id.clone(),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(rejected_promotion.code, "CANDIDATE_REJECTED");
+    assert_eq!(
+        resolve_canonical_shot_video(f.root.clone(), shot.id.clone()).unwrap(),
+        None
+    );
+
+    // Rejecting the canonical is refused: restore + promote first, then try.
+    restore_shot_video_candidate(f.root.clone(), shot.id.clone(), version.clone()).unwrap();
     let promoted =
-        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None).unwrap();
+        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None, None)
+            .unwrap();
     let error = reject_shot_video_candidate(
         f.root.clone(),
         shot.id.clone(),
