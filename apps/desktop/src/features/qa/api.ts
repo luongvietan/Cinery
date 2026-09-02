@@ -33,6 +33,8 @@ export async function reviewQaCheck(input: {
 export function createVisualQaWorkflow(
   projectRootPath: string,
   assetVersionId: string,
+  providerId?: string,
+  modelId?: string,
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("create_workflow_run", {
     projectRootPath,
@@ -43,6 +45,8 @@ export function createVisualQaWorkflow(
       projectRootPath,
       assetVersionId,
       adapterId: "openai",
+      providerId,
+      modelId,
       expectations: [],
     },
   });
