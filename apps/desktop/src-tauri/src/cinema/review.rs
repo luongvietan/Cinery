@@ -375,6 +375,79 @@ pub mod read_model {
     }
 }
 
+/// Human review actions at the application boundary (P10.4): Reject and
+/// Restore. Invariants are enforced here (Rust), never in React:
+///   * the current canonical video cannot be rejected;
+///   * rejection is reversible and never deletes artifacts or QA history;
+///   * restoring returns a candidate to Active without promoting it.
+pub mod service {
+    use super::read_model::resolve_canonical_video_version;
+    use super::repository::{reject_candidate, restore_candidate, review_state};
+    use super::{decide_rejection, decide_restoration, CandidateReviewState};
+    use crate::error::AppError;
+    use std::path::Path;
+
+    /// Rejects one shot video candidate for review. Idempotent for
+    /// already-rejected candidates; errors for the canonical video.
+    pub fn reject_shot_video_candidate(
+        project_root: &Path,
+        shot_id: &str,
+        asset_version_id: &str,
+        reason: Option<&str>,
+    ) -> Result<CandidateReviewState, AppError> {
+        let conn = crate::db::open_existing_connection(&project_root.join("project.db"))?;
+        let project_id: String = conn
+            .query_row("SELECT id FROM projects", [], |row| row.get(0))
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        // The candidate must exist, be a video version, and belong to the
+        // Shot's scene-owned video asset (ownership via the candidate list).
+        let candidates = super::read_model::list_shot_video_candidates(
+            &conn,
+            shot_id,
+            resolve_canonical_video_version(&conn, shot_id)?.as_deref(),
+        )?;
+        let candidate = candidates
+            .iter()
+            .find(|candidate| candidate.asset_version_id == asset_version_id)
+            .ok_or(AppError::AssetVersionNotFound)?;
+
+        // Domain decision: canonical candidates cannot be rejected.
+        decide_rejection(
+            asset_version_id,
+            candidate.is_canonical.then_some(asset_version_id),
+            review_state(&conn, asset_version_id)?,
+        )?;
+
+        reject_candidate(&conn, &project_id, asset_version_id, reason)?;
+        Ok(CandidateReviewState::Rejected)
+    }
+
+    /// Restores a rejected shot video candidate to Active. Idempotent for
+    /// active candidates; never promotes.
+    pub fn restore_shot_video_candidate(
+        project_root: &Path,
+        shot_id: &str,
+        asset_version_id: &str,
+    ) -> Result<CandidateReviewState, AppError> {
+        let conn = crate::db::open_existing_connection(&project_root.join("project.db"))?;
+        let candidates = super::read_model::list_shot_video_candidates(
+            &conn,
+            shot_id,
+            resolve_canonical_video_version(&conn, shot_id)?.as_deref(),
+        )?;
+        if !candidates
+            .iter()
+            .any(|candidate| candidate.asset_version_id == asset_version_id)
+        {
+            return Err(AppError::AssetVersionNotFound);
+        }
+        let restored = decide_restoration(review_state(&conn, asset_version_id)?);
+        restore_candidate(&conn, asset_version_id)?;
+        Ok(restored)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1093,6 +1166,172 @@ mod tests {
                 ..qa_record(project_id, &asset_id, asset_version_id)
             };
             crate::qa::repository::insert_run(conn, &record).unwrap();
+        }
+
+        /// Inserts one succeeded video QA run for a version; shared with
+        /// the review-action tests to assert QA survival across reject.
+        pub(super) fn qa_record_for_test(
+            conn: &rusqlite::Connection,
+            project_id: &str,
+            asset_version_id: &str,
+        ) {
+            insert_video_qa_run(conn, project_id, asset_version_id, "pass");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Review actions (Task 4): Reject / Restore at the service boundary.
+    // ------------------------------------------------------------------
+
+    mod service_tests {
+        use super::super::repository::review_state;
+        use super::super::service::{reject_shot_video_candidate, restore_shot_video_candidate};
+        use super::super::CandidateReviewState;
+        use crate::cinema::promotion::test_support::completed_shot_i2v_fixture;
+        use crate::db;
+
+        #[test]
+        fn active_noncanonical_candidate_is_rejected() {
+            let fixture = completed_shot_i2v_fixture();
+            let version = fixture.video_version_id();
+            let state = reject_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                &version,
+                Some("unused take"),
+            )
+            .unwrap();
+            assert_eq!(state, CandidateReviewState::Rejected);
+        }
+
+        #[test]
+        fn canonical_candidate_rejection_is_refused() {
+            let fixture = completed_shot_i2v_fixture();
+            let promoted = crate::cinema::promotion::promote_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                &fixture.artifact_id,
+                None,
+            )
+            .unwrap();
+            let error = reject_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                &promoted.asset_version_id,
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "CANONICAL_CANDIDATE_CANNOT_BE_REJECTED");
+
+            // Canonical selection is unchanged — no automatic unpromotion.
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            assert_eq!(
+                review_state(&conn, &promoted.asset_version_id).unwrap(),
+                CandidateReviewState::Active
+            );
+        }
+
+        #[test]
+        fn rejecting_an_already_rejected_candidate_is_idempotent() {
+            let fixture = completed_shot_i2v_fixture();
+            let version = fixture.video_version_id();
+            reject_shot_video_candidate(&fixture.root, &fixture.shot_id, &version, Some("first"))
+                .unwrap();
+            reject_shot_video_candidate(&fixture.root, &fixture.shot_id, &version, Some("second"))
+                .unwrap();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            assert_eq!(
+                review_state(&conn, &version).unwrap(),
+                CandidateReviewState::Rejected
+            );
+        }
+
+        #[test]
+        fn rejected_candidate_is_restored_to_active() {
+            let fixture = completed_shot_i2v_fixture();
+            let version = fixture.video_version_id();
+            reject_shot_video_candidate(&fixture.root, &fixture.shot_id, &version, None).unwrap();
+            let state =
+                restore_shot_video_candidate(&fixture.root, &fixture.shot_id, &version).unwrap();
+            assert_eq!(state, CandidateReviewState::Active);
+
+            // Restore does not promote.
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            assert_eq!(
+                super::super::read_model::resolve_canonical_video_version(&conn, &fixture.shot_id)
+                    .unwrap(),
+                None
+            );
+        }
+
+        #[test]
+        fn restoring_an_active_candidate_is_idempotent() {
+            let fixture = completed_shot_i2v_fixture();
+            let version = fixture.video_version_id();
+            let state =
+                restore_shot_video_candidate(&fixture.root, &fixture.shot_id, &version).unwrap();
+            assert_eq!(state, CandidateReviewState::Active);
+        }
+
+        #[test]
+        fn artifacts_and_qa_survive_rejection_and_restore() {
+            let fixture = completed_shot_i2v_fixture();
+            let version = fixture.video_version_id();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            super::super::tests::read_model_tests::qa_record_for_test(
+                &conn,
+                &fixture.project_id(),
+                &version,
+            );
+            drop(conn);
+
+            reject_shot_video_candidate(&fixture.root, &fixture.shot_id, &version, None).unwrap();
+            restore_shot_video_candidate(&fixture.root, &fixture.shot_id, &version).unwrap();
+
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            // Artifact-derived version still resolves with its file intact.
+            let (file_path, byte_size): (String, i64) = conn
+                .query_row(
+                    "SELECT file_path, byte_size FROM asset_versions WHERE id = ?1",
+                    [&version],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert!(!file_path.is_empty());
+            assert!(byte_size > 0);
+            // QA history intact.
+            let qa_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM qa_runs WHERE asset_version_id = ?1",
+                    [&version],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(qa_count, 1);
+        }
+
+        #[test]
+        fn version_of_another_shot_is_not_rejectable() {
+            let fixture = completed_shot_i2v_fixture();
+            let other = completed_shot_i2v_fixture();
+            let other_version = other.video_version_id();
+            let error =
+                reject_shot_video_candidate(&fixture.root, &fixture.shot_id, &other_version, None)
+                    .unwrap_err();
+            assert_eq!(error.code(), "ASSET_VERSION_NOT_FOUND");
+        }
+
+        #[test]
+        fn unknown_version_is_not_found() {
+            let fixture = completed_shot_i2v_fixture();
+            let error = reject_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                "missing-version",
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error.code(), "ASSET_VERSION_NOT_FOUND");
         }
     }
 }
