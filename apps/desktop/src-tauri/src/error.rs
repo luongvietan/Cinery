@@ -300,6 +300,13 @@ pub enum AppError {
     ImageToVideoUnsupported,
     #[error("the Shot video changed before promotion completed")]
     PromotionConflict,
+
+    #[error("this video candidate was rejected and must be restored before promotion")]
+    CandidateRejected,
+    #[error("promote another video before rejecting the current canonical version")]
+    CanonicalCandidateCannotBeRejected,
+    #[error("this candidate needs an explicit override reason before promotion")]
+    QaOverrideRequired,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.
