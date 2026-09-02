@@ -142,6 +142,33 @@ describe("ProviderModelFields", () => {
     expect(option.textContent).toContain("not compatible");
   });
 
+  it("offers an LLM-purpose custom provider when mediaType is llm, and excludes an image-only one", async () => {
+    vi.mocked(listProviders).mockResolvedValue(["llm_only", "image_only"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([
+      {
+        providerId: "llm_only", displayName: "LLM only", baseUrl: "https://api.example.test/v1",
+        purpose: "llm", models: [{ id: "chat-v1", name: "Chat V1" }], headers: [],
+      },
+      {
+        providerId: "image_only", displayName: "Image only", baseUrl: "https://api.other.test/v1",
+        purpose: "image", models: [{ id: "img-v1", name: "Image V1" }], headers: [],
+      },
+    ]);
+    vi.mocked(listProviderModels).mockImplementation(async (providerId) =>
+      providerId === "llm_only" ? ["chat-v1"] : ["img-v1"]);
+    vi.mocked(getProviderCapabilities).mockRejectedValue(new Error("custom provider"));
+    vi.mocked(getProviderConfigurationStatus).mockImplementation(async (_root, providerId) => ({
+      providerId, enabled: true, credentialConfigured: true,
+      defaultModel: providerId === "llm_only" ? "chat-v1" : "img-v1",
+      models: providerId === "llm_only" ? ["chat-v1"] : ["img-v1"],
+    }));
+
+    render(<ProviderModelFields projectRootPath="C:/p" value={{ providerId: "llm_only", modelId: "chat-v1" }} mediaType="llm" requiresReferences={false} onChange={vi.fn()} />);
+
+    expect(await screen.findByRole("option", { name: /^llm_only$/ })).toBeEnabled();
+    expect(screen.getByRole("option", { name: /image_only/ })).toBeDisabled();
+  });
+
   it("offers only providers and models that advertise video.imageToVideo", async () => {
     vi.mocked(listProviders).mockResolvedValue(["plain-video", "i2v"]);
     vi.mocked(getProviderCapabilities).mockImplementation(async (providerId) =>
