@@ -209,10 +209,21 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
         serde_json::from_str(&compiled_request_json(root, &running.run.id)).unwrap();
     assert_eq!(compiled["references"][0]["reference"], source_version);
 
-    // Explicit promotion: drift is allowed (the artifact is pinned under
-    // human review) — this mirrors the product decision that the user may
-    // accept an I2V result generated from a prior keyframe.
-    let promoted = promote_shot_video_candidate(root, &shot.id, &artifact.id, None, None).unwrap();
+    // Explicit promotion: the drifted keyframe makes this candidate
+    // exceptional under P10.4 — promoting it requires an explicit override
+    // reason (the user may accept an I2V result generated from a prior
+    // keyframe, but the decision must be deliberate and audited).
+    let blocked = promote_shot_video_candidate(root, &shot.id, &artifact.id, None, None)
+        .unwrap_err();
+    assert!(matches!(blocked, cinematic_desktop_lib::error::AppError::QaOverrideRequired));
+    let promoted = promote_shot_video_candidate(
+        root,
+        &shot.id,
+        &artifact.id,
+        None,
+        Some("Keeping the take from the earlier keyframe."),
+    )
+    .unwrap();
     let final_shot = shot_row(root, &shot.id);
     assert_eq!(
         final_shot.generated_video_asset_version_id.as_deref(),
