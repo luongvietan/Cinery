@@ -145,6 +145,78 @@ fn reason_is_missing(reason: Option<&str>) -> bool {
     }
 }
 
+/// Persistence for candidate review state (P10.4). Review rows live in
+/// `shot_video_review_states`; absence of a row means `Active`. Canonical
+/// selection is NOT stored here — it stays on the Shot pin (P10.2).
+pub mod repository {
+    use super::CandidateReviewState;
+    use crate::error::AppError;
+    use rusqlite::{params, OptionalExtension};
+
+    fn row_to_state(state: String) -> CandidateReviewState {
+        match state.as_str() {
+            "rejected" => CandidateReviewState::Rejected,
+            _ => CandidateReviewState::Active,
+        }
+    }
+
+    /// Reads the review state of one video candidate version. A missing
+    /// row means the candidate is Active (generation and QA never write
+    /// review rows).
+    pub fn review_state(
+        conn: &rusqlite::Connection,
+        asset_version_id: &str,
+    ) -> Result<CandidateReviewState, AppError> {
+        let state: Option<String> = conn
+            .query_row(
+                "SELECT state FROM shot_video_review_states WHERE asset_version_id = ?1",
+                params![asset_version_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(state
+            .map(row_to_state)
+            .unwrap_or(CandidateReviewState::Active))
+    }
+
+    /// Persists `Rejected` for one candidate. Idempotent: an already
+    /// rejected candidate keeps its original rejection record.
+    pub fn reject_candidate(
+        conn: &rusqlite::Connection,
+        project_id: &str,
+        asset_version_id: &str,
+        reason: Option<&str>,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO shot_video_review_states \
+             (asset_version_id, project_id, state, reason, created_at, updated_at) \
+             VALUES (?1, ?2, 'rejected', ?3, ?4, ?4) \
+             ON CONFLICT(asset_version_id) DO UPDATE SET \
+             state = 'rejected', updated_at = excluded.updated_at",
+            params![asset_version_id, project_id, reason, now],
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(())
+    }
+
+    /// Restores a rejected candidate to Active by deleting its review row,
+    /// returning the candidate to the default Active state. Idempotent for
+    /// candidates that were never rejected.
+    pub fn restore_candidate(
+        conn: &rusqlite::Connection,
+        asset_version_id: &str,
+    ) -> Result<(), AppError> {
+        conn.execute(
+            "DELETE FROM shot_video_review_states WHERE asset_version_id = ?1",
+            params![asset_version_id],
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +476,190 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.code(), "QA_OVERRIDE_REQUIRED");
+    }
+
+    // ------------------------------------------------------------------
+    // Persistence (Task 2): review state survives repository reload.
+    // ------------------------------------------------------------------
+
+    mod persistence_tests {
+        use super::super::repository::*;
+        use super::super::CandidateReviewState;
+        use crate::db::{self, migrations::run_migrations};
+        use rusqlite::Connection;
+
+        fn migrated_conn() -> Connection {
+            let mut conn = Connection::open_in_memory().unwrap();
+            run_migrations(&mut conn).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+            conn
+        }
+
+        /// Seeds one project + video asset + two candidate versions, and
+        /// returns (conn, project_id, [version ids]).
+        fn seeded() -> (Connection, String, Vec<String>) {
+            let conn = migrated_conn();
+            conn.execute(
+                "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+                 VALUES ('p1', 'Red Door', 'now', 'now', 1)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO assets (id, project_id, type, label, owner_entity_id, \
+                 canonical_version_id, created_at, updated_at) \
+                 VALUES ('a-vid', 'p1', 'video', 'Scene 001 — Video', NULL, NULL, 'now', 'now')",
+                [],
+            )
+            .unwrap();
+            for (id, version_number, hash_prefix) in [("v1", 1, 'a'), ("v2", 2, 'b')] {
+                conn.execute(
+                    "INSERT INTO asset_versions (id, asset_id, version_number, status, \
+                     file_path, thumbnail_path, sha256, original_filename, mime_type, \
+                     byte_size, created_at) \
+                     VALUES (?1, 'a-vid', ?2, 'candidate', 'v.mp4', '', ?3, 'v.mp4', \
+                     'video/mp4', 24, 'now')",
+                    rusqlite::params![id, version_number, hash_prefix.to_string().repeat(64)],
+                )
+                .unwrap();
+            }
+            (conn, "p1".into(), vec!["v1".into(), "v2".into()])
+        }
+
+        #[test]
+        fn initial_candidates_are_active_without_review_rows() {
+            let (conn, _, versions) = seeded();
+            for version in &versions {
+                assert_eq!(
+                    review_state(&conn, version).unwrap(),
+                    CandidateReviewState::Active
+                );
+            }
+        }
+
+        #[test]
+        fn restore_survives_reload_and_returns_to_active() {
+            let (conn, project, versions) = seeded();
+            reject_candidate(&conn, &project, &versions[0], None).unwrap();
+            restore_candidate(&conn, &versions[0]).unwrap();
+            assert_eq!(
+                review_state(&conn, &versions[0]).unwrap(),
+                CandidateReviewState::Active
+            );
+        }
+
+        #[test]
+        fn rejecting_an_already_rejected_candidate_is_idempotent() {
+            let (conn, project, versions) = seeded();
+            reject_candidate(&conn, &project, &versions[0], Some("first")).unwrap();
+            reject_candidate(&conn, &project, &versions[0], Some("second")).unwrap();
+            let (state, reason): (String, Option<String>) = conn
+                .query_row(
+                    "SELECT state, reason FROM shot_video_review_states \
+                     WHERE asset_version_id = ?1",
+                    [&versions[0]],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(state, "rejected");
+            assert_eq!(reason.as_deref(), Some("first"));
+            assert_eq!(
+                review_state(&conn, &versions[0]).unwrap(),
+                CandidateReviewState::Rejected
+            );
+        }
+
+        #[test]
+        fn restoring_an_active_candidate_is_a_noop() {
+            let (conn, _, versions) = seeded();
+            restore_candidate(&conn, &versions[0]).unwrap();
+            let rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM shot_video_review_states", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(rows, 0);
+        }
+
+        #[test]
+        fn invalid_cross_project_reference_is_rejected() {
+            let (conn, _, versions) = seeded();
+            // FK: review rows must reference a real project.
+            assert!(reject_candidate(&conn, "missing-project", &versions[0], None).is_err());
+        }
+
+        #[test]
+        fn unknown_versions_cannot_be_reviewed() {
+            let (conn, project, _) = seeded();
+            assert!(reject_candidate(&conn, &project, "missing-version", None).is_err());
+        }
+
+        #[test]
+        fn deleting_a_version_cascades_its_review_row() {
+            let (conn, project, versions) = seeded();
+            reject_candidate(&conn, &project, &versions[0], None).unwrap();
+            conn.execute("DELETE FROM asset_versions WHERE id = ?1", [&versions[0]])
+                .unwrap();
+            let rows: i64 = conn
+                .query_row("SELECT COUNT(*) FROM shot_video_review_states", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(rows, 0);
+        }
+
+        #[test]
+        fn running_migrations_twice_is_still_idempotent() {
+            let mut conn = Connection::open_in_memory().unwrap();
+            run_migrations(&mut conn).unwrap();
+            run_migrations(&mut conn).unwrap();
+        }
+
+        #[test]
+        fn review_state_survives_reopening_a_file_database() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("project.db");
+            let project = "p1".to_string();
+            let version = "v1".to_string();
+            {
+                let mut conn = db::open_connection(&db_path).unwrap();
+                run_migrations(&mut conn).unwrap();
+                conn.execute(
+                    "INSERT INTO projects (id, name, created_at, updated_at, schema_version) \
+                     VALUES (?1, 'Red Door', 'now', 'now', 1)",
+                    [&project],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO assets (id, project_id, type, label, created_at, updated_at) \
+                     VALUES ('a-vid', ?1, 'video', 'V', 'now', 'now')",
+                    [&project],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO asset_versions (id, asset_id, version_number, status, \
+                     file_path, thumbnail_path, sha256, original_filename, mime_type, \
+                     byte_size, created_at) \
+                     VALUES ('v1', 'a-vid', 1, 'candidate', 'v.mp4', '', ?, 'v.mp4', \
+                     'video/mp4', 24, 'now')",
+                    ["a".repeat(64)],
+                )
+                .unwrap();
+                reject_candidate(&conn, &project, &version, Some("unused take")).unwrap();
+            }
+            // Reopen: rejection persisted across a full restart.
+            let conn = db::open_existing_connection(&db_path).unwrap();
+            assert_eq!(
+                review_state(&conn, &version).unwrap(),
+                CandidateReviewState::Rejected
+            );
+            restore_candidate(&conn, &version).unwrap();
+            drop(conn);
+            let conn = db::open_existing_connection(&db_path).unwrap();
+            assert_eq!(
+                review_state(&conn, &version).unwrap(),
+                CandidateReviewState::Active
+            );
+        }
     }
 }
