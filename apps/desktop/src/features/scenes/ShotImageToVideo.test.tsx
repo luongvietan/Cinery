@@ -1,11 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { GenerationResultSetDetail, ShotVideoPromotionResult, WorkflowRunDetail } from "@cinematic/domain";
+import type { GenerationResultSetDetail, WorkflowRunDetail } from "@cinematic/domain";
 import { ShotImageToVideo } from "./ShotImageToVideo";
 import type { Shot } from "./api";
 import { advanceWorkflowRun, createWorkflowRun, getProviderCapabilities, getProviderConfigurationStatus, getWorkflowRun, listCustomProviders, listProviderModels, listProviders, listWorkflowRuns } from "../workflows/api";
-import { getShotImageToVideoSource, promoteShotVideoCandidate } from "./api";
+import { getShotImageToVideoSource, listShotVideoCandidates } from "./api";
 import { listGenerationResults } from "../generation/api";
 import { getAssetWithVersions, listAssets } from "../assets/api";
 import * as qaApi from "../qa/api";
@@ -19,7 +19,7 @@ vi.mock("./api", async (importOriginal) => {
   return {
     ...actual,
     getShotImageToVideoSource: vi.fn(),
-    promoteShotVideoCandidate: vi.fn(),
+    listShotVideoCandidates: vi.fn(),
   };
 });
 vi.mock("../generation/api");
@@ -178,6 +178,7 @@ describe("ShotImageToVideo", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getShotImageToVideoSource).mockResolvedValue(keyframeSource);
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([]);
     vi.mocked(createWorkflowRun).mockResolvedValue(completedRun());
     vi.mocked(advanceWorkflowRun).mockResolvedValue(completedRun());
     vi.mocked(listWorkflowRuns).mockResolvedValue([]);
@@ -198,15 +199,6 @@ describe("ShotImageToVideo", () => {
     vi.mocked(getProviderConfigurationStatus).mockResolvedValue({
       providerId: "i2v", enabled: true, credentialConfigured: true,
       defaultModel: "motion-v1", models: ["motion-v1"],
-    });
-    vi.mocked(promoteShotVideoCandidate).mockImplementation(async (_root, _shotId, artifactId, expected) => {
-      const result: ShotVideoPromotionResult = {
-        shotId: "shot-1",
-        artifactId,
-        assetVersionId: `video-version-${artifactId}`,
-        previousAssetVersionId: expected ?? null,
-      };
-      return result;
     });
   });
 
@@ -269,31 +261,57 @@ describe("ShotImageToVideo", () => {
     });
   });
 
-  it("promotes the exact candidate with the current pin as the expected value", async () => {
-    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
-    const onShotChanged = vi.fn();
-    const user = userEvent.setup();
-    render(
-      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot({ generatedVideoAssetVersionId: "current-pin" })} onShotChanged={onShotChanged} />,
-    );
-    await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
-    await user.click(await screen.findByRole("button", { name: "Generate Video" }));
-    const useForShot = await screen.findByRole("button", { name: "Use for Shot" });
-    await user.click(useForShot);
-    await waitFor(() => expect(promoteShotVideoCandidate).toHaveBeenCalledWith(
-      "C:/project",
-      "shot-1",
-      "artifact-1",
-      "current-pin",
-    ));
-    expect(onShotChanged).toHaveBeenCalled();
-  });
-
   it("marks the current pin so the user sees which candidate is live", async () => {
     render(
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot({ generatedVideoAssetVersionId: "video-version-artifact-1" })} onShotChanged={vi.fn()} />,
     );
     expect(await screen.findByText(/current Shot video/)).toBeInTheDocument();
+  });
+
+  it("shows the review workspace candidates resolved by the backend read model", async () => {
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([
+      {
+        assetVersionId: "video-v1", versionNumber: 1, shotId: "shot-1", sceneId: "scene-1",
+        createdAt: "2026-09-03T00:00:00Z", filePath: "assets/video-v1.mp4", mimeType: "video/mp4",
+        byteSize: 24, reviewState: "active", isCanonical: false, qaOverallStatus: null,
+        qaRunCount: 0, providerId: "i2v", modelId: "motion-v1", workflowRunId: "run-1",
+        sourceAssetVersionId: "kf-v1", sourceKeyframeIsCurrent: true,
+      },
+    ]);
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+    expect(await screen.findByRole("button", { name: "V01" })).toBeInTheDocument();
+    expect(listShotVideoCandidates).toHaveBeenCalledWith("C:/project", "shot-1");
+  });
+
+  it("delegates regeneration to the existing generation path without touching the pin", async () => {
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([
+      {
+        assetVersionId: "video-v1", versionNumber: 1, shotId: "shot-1", sceneId: "scene-1",
+        createdAt: "2026-09-03T00:00:00Z", filePath: "assets/video-v1.mp4", mimeType: "video/mp4",
+        byteSize: 24, reviewState: "active", isCanonical: true, qaOverallStatus: "pass",
+        qaRunCount: 1, providerId: "i2v", modelId: "motion-v1", workflowRunId: "run-1",
+        sourceAssetVersionId: "kf-v1", sourceKeyframeIsCurrent: true,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    // The canonical candidate is visible; a new generation can be started
+    // (Regenerate) which goes through the existing createWorkflowRun path.
+    expect(await screen.findByTestId("canonical-badge-video-v1")).toBeInTheDocument();
+    await user.type(await screen.findByLabelText("Motion prompt"), "Slow push-in");
+    const button = await screen.findByRole("button", { name: "Generate Video" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    await waitFor(() => expect(createWorkflowRun).toHaveBeenCalledTimes(1));
+    expect(createWorkflowRun).toHaveBeenCalledWith(
+      "C:/project", "scene-builder", "1.0.0", "shot.image_to_video",
+      expect.objectContaining({ shotId: "shot-1" }),
+    );
   });
 
   it("restores the latest persisted run for this Shot after remount", async () => {
@@ -346,105 +364,22 @@ describe("ShotImageToVideo", () => {
     vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
     vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
     vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([
+      {
+        assetVersionId: "video-v1", versionNumber: 1, shotId: "shot-1", sceneId: "scene-1",
+        createdAt: "2026-09-03T00:00:00Z", filePath: "assets/video-v1.mp4", mimeType: "video/mp4",
+        byteSize: 24, reviewState: "active", isCanonical: false, qaOverallStatus: null,
+        qaRunCount: 0, providerId: "i2v", modelId: "motion-v1", workflowRunId: "run-1",
+        sourceAssetVersionId: "kf-v1", sourceKeyframeIsCurrent: true,
+      },
+    ]);
 
     render(
       <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
     );
 
-    expect(await screen.findByRole("button", { name: "Use for Shot" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "V01" })).toBeInTheDocument();
     expect(listGenerationResults).toHaveBeenCalledWith("C:/project", "run-1");
-  });
-
-  it("mounts exact-version Video QA under a completed candidate without auto-running or auto-promoting", async () => {
-    const persisted = completedRun();
-    const qaRun = {
-      id: "qa-video-v1", projectId: "project-1", assetId: "video-asset", assetVersionId: "video-v1",
-      mediaKind: "video" as const, workflowRunId: "qa-workflow-v1", status: "succeeded" as const,
-      overallStatus: "fail" as const, adapterId: "openai", adapterVersion: "1", modelId: "video-evaluator",
-      executionLocation: "cloud:openai", checkPlan: {
-        schemaVersion: 1 as const, assetId: "video-asset", assetVersionId: "video-v1", ownerEntityId: "scene-1",
-        assetType: "video", referenceAssetVersionIds: ["kf-v1"], checks: [], createdAt: "2026-09-01T00:00:00Z",
-      }, contextSnapshot: {}, rawResponseMetadata: null, errorCode: null, errorMessage: null,
-      createdAt: "2026-09-01T00:00:00Z", startedAt: "2026-09-01T00:00:01Z", completedAt: "2026-09-01T00:00:02Z",
-    };
-    vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
-    vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
-    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
-    vi.mocked(listAssets).mockResolvedValue([{
-      id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
-      canonicalVersionId: null, createdAt: "now", updatedAt: "now", versionCount: 1,
-      canonicalVersionNumber: null, previewThumbnailPath: null,
-    }]);
-    vi.mocked(getAssetWithVersions).mockResolvedValue({
-      asset: {
-        id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
-        canonicalVersionId: null, createdAt: "now", updatedAt: "now",
-      },
-      versions: [{
-        id: "video-v1", assetId: "video-asset", versionNumber: 1, status: "candidate", filePath: "assets/video-v1.mp4",
-        thumbnailPath: "", sha256: "a".repeat(64), originalFilename: "video-v1.mp4", mimeType: "video/mp4",
-        byteSize: 24, width: null, height: null, parentVersionId: null, createdAt: "now",
-      }],
-    });
-    vi.mocked(qaApi.listQaRuns).mockResolvedValue([qaRun]);
-    vi.mocked(qaApi.getQaRun).mockResolvedValue({ run: qaRun, checks: [] });
-
-    render(
-      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
-    );
-
-    const candidate = await screen.findByRole("region", { name: "Video QA for candidate V01" });
-    expect(candidate).toHaveTextContent("Exact candidate video-v1");
-    expect(candidate).toHaveTextContent("FAIL");
-    expect(qaApi.createVideoQaWorkflow).not.toHaveBeenCalled();
-    expect(promoteShotVideoCandidate).not.toHaveBeenCalled();
-    expect(createWorkflowRun).not.toHaveBeenCalled();
-  });
-
-  it("keeps explicit Use for Shot available when the exact candidate fails QA", async () => {
-    const persisted = completedRun();
-    const qaRun = {
-      id: "qa-video-v1", projectId: "project-1", assetId: "video-asset", assetVersionId: "video-v1",
-      mediaKind: "video" as const, workflowRunId: "qa-workflow-v1", status: "succeeded" as const,
-      overallStatus: "fail" as const, adapterId: "openai", adapterVersion: "1", modelId: "video-evaluator",
-      executionLocation: "cloud:openai", checkPlan: {
-        schemaVersion: 1 as const, assetId: "video-asset", assetVersionId: "video-v1", ownerEntityId: "scene-1",
-        assetType: "video", referenceAssetVersionIds: [], checks: [], createdAt: "2026-09-01T00:00:00Z",
-      }, contextSnapshot: {}, rawResponseMetadata: null, errorCode: null, errorMessage: null,
-      createdAt: "2026-09-01T00:00:00Z", startedAt: "2026-09-01T00:00:01Z", completedAt: "2026-09-01T00:00:02Z",
-    };
-    vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
-    vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
-    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
-    vi.mocked(listAssets).mockResolvedValue([{
-      id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
-      canonicalVersionId: null, createdAt: "now", updatedAt: "now", versionCount: 1,
-      canonicalVersionNumber: null, previewThumbnailPath: null,
-    }]);
-    vi.mocked(getAssetWithVersions).mockResolvedValue({
-      asset: {
-        id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
-        canonicalVersionId: null, createdAt: "now", updatedAt: "now",
-      },
-      versions: [{
-        id: "video-v1", assetId: "video-asset", versionNumber: 1, status: "candidate", filePath: "assets/video-v1.mp4",
-        thumbnailPath: "", sha256: "a".repeat(64), originalFilename: "video-v1.mp4", mimeType: "video/mp4",
-        byteSize: 24, width: null, height: null, parentVersionId: null, createdAt: "now",
-      }],
-    });
-    vi.mocked(qaApi.listQaRuns).mockResolvedValue([qaRun]);
-    vi.mocked(qaApi.getQaRun).mockResolvedValue({ run: qaRun, checks: [] });
-    const user = userEvent.setup();
-
-    render(
-      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
-    );
-    expect(await screen.findByTestId("video-qa-effective-overall")).toHaveTextContent("FAIL");
-    const useForShot = screen.getByRole("button", { name: "Use for Shot" });
-    expect(useForShot).toBeEnabled();
-    await user.click(useForShot);
-
-    expect(promoteShotVideoCandidate).toHaveBeenCalledWith("C:/project", "shot-1", "artifact-1", null);
   });
 
   it.each(["completed", "cancelled", "failed", "rejected"] as const)(

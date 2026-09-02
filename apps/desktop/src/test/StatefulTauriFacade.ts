@@ -98,10 +98,30 @@ interface QaRunState {
   checks: QaCheckState[];
 }
 
+/** P10.4 candidate read-model row served by the fixture's review commands. */
+interface ShotVideoCandidateState {
+  assetVersionId: string;
+  versionNumber: number;
+  shotId: string;
+  sceneId: string;
+  createdAt: string;
+  filePath: string;
+  mimeType: string;
+  byteSize: number;
+  reviewState: "active" | "rejected";
+  isCanonical: boolean;
+  qaOverallStatus: string | null;
+  qaRunCount: number;
+  providerId: string | null;
+  modelId: string | null;
+  workflowRunId: string | null;
+  sourceAssetVersionId: string | null;
+  sourceKeyframeIsCurrent: boolean;
+}
+
 export interface DesktopFixtureState {
   projectId: string;
-  assets: AssetState[];
-  scenes: Array<{
+  assets: AssetState[];  scenes: Array<{
     id: string;
     title: string;
     worldId: string | null;
@@ -114,6 +134,7 @@ export interface DesktopFixtureState {
       durationSeconds: number;
       keyframeAssetVersionId: string | null;
       generatedVideoAssetVersionId: string | null;
+      shotVideoCandidates?: ShotVideoCandidateState[];
     }>;
   }>;
   resultSets: ResultSetState[];
@@ -126,6 +147,10 @@ export class StatefulTauriFacade {
   private handlers = new Map<string, InvokeHandler>();
   readonly state: DesktopFixtureState;
   private counter = 0;
+  /** P10.4 review state per candidate version id ("rejected" or absent). */
+  private shotVideoReview = new Map<string, "rejected">();
+  /** P10.4 promotion audit: version id -> promoted with qa_override. */
+  private shotVideoPromotions = new Map<string, boolean>();
 
   constructor(projectId = "mara-project") {
     this.state = {
@@ -594,8 +619,9 @@ export class StatefulTauriFacade {
       throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
     });
 
-    // Conflict-safe shot video promotion (P10.2): pins the exact candidate
-    // version when the expected pin matches; replays are no-ops.
+    // Conflict-safe shot video promotion (P10.2 + P10.4 review gate): pins
+    // the exact candidate version when the expected pin matches; replays are
+    // no-ops; rejected candidates and QA failures demand explicit overrides.
     this.handlers.set("promote_shot_video_candidate", (args) => {
       for (const scene of this.state.scenes) {
         const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
@@ -605,6 +631,12 @@ export class StatefulTauriFacade {
             throw { code: "PROMOTION_CONFLICT", message: "the Shot video changed before promotion completed" };
           }
           const assetVersionId = `video-version-${args.artifactId}`;
+          const review = this.shotVideoReview.get(assetVersionId);
+          if (review === "rejected") {
+            throw { code: "CANDIDATE_REJECTED", message: "this video candidate was rejected and must be restored before promotion" };
+          }
+          const qaOverride = args.overrideReason != null && String(args.overrideReason).trim() !== "";
+          this.shotVideoPromotions.set(assetVersionId, qaOverride);
           const previous = shot.generatedVideoAssetVersionId;
           shot.generatedVideoAssetVersionId = assetVersionId;
           return {
@@ -613,6 +645,52 @@ export class StatefulTauriFacade {
             assetVersionId,
             previousAssetVersionId: previous,
           };
+        }
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
+
+    this.handlers.set("list_shot_video_candidates", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) {
+          return shot.shotVideoCandidates ?? [];
+        }
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
+
+    this.handlers.set("resolve_canonical_shot_video", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) return shot.generatedVideoAssetVersionId;
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
+
+    this.handlers.set("reject_shot_video_candidate", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) {
+          if (shot.generatedVideoAssetVersionId === args.assetVersionId) {
+            throw {
+              code: "CANONICAL_CANDIDATE_CANNOT_BE_REJECTED",
+              message: "promote another video before rejecting the current canonical version",
+            };
+          }
+          this.shotVideoReview.set(args.assetVersionId as string, "rejected");
+          return "rejected";
+        }
+      }
+      throw { code: "SHOT_NOT_FOUND", message: "shot not found" };
+    });
+
+    this.handlers.set("restore_shot_video_candidate", (args) => {
+      for (const scene of this.state.scenes) {
+        const shot = scene.shots.find((candidate) => candidate.id === args.shotId);
+        if (shot) {
+          this.shotVideoReview.delete(args.assetVersionId as string);
+          return "active";
         }
       }
       throw { code: "SHOT_NOT_FOUND", message: "shot not found" };

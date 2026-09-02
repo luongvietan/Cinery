@@ -2,20 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { WorkflowRunDetail } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
-import {
-  getShotImageToVideoSource,
-  promoteShotVideoCandidate,
-  type Shot,
-} from "./api";
+import { getShotImageToVideoSource, type Shot } from "./api";
+import { ShotVideoReview } from "./ShotVideoReview";
 import { advanceWorkflowRun, createWorkflowRun, getWorkflowRun, listSkillOperations, listWorkflowRuns } from "../workflows/api";
 import { listGenerationResults } from "../generation/api";
 import { ProviderModelFields, type ProviderModelSelection } from "../providers/ProviderModelFields";
 import { joinProjectRelativePath } from "../assets/paths";
-import { GenerationResultCard } from "../generation/GenerationResultCard";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
 import type { GeneratedArtifactDetail, GenerationResultSetDetail } from "@cinematic/domain";
 import { getAssetWithVersions, listAssets } from "../assets/api";
-import { VideoQaPanel } from "../qa/VideoQaPanel";
 
 interface ShotImageToVideoProps {
   projectRootPath: string;
@@ -63,7 +58,6 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
   const [run, setRun] = useState<ResultState | null>(null);
-  const [promoting, setPromoting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // The frozen keyframe the run will use (display-only projection).
@@ -213,25 +207,6 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     setRun({ ...run, detail: next });
   }
 
-  async function handleUseForShot(artifactId: string) {
-    setPromoting(artifactId);
-    setError(null);
-    try {
-      await promoteShotVideoCandidate(
-        projectRootPath,
-        shot.id,
-        artifactId,
-        shot.generatedVideoAssetVersionId,
-      );
-      setRun(null);
-      onShotChanged();
-    } catch (caught: unknown) {
-      setError(describeError(caught));
-    } finally {
-      setPromoting(null);
-    }
-  }
-
   const runActive = isActiveRun(run);
   const durationSeconds = parseDurationSeconds(duration);
   const disabledReason = !source
@@ -318,51 +293,15 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
 
       {error ? <p role="alert">{error}</p> : null}
 
-      {run ? (
-        run.detail.run.status === "completed" ? (
-          <div style={{ display: "grid", gap: "var(--space-8)" }}>
-            {run.artifacts.length === 0 ? (
-              <p role="status" style={{ margin: 0, color: "var(--c-muted)" }}>
-                The run completed but produced no reviewable candidates.
-              </p>
-            ) : (
-              run.artifacts.map((candidate) => (
-                  <div key={candidate.detail.artifact.id} style={{ display: "grid", gap: "var(--space-4)" }}>
-                    <GenerationResultCard
-                      projectRootPath={projectRootPath}
-                      detail={candidate.detail}
-                      selected={false}
-                      onSelect={() => {}}
-                    />
-                    <div style={{ display: "flex", gap: "var(--space-8)", alignItems: "center" }}>
-                      <button
-                        type="button"
-                        onClick={() => void handleUseForShot(candidate.detail.artifact.id)}
-                        disabled={promoting !== null}
-                      >
-                        {promoting === candidate.detail.artifact.id ? "Pinning…" : "Use for Shot"}
-                      </button>
-                      {shot.generatedVideoAssetVersionId ? (
-                        <span style={{ fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
-                          The video pinned as the current Shot video: {shot.generatedVideoAssetVersionId}
-                        </span>
-                      ) : null}
-                    </div>
-                    {candidate.assetVersionId && candidate.versionNumber !== null ? (
-                      <VideoQaPanel
-                        projectRootPath={projectRootPath}
-                        assetVersionId={candidate.assetVersionId}
-                        versionLabel={`candidate V${String(candidate.versionNumber).padStart(2, "0")}`}
-                      />
-                    ) : null}
-                  </div>
-              ))
-            )}
-          </div>
-        ) : (
-          <WorkflowRunView projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
-        )
+      {run && run.detail.run.status !== "completed" ? (
+        <WorkflowRunView projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
       ) : null}
+
+      <ShotVideoReview
+        projectRootPath={projectRootPath}
+        shotId={shot.id}
+        onChanged={onShotChanged}
+      />
     </div>
   );
 }
