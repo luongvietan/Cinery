@@ -380,14 +380,14 @@ mod tests {
         cursor.into_inner()
     }
 
-    struct CompletedShot {
-        _temp: TempDir,
-        root: PathBuf,
-        scene_id: String,
-        shot_id: String,
-        source_version_id: String,
-        artifact_id: String,
-        video_asset_id: String,
+    pub(crate) struct CompletedShot {
+        pub(crate) _temp: TempDir,
+        pub(crate) root: PathBuf,
+        pub(crate) scene_id: String,
+        pub(crate) shot_id: String,
+        pub(crate) source_version_id: String,
+        pub(crate) artifact_id: String,
+        pub(crate) video_asset_id: String,
     }
 
     impl CompletedShot {
@@ -411,7 +411,18 @@ mod tests {
             promote_shot_video_candidate(&self.root, &self.shot_id, artifact_id, expected)
         }
 
-        fn project_id(&self) -> String {
+        pub(crate) fn video_version_id(&self) -> String {
+            let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
+            conn.query_row(
+                "SELECT id FROM asset_versions WHERE asset_id = ?1 \
+                 ORDER BY version_number ASC LIMIT 1",
+                [self.video_asset_id.clone()],
+                |row| row.get(0),
+            )
+            .unwrap()
+        }
+
+        pub(crate) fn project_id(&self) -> String {
             let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
             conn.query_row("SELECT id FROM projects", [], |row| row.get(0))
                 .unwrap()
@@ -420,7 +431,7 @@ mod tests {
         /// Captures one more video artifact for the same run through a fresh
         /// provider attempt (`generation_result_sets.provider_attempt_id` is
         /// unique), returning its artifact id.
-        fn capture_extra_video_artifact(&self, attempt_id: &str, seed: u8) -> String {
+        pub(crate) fn capture_extra_video_artifact(&self, attempt_id: &str, seed: u8) -> String {
             let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
             conn.execute(
                 "INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, \
@@ -583,7 +594,7 @@ mod tests {
     /// a completed `shot.image_to_video` run: durable run/attempt rows, a
     /// captured video artifact with full lineage, and the imported candidate
     /// version in the scene-owned video asset.
-    fn completed_shot_i2v_fixture() -> CompletedShot {
+    pub(crate) fn completed_shot_i2v_fixture() -> CompletedShot {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("shot-promotion");
         ProjectService::create(&root, "Shot Promotion").unwrap();
@@ -999,4 +1010,11 @@ mod tests {
         )
         .unwrap()
     }
+}
+
+/// Test-only bridge so sibling modules (cinema::review read-model tests)
+/// can reuse the completed-I2V fixture without duplicating it.
+#[cfg(test)]
+pub(crate) mod test_support {
+    pub(crate) use super::tests::completed_shot_i2v_fixture;
 }

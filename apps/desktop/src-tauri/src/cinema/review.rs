@@ -18,7 +18,7 @@ use crate::error::AppError;
 
 /// Review state of one video candidate. Rejected means hidden/de-emphasized
 /// and non-promotable; artifacts and QA records remain intact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CandidateReviewState {
     Active,
     Rejected,
@@ -214,6 +214,164 @@ pub mod repository {
         )
         .map_err(|error| AppError::Database(error.to_string()))?;
         Ok(())
+    }
+}
+
+/// Application-level read model for the Shot video review UI (P10.4).
+///
+/// One `ShotVideoCandidate` row per successful shot-video candidate of the
+/// Shot: every video AssetVersion of the Shot's scene-owned video asset
+/// that was produced by a `shot.image_to_video` run naming this exact Shot.
+/// Failed attempts without a usable artifact never become versions, so they
+/// never appear as candidates. QA data is reused from `qa_runs` (P10.3) —
+/// never recalculated.
+pub mod read_model {
+    use super::CandidateReviewState;
+    use crate::error::AppError;
+    use rusqlite::{params, OptionalExtension};
+    use serde::{Deserialize, Serialize};
+
+    /// One reviewable video candidate of a Shot. All fields the review UI
+    /// needs, resolved below the React layer.
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct ShotVideoCandidate {
+        pub asset_version_id: String,
+        pub version_number: i64,
+        pub shot_id: String,
+        pub scene_id: String,
+        pub created_at: String,
+        pub file_path: String,
+        pub mime_type: String,
+        pub byte_size: i64,
+        pub review_state: CandidateReviewState,
+        pub is_canonical: bool,
+        /// Latest completed video QA overall status for this exact version
+        /// (`pass` | `fail` | `needs_review`), or None when QA never ran.
+        pub qa_overall_status: Option<String>,
+        pub qa_run_count: i64,
+        /// Provenance from the producing run / lineage.
+        pub provider_id: Option<String>,
+        pub model_id: Option<String>,
+        pub workflow_run_id: Option<String>,
+        /// The exact frozen keyframe version used as the I2V source.
+        pub source_asset_version_id: Option<String>,
+        /// True when the candidate's frozen source keyframe is still the
+        /// Shot's current keyframe pin (i.e. inputs have not drifted).
+        pub source_keyframe_is_current: bool,
+    }
+
+    /// Lists all successful video candidates of one Shot, newest first.
+    /// `canonical_asset_version_id` is the Shot's exact pinned video
+    /// version (None = no canonical selection).
+    pub fn list_shot_video_candidates(
+        conn: &rusqlite::Connection,
+        shot_id: &str,
+        canonical_asset_version_id: Option<&str>,
+    ) -> Result<Vec<ShotVideoCandidate>, AppError> {
+        let (scene_id, keyframe_pin): (String, Option<String>) = conn
+            .query_row(
+                "SELECT ss.scene_id, ss.keyframe_asset_version_id \
+                 FROM scene_shots ss \
+                 JOIN world_scenes ws ON ws.id = ss.scene_id \
+                 WHERE ss.id = ?1",
+                params![shot_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .ok_or(AppError::ShotNotFound)?;
+
+        // Every candidate video version produced by a shot.image_to_video
+        // run frozen for this exact Shot. A version belongs to the Shot
+        // through its producing run's frozen input (shotId), which the
+        // promotion path also treats as ownership. The artifact→version
+        // pairing is by exact sha256 (import dedup keeps this 1:1 for a
+        // scene video asset); promotion history (artifact_promotions) is
+        // NOT required, so uncaptured-into-history candidates appear too.
+        let mut stmt = conn
+            .prepare(
+                "SELECT av.id, av.version_number, av.created_at, av.file_path, \
+                 av.mime_type, av.byte_size, \
+                 rv.state, \
+                 (SELECT overall_status FROM qa_runs \
+                   WHERE asset_version_id = av.id AND overall_status IS NOT NULL \
+                     AND media_kind = 'video' \
+                   ORDER BY created_at DESC, id DESC LIMIT 1) AS qa_overall, \
+                 (SELECT COUNT(*) FROM qa_runs \
+                   WHERE asset_version_id = av.id AND media_kind = 'video') AS qa_count, \
+                 al.workflow_run_id, al.provider_id, al.model_id, \
+                 (SELECT asset_version_id FROM generated_artifact_sources \
+                   WHERE artifact_id = al.artifact_id \
+                   ORDER BY ordinal ASC LIMIT 1) AS source_version \
+                 FROM asset_versions av \
+                 JOIN assets a ON a.id = av.asset_id \
+                 JOIN generated_artifacts ga ON ga.sha256 = av.sha256 \
+                 JOIN artifact_lineage al ON al.artifact_id = ga.id \
+                 JOIN workflow_runs wr ON wr.id = al.workflow_run_id \
+                 LEFT JOIN shot_video_review_states rv ON rv.asset_version_id = av.id \
+                 WHERE a.type = 'video' AND a.owner_entity_id = ?1 \
+                   AND wr.operation_id = 'shot.image_to_video' \
+                   AND json_extract(wr.input_json, '$.shotId') = ?2 \
+                 ORDER BY av.created_at DESC, av.version_number DESC",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![scene_id, shot_id], |row| {
+                Ok(ShotVideoCandidate {
+                    asset_version_id: row.get(0)?,
+                    version_number: row.get(1)?,
+                    shot_id: shot_id.to_string(),
+                    scene_id: scene_id.clone(),
+                    created_at: row.get(2)?,
+                    file_path: row.get(3)?,
+                    mime_type: row.get(4)?,
+                    byte_size: row.get(5)?,
+                    review_state: match row.get::<_, Option<String>>(6)? {
+                        Some(ref state) if state == "rejected" => CandidateReviewState::Rejected,
+                        _ => CandidateReviewState::Active,
+                    },
+                    is_canonical: canonical_asset_version_id == Some(&row.get::<_, String>(0)?),
+                    qa_overall_status: row.get(7)?,
+                    qa_run_count: row.get(8)?,
+                    workflow_run_id: row.get(9)?,
+                    provider_id: row.get(10)?,
+                    model_id: row.get(11)?,
+                    source_asset_version_id: row.get(12)?,
+                    source_keyframe_is_current: match row.get::<_, Option<String>>(12)? {
+                        Some(source) => Some(source) == keyframe_pin,
+                        None => false,
+                    },
+                })
+            })
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        let mut candidates = Vec::new();
+        for row in rows {
+            candidates.push(row.map_err(|error| AppError::Database(error.to_string()))?);
+        }
+        Ok(candidates)
+    }
+
+    /// Resolves the Shot's canonical video: the exact pinned version, or
+    /// `None` when no human has promoted one. There is deliberately NO
+    /// fallback to the latest successful generation (P10.4 §5).
+    pub fn resolve_canonical_video_version(
+        conn: &rusqlite::Connection,
+        shot_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        conn.query_row(
+            "SELECT ss.generated_video_asset_version_id \
+             FROM scene_shots ss \
+             JOIN world_scenes ws ON ws.id = ss.scene_id \
+             WHERE ss.id = ?1",
+            params![shot_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(|error| AppError::Database(error.to_string()))
+        .map(|row| row.flatten())
     }
 }
 
@@ -660,6 +818,281 @@ mod tests {
                 review_state(&conn, &version).unwrap(),
                 CandidateReviewState::Active
             );
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Read model (Task 3): coherent review representation.
+    // ------------------------------------------------------------------
+
+    mod read_model_tests {
+        use super::super::read_model::*;
+        use super::super::repository::{reject_candidate, review_state};
+        use super::super::CandidateReviewState;
+        use crate::cinema::promotion::test_support::completed_shot_i2v_fixture;
+        use crate::db;
+        use crate::qa::models::{QaMediaKind, QaOverallStatus, QaRunRecord, QaRunStatus};
+
+        #[test]
+        fn captured_candidate_appears_with_provenance_and_qa_fields() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let candidates = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert_eq!(candidates.len(), 1);
+            let candidate = &candidates[0];
+            assert_eq!(candidate.shot_id, fixture.shot_id);
+            assert_eq!(candidate.scene_id, fixture.scene_id);
+            assert_eq!(candidate.review_state, CandidateReviewState::Active);
+            assert!(!candidate.is_canonical);
+            assert_eq!(candidate.qa_run_count, 0);
+            assert_eq!(candidate.qa_overall_status, None);
+            assert_eq!(candidate.provider_id.as_deref(), Some("fake_async_video"));
+            assert_eq!(candidate.model_id.as_deref(), Some("fake-video-v1"));
+            assert_eq!(
+                candidate.source_asset_version_id.as_deref(),
+                Some(fixture.source_version_id.as_str())
+            );
+            assert!(candidate.source_keyframe_is_current);
+        }
+
+        #[test]
+        fn canonical_flag_resolves_from_the_exact_pin() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+
+            let none = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert!(!none[0].is_canonical);
+
+            let promoted = list_shot_video_candidates(
+                &conn,
+                &fixture.shot_id,
+                Some(&fixture.video_version_id()),
+            )
+            .unwrap();
+            assert!(promoted[0].is_canonical);
+        }
+
+        #[test]
+        fn newest_first_ordering_is_deterministic() {
+            let fixture = completed_shot_i2v_fixture();
+            let artifact_b = fixture.capture_extra_video_artifact("attempt-b", 2);
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let artifact = crate::generation::repository::get_artifact_for_project(
+                &conn,
+                &fixture.project_id(),
+                &artifact_b,
+            )
+            .unwrap()
+            .unwrap();
+            crate::assets::service::AssetService::import_media_version(
+                &fixture.root,
+                &fixture.video_asset_id,
+                &fixture.root.join(&artifact.storage_path),
+                None,
+            )
+            .unwrap();
+
+            let candidates = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert_eq!(candidates.len(), 2);
+            // Newest capture (the later version number) comes first.
+            assert!(candidates[0].version_number > candidates[1].version_number);
+        }
+
+        #[test]
+        fn rejected_state_and_canonical_state_stay_orthogonal() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let version = fixture.video_version_id();
+            reject_candidate(&conn, &fixture.project_id(), &version, None).unwrap();
+
+            // Promote the rejected candidate: canonical, yet still rejected.
+            let promoted = crate::cinema::promotion::promote_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                &fixture.artifact_id,
+                None,
+            )
+            .unwrap();
+            assert_eq!(promoted.asset_version_id, version);
+
+            let candidates = list_shot_video_candidates(
+                &conn,
+                &fixture.shot_id,
+                Some(&promoted.asset_version_id),
+            )
+            .unwrap();
+            assert_eq!(candidates[0].review_state, CandidateReviewState::Rejected);
+            assert!(candidates[0].is_canonical);
+        }
+
+        #[test]
+        fn qa_result_from_p10_3_attaches_to_the_correct_version() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let version = fixture.video_version_id();
+            insert_video_qa_run(&conn, &fixture.project_id(), &version, "fail");
+
+            let candidates = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert_eq!(candidates[0].qa_overall_status.as_deref(), Some("fail"));
+            assert_eq!(candidates[0].qa_run_count, 1);
+
+            // Another fixture (different project) has no QA: results do not leak.
+            let other = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&other.root.join("project.db")).unwrap();
+            let candidates = list_shot_video_candidates(&conn, &other.shot_id, None).unwrap();
+            assert_eq!(candidates[0].qa_run_count, 0);
+        }
+
+        #[test]
+        fn latest_qa_run_wins_over_older_ones() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let version = fixture.video_version_id();
+            let asset_id: String = conn
+                .query_row(
+                    "SELECT asset_id FROM asset_versions WHERE id = ?1",
+                    [&version],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            insert_video_qa_run(&conn, &fixture.project_id(), &version, "fail");
+            let rerun = QaRunRecord {
+                id: "qa-rerun".to_string(),
+                created_at: "2026-09-03T01:00:00Z".to_string(),
+                overall_status: Some(QaOverallStatus::Pass),
+                ..qa_record(&fixture.project_id(), &asset_id, &version)
+            };
+            crate::qa::repository::insert_run(&conn, &rerun).unwrap();
+
+            let candidates = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert_eq!(candidates[0].qa_overall_status.as_deref(), Some("pass"));
+            assert_eq!(candidates[0].qa_run_count, 2);
+        }
+
+        #[test]
+        fn source_drift_is_detected_when_the_keyframe_pin_changes() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            assert!(
+                list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap()[0]
+                    .source_keyframe_is_current
+            );
+
+            // Repin the Shot's keyframe to a fresh version: the candidate's
+            // frozen source is now stale.
+            conn.execute(
+                "INSERT INTO asset_versions (id, asset_id, version_number, status, \
+                 file_path, thumbnail_path, sha256, original_filename, mime_type, \
+                 byte_size, created_at) \
+                 VALUES ('drifted-version', (SELECT id FROM assets WHERE type = 'shot_keyframe'), \
+                 99, 'canonical', 'drifted.png', '', ?, 'd.png', 'image/png', 1, 'now')",
+                ["c".repeat(64)],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE scene_shots SET keyframe_asset_version_id = 'drifted-version' \
+                 WHERE id = ?1",
+                [&fixture.shot_id],
+            )
+            .unwrap();
+            assert!(
+                !list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap()[0]
+                    .source_keyframe_is_current
+            );
+        }
+
+        #[test]
+        fn unknown_shot_is_an_error_not_an_empty_list() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let error = list_shot_video_candidates(&conn, "missing-shot", None).unwrap_err();
+            assert_eq!(error.code(), "SHOT_NOT_FOUND");
+            let _ = review_state(&conn, "missing");
+        }
+
+        #[test]
+        fn failed_attempts_without_artifacts_never_appear() {
+            // Only the successful capture exists; failed captures never
+            // create artifacts/versions/promotions.
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+            let candidates = list_shot_video_candidates(&conn, &fixture.shot_id, None).unwrap();
+            assert_eq!(candidates.len(), 1);
+        }
+
+        #[test]
+        fn canonical_resolver_returns_exact_version_or_none() {
+            let fixture = completed_shot_i2v_fixture();
+            let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+
+            // No promotion yet: None (never "latest").
+            assert_eq!(
+                resolve_canonical_video_version(&conn, &fixture.shot_id).unwrap(),
+                None
+            );
+
+            let promoted = crate::cinema::promotion::promote_shot_video_candidate(
+                &fixture.root,
+                &fixture.shot_id,
+                &fixture.artifact_id,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                resolve_canonical_video_version(&conn, &fixture.shot_id).unwrap(),
+                Some(promoted.asset_version_id)
+            );
+        }
+
+        fn qa_record(project_id: &str, asset_id: &str, asset_version_id: &str) -> QaRunRecord {
+            QaRunRecord {
+                id: String::new(),
+                project_id: project_id.to_string(),
+                asset_id: asset_id.to_string(),
+                asset_version_id: asset_version_id.to_string(),
+                media_kind: QaMediaKind::Video,
+                workflow_run_id: None,
+                status: QaRunStatus::Succeeded,
+                overall_status: None,
+                adapter_id: Some("mock".to_string()),
+                adapter_version: Some("1".to_string()),
+                model_id: Some("mock-video-qa-v1".to_string()),
+                execution_location: "local".to_string(),
+                check_plan: serde_json::json!({}),
+                context_snapshot: serde_json::json!({}),
+                raw_response_metadata: None,
+                error_code: None,
+                error_message: None,
+                created_at: String::new(),
+                started_at: None,
+                completed_at: None,
+            }
+        }
+
+        fn insert_video_qa_run(
+            conn: &rusqlite::Connection,
+            project_id: &str,
+            asset_version_id: &str,
+            overall: &str,
+        ) {
+            let asset_id: String = conn
+                .query_row(
+                    "SELECT asset_id FROM asset_versions WHERE id = ?1",
+                    [asset_version_id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let record = QaRunRecord {
+                id: format!("qa-{asset_version_id}"),
+                created_at: "2026-09-03T00:00:00Z".to_string(),
+                overall_status: Some(match overall {
+                    "pass" => QaOverallStatus::Pass,
+                    "needs_review" => QaOverallStatus::NeedsReview,
+                    _ => QaOverallStatus::Fail,
+                }),
+                ..qa_record(project_id, &asset_id, asset_version_id)
+            };
+            crate::qa::repository::insert_run(conn, &record).unwrap();
         }
     }
 }
