@@ -213,9 +213,12 @@ fn shot_image_to_video_golden_path_survives_restart_and_promotes_exact_output() 
     // exceptional under P10.4 — promoting it requires an explicit override
     // reason (the user may accept an I2V result generated from a prior
     // keyframe, but the decision must be deliberate and audited).
-    let blocked = promote_shot_video_candidate(root, &shot.id, &artifact.id, None, None)
-        .unwrap_err();
-    assert!(matches!(blocked, cinematic_desktop_lib::error::AppError::QaOverrideRequired));
+    let blocked =
+        promote_shot_video_candidate(root, &shot.id, &artifact.id, None, None).unwrap_err();
+    assert!(matches!(
+        blocked,
+        cinematic_desktop_lib::error::AppError::QaOverrideRequired
+    ));
     let promoted = promote_shot_video_candidate(
         root,
         &shot.id,
