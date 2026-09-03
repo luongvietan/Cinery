@@ -53,6 +53,6 @@ export function createWorldPlateWorkflowRun(
     skillId: "world-builder",
     skillVersion: "1.0.0",
     operationId: "world.create_plate",
-    input: { worldId, tbdDecisions, providerId, modelId },
+    input: { worldId, tbdDecisions, providerId: providerId || undefined, modelId: modelId || undefined },
   });
 }
