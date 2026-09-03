@@ -146,14 +146,82 @@ impl DeclarativeProvider {
         }
     }
 
-    fn reference_inputs(&self, request: &ProviderExecutionRequest) -> Vec<ReferenceInput> {
+    /// The exact output size this operation asks for, when the mapping pins
+    /// it to a literal `WIDTHxHEIGHT`. A templated or absent size yields
+    /// `None`, leaving references untouched.
+    fn requested_size(endpoint: &EndpointConfig) -> Option<(u32, u32)> {
+        let literal = endpoint
+            .request_mapping
+            .as_ref()
+            .and_then(|mapping| mapping.get("size"))
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .or_else(|| {
+                endpoint
+                    .multipart_fields
+                    .iter()
+                    .find(|field| field.name == "size")
+                    .and_then(|field| field.value.clone())
+            })?;
+        if literal.contains("{{") {
+            return None;
+        }
+        let (width, height) = literal.split_once('x')?;
+        Some((width.trim().parse().ok()?, height.trim().parse().ok()?))
+    }
+
+    /// Scales and center-crops `bytes` to exactly `width`x`height`, as PNG.
+    /// `None` when the payload already matches or cannot be decoded, so the
+    /// verified original is what gets sent.
+    fn conform_reference(bytes: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+        let decoded = image::load_from_memory(bytes).ok()?;
+        if decoded.width() == width && decoded.height() == height {
+            return None;
+        }
+        let resized = decoded.resize_to_fill(width, height, image::imageops::FilterType::Lanczos3);
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        resized.write_to(&mut encoded, image::ImageFormat::Png).ok()?;
+        Some(encoded.into_inner())
+    }
+
+    /// Reference attachments as they go on the wire.
+    ///
+    /// Attachments arrive already integrity-checked, so their bytes are never
+    /// altered upstream. Conforming happens here instead, because matching a
+    /// service's dimension rule is a property of the call being compiled, not
+    /// of the stored asset: some services (OpenAI's video job API among them)
+    /// reject a reference whose size differs from the requested output.
+    fn reference_inputs(
+        &self,
+        request: &ProviderExecutionRequest,
+        endpoint: &EndpointConfig,
+    ) -> Vec<ReferenceInput> {
+        let target = Self::requested_size(endpoint);
         request
             .reference_attachments
             .iter()
-            .map(|attachment| ReferenceInput {
-                file_name: attachment.file_name.clone(),
-                media_type: attachment.media_type.clone(),
-                bytes: attachment.bytes.clone(),
+            .map(|attachment| {
+                let conformed = target.and_then(|(width, height)| {
+                    Self::conform_reference(&attachment.bytes, width, height)
+                });
+                match conformed {
+                    Some(bytes) => ReferenceInput {
+                        file_name: format!(
+                            "{}.png",
+                            std::path::Path::new(&attachment.file_name)
+                                .file_stem()
+                                .and_then(|stem| stem.to_str())
+                                .unwrap_or("reference")
+                        ),
+                        media_type: "image/png".into(),
+                        bytes,
+                    },
+                    None => ReferenceInput {
+                        file_name: attachment.file_name.clone(),
+                        media_type: attachment.media_type.clone(),
+                        bytes: attachment.bytes.clone(),
+                    },
+                }
             })
             .collect()
     }
@@ -818,7 +886,6 @@ impl GenerationProvider for DeclarativeProvider {
         }
         self.model_supports(&request.selected_model, &operation)?;
         let values = self.canonical_values(request);
-        let references = self.reference_inputs(request);
         let endpoint = self.config.operations.get(&operation).ok_or_else(|| {
             self.error(
                 ProviderErrorKind::UnsupportedCapability,
@@ -826,6 +893,7 @@ impl GenerationProvider for DeclarativeProvider {
                 "operation lookup",
             )
         })?;
+        let references = self.reference_inputs(request, endpoint);
         let http_request = self.compile_call(&operation, endpoint, &values, &references, None)?;
         let response = self.execute_call(&operation, http_request)?;
         if !response.is_success() {
@@ -1338,6 +1406,63 @@ mod tests {
             bytes: vec![137, 80, 78, 71],
             sha256: "a".repeat(64),
         }
+    }
+
+    /// A real PNG of the given size, so the conform path has something it can
+    /// actually decode.
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let image: image::RgbaImage =
+            image::ImageBuffer::from_pixel(width, height, image::Rgba([12, 34, 56, 255]));
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image
+            .write_to(&mut encoded, image::ImageFormat::Png)
+            .unwrap();
+        encoded.into_inner()
+    }
+
+    fn dimensions(bytes: &[u8]) -> (u32, u32) {
+        let decoded = image::load_from_memory(bytes).unwrap();
+        (decoded.width(), decoded.height())
+    }
+
+    #[test]
+    fn a_reference_is_conformed_to_the_size_the_operation_requests() {
+        let endpoint = EndpointConfig {
+            request_mapping: Some(serde_json::json!({ "size": "1280x720" })),
+            ..Default::default()
+        };
+        assert_eq!(
+            DeclarativeProvider::requested_size(&endpoint),
+            Some((1280, 720))
+        );
+
+        // A keyframe from an image service rarely matches a video service's
+        // enumerated sizes, and the call is rejected outright when it does not.
+        let conformed = DeclarativeProvider::conform_reference(&png_bytes(1536, 1024), 1280, 720)
+            .expect("a differently-sized reference is conformed");
+        assert_eq!(dimensions(&conformed), (1280, 720));
+
+        // Already matching: the verified original is sent untouched.
+        assert!(
+            DeclarativeProvider::conform_reference(&png_bytes(1280, 720), 1280, 720).is_none()
+        );
+        // Undecodable payloads are passed through rather than failing the call.
+        assert!(DeclarativeProvider::conform_reference(b"not an image", 1280, 720).is_none());
+    }
+
+    #[test]
+    fn a_templated_or_absent_size_leaves_references_untouched() {
+        let templated = EndpointConfig {
+            request_mapping: Some(serde_json::json!({ "size": "{{size}}" })),
+            ..Default::default()
+        };
+        assert_eq!(DeclarativeProvider::requested_size(&templated), None);
+
+        let absent = EndpointConfig {
+            request_mapping: Some(serde_json::json!({ "prompt": "{{prompt}}" })),
+            ..Default::default()
+        };
+        assert_eq!(DeclarativeProvider::requested_size(&absent), None);
     }
 
     #[test]
