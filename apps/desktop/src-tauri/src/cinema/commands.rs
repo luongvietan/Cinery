@@ -165,18 +165,22 @@ pub fn get_shot_image_to_video_source(
 /// Promotes one exact captured `shot.image_to_video` candidate onto the
 /// Shot's video pin under explicit human review. Conflict-safe: a stale
 /// expected pin returns `PROMOTION_CONFLICT` without overwriting the winner.
+/// An exceptional candidate (QA failed/needs-review, stale frozen inputs)
+/// requires a non-empty `override_reason`, audited as a QA override.
 #[tauri::command]
 pub fn promote_shot_video_candidate(
     project_root_path: String,
     shot_id: String,
     artifact_id: String,
     expected_current_video_asset_version_id: Option<String>,
+    override_reason: Option<String>,
 ) -> Result<crate::cinema::promotion::ShotVideoPromotionResult, AppCommandError> {
     crate::cinema::promotion::promote_shot_video_candidate(
         root_path(&project_root_path)?,
         &shot_id,
         &artifact_id,
         expected_current_video_asset_version_id.as_deref(),
+        override_reason.as_deref(),
     )
     .map_err(AppCommandError::from)
 }
@@ -188,4 +192,73 @@ pub fn get_scene_readiness(
 ) -> Result<crate::cinema::service::CinemaReadiness, AppCommandError> {
     CinemaService::scene_readiness(root_path(&project_root_path)?, &scene_id)
         .map_err(AppCommandError::from)
+}
+
+/// Lists every successful video candidate of a Shot for the review UI,
+/// newest first, with QA summary, review state, canonical state, and
+/// provenance resolved server-side (P10.4 read model).
+#[tauri::command]
+pub fn list_shot_video_candidates(
+    project_root_path: String,
+    shot_id: String,
+) -> Result<Vec<crate::cinema::review::read_model::ShotVideoCandidate>, AppCommandError> {
+    let root = root_path(&project_root_path)?;
+    let conn = crate::db::open_existing_connection(&root.join("project.db"))
+        .map_err(AppCommandError::from)?;
+    let canonical =
+        crate::cinema::review::read_model::resolve_canonical_video_version(&conn, &shot_id)
+            .map_err(AppCommandError::from)?;
+    crate::cinema::review::read_model::list_shot_video_candidates(
+        &conn,
+        &shot_id,
+        canonical.as_deref(),
+    )
+    .map_err(AppCommandError::from)
+}
+
+/// Resolves the Shot's canonical video version: the exact promoted pin, or
+/// None. Never falls back to the latest generation (P10.4 §5).
+#[tauri::command]
+pub fn resolve_canonical_shot_video(
+    project_root_path: String,
+    shot_id: String,
+) -> Result<Option<String>, AppCommandError> {
+    let root = root_path(&project_root_path)?;
+    let conn = crate::db::open_existing_connection(&root.join("project.db"))
+        .map_err(AppCommandError::from)?;
+    crate::cinema::review::read_model::resolve_canonical_video_version(&conn, &shot_id)
+        .map_err(AppCommandError::from)
+}
+
+/// Rejects one shot video candidate (review state). The current canonical
+/// video cannot be rejected; artifacts and QA records remain intact.
+#[tauri::command]
+pub fn reject_shot_video_candidate(
+    project_root_path: String,
+    shot_id: String,
+    asset_version_id: String,
+    reason: Option<String>,
+) -> Result<crate::cinema::review::CandidateReviewState, AppCommandError> {
+    crate::cinema::review::service::reject_shot_video_candidate(
+        root_path(&project_root_path)?,
+        &shot_id,
+        &asset_version_id,
+        reason.as_deref(),
+    )
+    .map_err(AppCommandError::from)
+}
+
+/// Restores a rejected shot video candidate to Active. Never promotes.
+#[tauri::command]
+pub fn restore_shot_video_candidate(
+    project_root_path: String,
+    shot_id: String,
+    asset_version_id: String,
+) -> Result<crate::cinema::review::CandidateReviewState, AppCommandError> {
+    crate::cinema::review::service::restore_shot_video_candidate(
+        root_path(&project_root_path)?,
+        &shot_id,
+        &asset_version_id,
+    )
+    .map_err(AppCommandError::from)
 }

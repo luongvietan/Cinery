@@ -333,18 +333,102 @@ export function getShotImageToVideoSource(
 
 /** Promotes one exact captured `shot.image_to_video` candidate onto the
  * Shot's video pin under explicit human review. Conflict-safe: a stale
- * expected pin rejects with PROMOTION_CONFLICT. */
+ * expected pin rejects with PROMOTION_CONFLICT. An exceptional candidate
+ * (QA failed/needs-review, stale frozen keyframe) requires a non-empty
+ * overrideReason, audited as a QA override. */
 export function promoteShotVideoCandidate(
   projectRootPath: string,
   shotId: string,
   artifactId: string,
   expectedCurrentVideoAssetVersionId: string | null,
+  overrideReason?: string | null,
 ): Promise<ShotVideoPromotionResult> {
   return invokeCommand<ShotVideoPromotionResult>("promote_shot_video_candidate", {
     projectRootPath,
     shotId,
     artifactId,
     expectedCurrentVideoAssetVersionId,
+    overrideReason: overrideReason ?? null,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Shot video review (P10.4): candidates, review state, canonical resolver.
+// ---------------------------------------------------------------------------
+
+/** Review state of one shot video candidate (orthogonal to canonicality). */
+export type CandidateReviewState = "active" | "rejected";
+
+/** One reviewable video candidate resolved server-side. */
+export interface ShotVideoCandidate {
+  assetVersionId: string;
+  versionNumber: number;
+  shotId: string;
+  sceneId: string;
+  createdAt: string;
+  filePath: string;
+  mimeType: string;
+  byteSize: number;
+  reviewState: CandidateReviewState;
+  isCanonical: boolean;
+  qaOverallStatus: string | null;
+  qaRunCount: number;
+  providerId: string | null;
+  modelId: string | null;
+  workflowRunId: string | null;
+  sourceAssetVersionId: string | null;
+  sourceKeyframeIsCurrent: boolean;
+}
+
+/** Lists every successful video candidate of a Shot, newest first. */
+export function listShotVideoCandidates(
+  projectRootPath: string,
+  shotId: string,
+): Promise<ShotVideoCandidate[]> {
+  return invokeCommand<ShotVideoCandidate[]>("list_shot_video_candidates", {
+    projectRootPath,
+    shotId,
+  });
+}
+
+/** Resolves the canonical video version for a Shot — the exact promoted
+ * pin, or null. Never falls back to the latest generation. */
+export function resolveCanonicalShotVideo(
+  projectRootPath: string,
+  shotId: string,
+): Promise<string | null> {
+  return invokeCommand<string | null>("resolve_canonical_shot_video", {
+    projectRootPath,
+    shotId,
+  });
+}
+
+/** Rejects one video candidate (review state). The canonical candidate
+ * cannot be rejected; rejection never deletes artifacts or QA history. */
+export function rejectShotVideoCandidate(
+  projectRootPath: string,
+  shotId: string,
+  assetVersionId: string,
+  reason: string | null,
+): Promise<CandidateReviewState> {
+  return invokeCommand<CandidateReviewState>("reject_shot_video_candidate", {
+    projectRootPath,
+    shotId,
+    assetVersionId,
+    reason,
+  });
+}
+
+/** Restores a rejected video candidate to Active. Never promotes. */
+export function restoreShotVideoCandidate(
+  projectRootPath: string,
+  shotId: string,
+  assetVersionId: string,
+): Promise<CandidateReviewState> {
+  return invokeCommand<CandidateReviewState>("restore_shot_video_candidate", {
+    projectRootPath,
+    shotId,
+    assetVersionId,
   });
 }
 

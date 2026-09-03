@@ -597,8 +597,13 @@ fn runs_qa_and_still_allows_explicit_promotion_for_an_unpromoted_candidate() {
     // The fixture's `scene_shots` row already carries 'video-v1' as its
     // generated-video pin (fixture shorthand for "the candidate exists"),
     // so that is the expected current pin for this compare-and-set.
-    let promoted =
-        promote_shot_video_candidate(&fixture.root, "shot-1", "artifact-1", Some("video-v1"))
-            .unwrap();
+    let promoted = promote_shot_video_candidate(
+        &fixture.root,
+        "shot-1",
+        "artifact-1",
+        Some("video-v1"),
+        None,
+    )
+    .unwrap();
     assert_eq!(promoted.asset_version_id, "video-v1");
 }

@@ -126,11 +126,17 @@ fn promote_candidate_in_transaction(
 /// bookkeeping, nullable Shot compare-and-set, and audit writes then share one
 /// immediate transaction, so a losing CAS rolls every candidate-side effect
 /// back and a winning replay returns the same exact version.
+///
+/// P10.4 adds the human-review gate: a rejected candidate is refused, and an
+/// exceptional candidate (QA failed/needs-review or stale frozen inputs)
+/// demands a non-empty explicit override reason, which is audited with
+/// `qaOverride = true`.
 pub fn promote_shot_video_candidate(
     project_root: &Path,
     shot_id: &str,
     artifact_id: &str,
     expected_current_video_asset_version_id: Option<&str>,
+    override_reason: Option<&str>,
 ) -> Result<ShotVideoPromotionResult, AppError> {
     let project = ProjectService::open(project_root)?;
     let project_id = project.id.clone();
@@ -260,6 +266,7 @@ pub fn promote_shot_video_candidate(
         return Err(AppError::PromotionConflict);
     }
 
+    // Resolve the candidate version + its P10.4 review/QA/staleness state.
     let asset_version_id = if let Some(existing) = &existing_promotion {
         existing.asset_version_id.clone()
     } else {
@@ -271,6 +278,44 @@ pub fn promote_shot_video_candidate(
         .ok_or(AppError::GenerationArtifactNotPromotable)?
         .id
     };
+    let review_state = crate::cinema::review::repository::review_state(&tx, &asset_version_id)?;
+    let qa_overall: Option<String> = tx
+        .query_row(
+            "SELECT overall_status FROM qa_runs \
+             WHERE asset_version_id = ?1 AND overall_status IS NOT NULL \
+               AND json_extract(check_plan_json, '$.assetType') = 'video' \
+             ORDER BY created_at DESC, id DESC LIMIT 1",
+            params![asset_version_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| AppError::Database(error.to_string()))?
+        .flatten();
+    let keyframe_pin: Option<String> = tx
+        .query_row(
+            "SELECT keyframe_asset_version_id FROM scene_shots WHERE id = ?1",
+            params![shot_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let risk = crate::cinema::review::PromotionRisk {
+        qa_overall_status: qa_overall,
+        // The producing run froze this exact source; staleness is judged
+        // against the Shot's current keyframe pin (frozen inputs drifted).
+        source_shot_version_current: keyframe_pin.as_deref() == Some(source_version_id.as_str()),
+        source_keyframe_is_current_pin: keyframe_pin.as_deref() == Some(source_version_id.as_str()),
+    };
+    // No "review rows" exist for shots — the source keyframe pin doubles as
+    // the shot-version staleness signal for I2V candidates.
+    let _ = &risk.source_shot_version_current;
+    let decision = crate::cinema::review::decide_promotion(
+        &asset_version_id,
+        review_state,
+        true,
+        current_pin.as_deref(),
+        &risk,
+        override_reason,
+    )?;
 
     promote_candidate_in_transaction(&tx, &video_asset_id, &asset_version_id)?;
 
@@ -334,6 +379,8 @@ pub fn promote_shot_video_candidate(
             "artifactId": artifact_id,
             "assetVersionId": asset_version_id,
             "previousAssetVersionId": expected_current_video_asset_version_id,
+            "qaOverride": decision.qa_override,
+            "overrideReason": override_reason.map(str::trim).filter(|r| !r.is_empty()),
         })),
     )?;
     tx.commit()
@@ -380,14 +427,14 @@ mod tests {
         cursor.into_inner()
     }
 
-    struct CompletedShot {
-        _temp: TempDir,
-        root: PathBuf,
-        scene_id: String,
-        shot_id: String,
-        source_version_id: String,
-        artifact_id: String,
-        video_asset_id: String,
+    pub(crate) struct CompletedShot {
+        pub(crate) _temp: TempDir,
+        pub(crate) root: PathBuf,
+        pub(crate) scene_id: String,
+        pub(crate) shot_id: String,
+        pub(crate) source_version_id: String,
+        pub(crate) artifact_id: String,
+        pub(crate) video_asset_id: String,
     }
 
     impl CompletedShot {
@@ -408,10 +455,36 @@ mod tests {
             artifact_id: &str,
             expected: Option<&str>,
         ) -> Result<ShotVideoPromotionResult, AppError> {
-            promote_shot_video_candidate(&self.root, &self.shot_id, artifact_id, expected)
+            self.promote_override(artifact_id, expected, None)
         }
 
-        fn project_id(&self) -> String {
+        fn promote_override(
+            &self,
+            artifact_id: &str,
+            expected: Option<&str>,
+            override_reason: Option<&str>,
+        ) -> Result<ShotVideoPromotionResult, AppError> {
+            promote_shot_video_candidate(
+                &self.root,
+                &self.shot_id,
+                artifact_id,
+                expected,
+                override_reason,
+            )
+        }
+
+        pub(crate) fn video_version_id(&self) -> String {
+            let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
+            conn.query_row(
+                "SELECT id FROM asset_versions WHERE asset_id = ?1 \
+                 ORDER BY version_number ASC LIMIT 1",
+                [self.video_asset_id.clone()],
+                |row| row.get(0),
+            )
+            .unwrap()
+        }
+
+        pub(crate) fn project_id(&self) -> String {
             let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
             conn.query_row("SELECT id FROM projects", [], |row| row.get(0))
                 .unwrap()
@@ -420,7 +493,7 @@ mod tests {
         /// Captures one more video artifact for the same run through a fresh
         /// provider attempt (`generation_result_sets.provider_attempt_id` is
         /// unique), returning its artifact id.
-        fn capture_extra_video_artifact(&self, attempt_id: &str, seed: u8) -> String {
+        pub(crate) fn capture_extra_video_artifact(&self, attempt_id: &str, seed: u8) -> String {
             let conn = db::open_existing_connection(&self.root.join("project.db")).unwrap();
             conn.execute(
                 "INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, \
@@ -583,7 +656,7 @@ mod tests {
     /// a completed `shot.image_to_video` run: durable run/attempt rows, a
     /// captured video artifact with full lineage, and the imported candidate
     /// version in the scene-owned video asset.
-    fn completed_shot_i2v_fixture() -> CompletedShot {
+    pub(crate) fn completed_shot_i2v_fixture() -> CompletedShot {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("shot-promotion");
         ProjectService::create(&root, "Shot Promotion").unwrap();
@@ -978,7 +1051,23 @@ mod tests {
         )
         .unwrap();
 
-        let promoted = fixture.promote(None).unwrap();
+        // P10.4: the drifted pin makes this candidate exceptional — a
+        // promotion without an explicit override is refused...
+        let error = fixture
+            .promote_override(&fixture.artifact_id, None, None)
+            .unwrap_err();
+        assert!(matches!(error, AppError::QaOverrideRequired));
+        assert_eq!(fixture.shot().generated_video_asset_version_id, None);
+
+        // ...and an explicit override succeeds, keeping the frozen source
+        // authoritative while the drifted pin is untouched.
+        let promoted = fixture
+            .promote_override(
+                &fixture.artifact_id,
+                None,
+                Some("Deliberately kept the older take."),
+            )
+            .unwrap();
         let shot = fixture.shot();
         assert_eq!(
             shot.generated_video_asset_version_id.as_deref(),
@@ -987,6 +1076,14 @@ mod tests {
         assert_eq!(
             shot.keyframe_asset_version_id.as_deref(),
             Some(replacement_version.id.as_str())
+        );
+        // The override is audited.
+        let overrides = audit_payloads(&fixture.root, "shot.video.promoted");
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(overrides[0]["qaOverride"], serde_json::json!(true));
+        assert_eq!(
+            overrides[0]["overrideReason"],
+            serde_json::json!("Deliberately kept the older take.")
         );
     }
 
@@ -999,4 +1096,180 @@ mod tests {
         )
         .unwrap()
     }
+
+    // ------------------------------------------------------------------
+    // Task 5: QA override gate + QA-is-advisory regressions.
+    // ------------------------------------------------------------------
+
+    /// Inserts one completed video QA run with the given overall status for
+    /// the fixture's candidate version.
+    fn insert_qa(fixture: &CompletedShot, version_id: &str, overall: &str, created_at: &str) {
+        use crate::qa::models::{QaMediaKind, QaOverallStatus, QaRunRecord, QaRunStatus};
+        let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+        let asset_id: String = conn
+            .query_row(
+                "SELECT asset_id FROM asset_versions WHERE id = ?1",
+                [version_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        crate::qa::repository::insert_run(
+            &conn,
+            &QaRunRecord {
+                id: format!("qa-{version_id}-{created_at}"),
+                project_id: fixture.project_id(),
+                asset_id,
+                asset_version_id: version_id.to_string(),
+                media_kind: QaMediaKind::Video,
+                workflow_run_id: None,
+                status: QaRunStatus::Succeeded,
+                overall_status: Some(match overall {
+                    "pass" => QaOverallStatus::Pass,
+                    "needs_review" => QaOverallStatus::NeedsReview,
+                    _ => QaOverallStatus::Fail,
+                }),
+                adapter_id: Some("mock".into()),
+                adapter_version: Some("1".into()),
+                model_id: Some("mock-video-qa-v1".into()),
+                execution_location: "local".into(),
+                check_plan: serde_json::json!({"assetType": "video"}),
+                context_snapshot: serde_json::json!({}),
+                raw_response_metadata: None,
+                error_code: None,
+                error_message: None,
+                created_at: created_at.to_string(),
+                started_at: None,
+                completed_at: None,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn qa_failed_candidate_requires_explicit_override() {
+        let fixture = completed_shot_i2v_fixture();
+        let version = fixture.video_version_id();
+        insert_qa(&fixture, &version, "fail", "2026-09-03T00:00:00Z");
+
+        let error = fixture.promote(None).unwrap_err();
+        assert!(matches!(error, AppError::QaOverrideRequired));
+        assert_eq!(fixture.shot().generated_video_asset_version_id, None);
+        assert_eq!(
+            audit_payloads(&fixture.root, "shot.video.promoted").len(),
+            0
+        );
+    }
+
+    #[test]
+    fn qa_failed_candidate_promotes_with_explicit_override_and_audits_it() {
+        let fixture = completed_shot_i2v_fixture();
+        let version = fixture.video_version_id();
+        insert_qa(&fixture, &version, "fail", "2026-09-03T00:00:00Z");
+
+        let promoted = fixture
+            .promote_override(
+                &fixture.artifact_id,
+                None,
+                Some("Director approved this take."),
+            )
+            .unwrap();
+        assert_eq!(promoted.asset_version_id, version);
+        let payloads = audit_payloads(&fixture.root, "shot.video.promoted");
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["qaOverride"], serde_json::json!(true));
+        assert_eq!(
+            payloads[0]["overrideReason"],
+            serde_json::json!("Director approved this take.")
+        );
+    }
+
+    #[test]
+    fn whitespace_override_reason_does_not_satisfy_the_gate() {
+        let fixture = completed_shot_i2v_fixture();
+        let version = fixture.video_version_id();
+        insert_qa(&fixture, &version, "fail", "2026-09-03T00:00:00Z");
+
+        let error = fixture
+            .promote_override(&fixture.artifact_id, None, Some("   "))
+            .unwrap_err();
+        assert!(matches!(error, AppError::QaOverrideRequired));
+    }
+
+    #[test]
+    fn normal_promotion_audits_no_qa_override() {
+        let fixture = completed_shot_i2v_fixture();
+        let promoted = fixture.promote(None).unwrap();
+        assert_eq!(promoted.asset_version_id, fixture.video_version_id());
+        let payloads = audit_payloads(&fixture.root, "shot.video.promoted");
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0]["qaOverride"], serde_json::json!(false));
+        assert_eq!(payloads[0]["overrideReason"], serde_json::json!(null));
+    }
+
+    #[test]
+    fn completing_qa_never_changes_the_canonical_selection() {
+        let fixture = completed_shot_i2v_fixture();
+        let version = fixture.video_version_id();
+        let promoted = fixture.promote(None).unwrap();
+        assert_eq!(promoted.asset_version_id, version);
+
+        // QA passes, fails, reruns, and passes again: canonical is V1 throughout.
+        insert_qa(&fixture, &version, "pass", "2026-09-03T00:00:00Z");
+        assert_eq!(
+            fixture.shot().generated_video_asset_version_id,
+            Some(promoted.asset_version_id.clone())
+        );
+        insert_qa(&fixture, &version, "fail", "2026-09-03T01:00:00Z");
+        assert_eq!(
+            fixture.shot().generated_video_asset_version_id,
+            Some(promoted.asset_version_id.clone())
+        );
+        insert_qa(&fixture, &version, "pass", "2026-09-03T02:00:00Z");
+        assert_eq!(
+            fixture.shot().generated_video_asset_version_id,
+            Some(promoted.asset_version_id.clone())
+        );
+        assert_eq!(
+            audit_payloads(&fixture.root, "shot.video.promoted").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn newer_generation_never_steals_canonical_status() {
+        let fixture = completed_shot_i2v_fixture();
+        let promoted = fixture.promote(None).unwrap();
+
+        // Generate V2 (newest capture) without promoting it.
+        let second_artifact = fixture.capture_extra_video_artifact("attempt-v2", 5);
+        let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+        let artifact = crate::generation::repository::get_artifact_for_project(
+            &conn,
+            &fixture.project_id(),
+            &second_artifact,
+        )
+        .unwrap()
+        .unwrap();
+        crate::assets::service::AssetService::import_media_version(
+            &fixture.root,
+            &fixture.video_asset_id,
+            &fixture.root.join(&artifact.storage_path),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        // The newest capture exists, yet the canonical stays the promoted V1.
+        assert_eq!(
+            fixture.shot().generated_video_asset_version_id,
+            Some(promoted.asset_version_id)
+        );
+    }
+}
+
+/// Test-only bridge so sibling modules (cinema::review read-model tests)
+/// can reuse the completed-I2V fixture without duplicating it.
+#[cfg(test)]
+pub(crate) mod test_support {
+    pub(crate) use super::tests::completed_shot_i2v_fixture;
 }

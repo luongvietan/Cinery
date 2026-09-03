@@ -413,14 +413,20 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
         shot.id.clone(),
         artifact_id.clone(),
         Some("stale".into()),
+        None,
     )
     .unwrap_err();
     assert_eq!(error.code, "PROMOTION_CONFLICT");
 
     // Promote with the real (null) expected pin.
-    let promoted =
-        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id.clone(), None)
-            .unwrap();
+    let promoted = promote_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        artifact_id.clone(),
+        None,
+        None,
+    )
+    .unwrap();
     assert_eq!(promoted.shot_id, shot.id);
     assert_eq!(promoted.artifact_id, artifact_id);
     assert_eq!(promoted.previous_asset_version_id, None);
@@ -445,6 +451,7 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
         shot.id.clone(),
         artifact_id.clone(),
         Some(promoted.asset_version_id.clone()),
+        None,
     )
     .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
@@ -452,6 +459,204 @@ fn promote_shot_video_candidate_command_pins_and_conflicts() {
     // Same-artifact replay wins even without an expected pin while the Shot
     // still holds the promoted version (hardened final-review semantics).
     let replayed =
-        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None).unwrap();
+        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None, None)
+            .unwrap();
     assert_eq!(replayed.asset_version_id, promoted.asset_version_id);
+}
+
+#[test]
+fn shot_video_review_commands_reject_restore_and_resolve() {
+    use cinematic_desktop_lib::generation::service::{GenerationCaptureInput, GenerationService};
+    use cinematic_desktop_lib::providers::model::{ProviderOutput, ProviderResult};
+    use cinematic_desktop_lib::scenes::service::SceneService;
+    use serde_json::json;
+
+    let f = fixture();
+    let root = std::path::Path::new(&f.root);
+
+    let scene =
+        scene_commands::create_world_scene(f.root.clone(), "Scene 001".into(), "S".into()).unwrap();
+    let shot = create_shot(
+        f.root.clone(),
+        scene.id.clone(),
+        None,
+        4.0,
+        "Establish".into(),
+        None,
+        None,
+    )
+    .unwrap();
+
+    let keyframe_asset = SceneService::ensure_scene_keyframe_asset(root, &scene.id).unwrap();
+    let keyframe_source = image_file(root, "kf.png", [29, 47, 83, 255]);
+    let keyframe_version =
+        AssetService::import_asset_version(root, &keyframe_asset.id, &keyframe_source, None)
+            .unwrap();
+    AssetService::promote_asset_version(root, &keyframe_version.id).unwrap();
+    set_shot_keyframe(
+        f.root.clone(),
+        shot.id.clone(),
+        Some(keyframe_version.id.clone()),
+    )
+    .unwrap();
+
+    let conn =
+        cinematic_desktop_lib::db::open_existing_connection(&root.join("project.db")).unwrap();
+    let project_id: String = conn
+        .query_row("SELECT id FROM projects", [], |row| row.get(0))
+        .unwrap();
+    let input = json!({
+        "sceneId": scene.id,
+        "shotId": shot.id,
+        "sourceAssetVersionId": keyframe_version.id,
+    });
+    conn.execute(
+        "INSERT INTO workflow_runs (id, project_id, skill_id, skill_version, operation_id, \
+         status, input_json, created_at, updated_at) \
+         VALUES ('run-rev', ?1, 'scene-builder', '1.0.0', 'shot.image_to_video', \
+         'completed', ?2, 'now', 'now')",
+        rusqlite::params![project_id, input.to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO workflow_step_executions (id, workflow_run_id, step_definition_id, \
+         attempt_number, compiled_request_id, provider_id, model_id, adapter_version, \
+         idempotency_key, status, started_at) \
+         VALUES ('attempt-rev', 'run-rev', 'execute', 1, 'compiled-rev', 'fake_async_video', \
+         'fake-video-v1', 1, 'run-rev:execute:1', 'succeeded', 'now')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    fn mp4_bytes(seed: u8) -> Vec<u8> {
+        let mut bytes = vec![0x00, 0x00, 0x00, 0x18];
+        bytes.extend_from_slice(b"ftypmp42");
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, seed]);
+        bytes.extend_from_slice(b"mp42isom");
+        bytes
+    }
+    let artifacts = GenerationService::capture_provider_result(
+        root,
+        &GenerationCaptureInput {
+            project_id: project_id.clone(),
+            workflow_run_id: "run-rev".into(),
+            workflow_step_key: "execute".into(),
+            workflow_definition_id: "scene-builder".into(),
+            workflow_version: "1.0.0".into(),
+            skill_id: "scene-builder".into(),
+            skill_version: "1.0.0".into(),
+            compiled_execution_artifact_id: "compiled-rev".into(),
+            compiled_request_sha256: "b".repeat(64),
+            canon_snapshot_id: None,
+            canon_snapshot_sha256: None,
+            provider_attempt_id: "attempt-rev".into(),
+            provider_id: "fake_async_video".into(),
+            model_id: "fake-video-v1".into(),
+            source_asset_version_ids: vec![keyframe_version.id.clone()],
+            requested_output_count: 1,
+            media_kind: "video".into(),
+        },
+        &ProviderResult {
+            outputs: vec![ProviderOutput {
+                uri: format!(
+                    "data:video/mp4;base64,{}",
+                    base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        mp4_bytes(11)
+                    )
+                ),
+                mime_type: "video/mp4".into(),
+                filename: Some("rev.mp4".into()),
+            }],
+            provider_reported_model: Some("fake-video-v1".into()),
+            metadata: json!({}),
+        },
+    )
+    .unwrap()
+    .artifacts;
+    let artifact_id = artifacts[0].id.clone();
+
+    let video_asset =
+        AssetService::create_asset(root, "video", "Scene 001 video", Some(scene.id.clone()))
+            .unwrap();
+    let candidate_source = root.join("candidate-rev.mp4");
+    std::fs::write(&candidate_source, mp4_bytes(11)).unwrap();
+    AssetService::import_media_version(root, &video_asset.id, &candidate_source, None).unwrap();
+
+    // Read model: exactly one active noncanonical candidate, no canonical.
+    let candidates = list_shot_video_candidates(f.root.clone(), shot.id.clone()).unwrap();
+    assert_eq!(candidates.len(), 1);
+    let version = candidates[0].asset_version_id.clone();
+    assert!(!candidates[0].is_canonical);
+    assert_eq!(
+        resolve_canonical_shot_video(f.root.clone(), shot.id.clone()).unwrap(),
+        None
+    );
+
+    // Reject + restore round-trip through the commands.
+    let state = reject_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        version.clone(),
+        Some("unused".into()),
+    )
+    .unwrap();
+    assert_eq!(state.as_str(), "rejected");
+    let candidates = list_shot_video_candidates(f.root.clone(), shot.id.clone()).unwrap();
+    assert_eq!(candidates[0].review_state.as_str(), "rejected");
+
+    // A rejected candidate cannot be promoted (domain gate), and the
+    // refused promotion leaves the pin untouched.
+    let rejected_promotion = promote_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        artifact_id.clone(),
+        None,
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(rejected_promotion.code, "CANDIDATE_REJECTED");
+    assert_eq!(
+        resolve_canonical_shot_video(f.root.clone(), shot.id.clone()).unwrap(),
+        None
+    );
+
+    // Rejecting the canonical is refused: restore + promote first, then try.
+    restore_shot_video_candidate(f.root.clone(), shot.id.clone(), version.clone()).unwrap();
+    let promoted =
+        promote_shot_video_candidate(f.root.clone(), shot.id.clone(), artifact_id, None, None)
+            .unwrap();
+    let error = reject_shot_video_candidate(
+        f.root.clone(),
+        shot.id.clone(),
+        promoted.asset_version_id.clone(),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "CANONICAL_CANDIDATE_CANNOT_BE_REJECTED");
+    // Canonical unchanged by the refused rejection.
+    assert_eq!(
+        resolve_canonical_shot_video(f.root.clone(), shot.id.clone()).unwrap(),
+        Some(promoted.asset_version_id.clone())
+    );
+
+    // Restore returns the candidate to active. This fixture has a single
+    // candidate, which is also the canonical pin, so the exact version is
+    // canonical after restore — review state and canonical state are
+    // orthogonal dimensions and both resolve independently.
+    let state =
+        restore_shot_video_candidate(f.root.clone(), shot.id.clone(), version.clone()).unwrap();
+    assert_eq!(state.as_str(), "active");
+    let candidates = list_shot_video_candidates(f.root.clone(), shot.id.clone()).unwrap();
+    let restored = candidates
+        .iter()
+        .find(|candidate| candidate.asset_version_id == version)
+        .unwrap();
+    assert_eq!(restored.review_state.as_str(), "active");
+    assert_eq!(
+        resolve_canonical_shot_video(f.root.clone(), shot.id.clone()).unwrap(),
+        Some(promoted.asset_version_id)
+    );
+    assert!(restored.is_canonical);
 }

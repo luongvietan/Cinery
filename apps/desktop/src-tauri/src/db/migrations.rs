@@ -120,6 +120,10 @@ pub const MIGRATIONS: &[Migration] = &[
         23,
         include_str!("../../migrations/0023_video_qa_check_types.sql"),
     ),
+    Migration::new(
+        24,
+        include_str!("../../migrations/0024_shot_video_review_states.sql"),
+    ),
 ];
 
 /// Applies every migration that has not yet been recorded in
