@@ -45,8 +45,8 @@ export function createVisualQaWorkflow(
       projectRootPath,
       assetVersionId,
       adapterId: "openai",
-      providerId,
-      modelId,
+      providerId: providerId || undefined,
+      modelId: modelId || undefined,
       expectations: [],
     },
   });
@@ -56,6 +56,8 @@ export function createVisualQaWorkflow(
 export function createVideoQaWorkflow(
   projectRootPath: string,
   assetVersionId: string,
+  providerId?: string,
+  modelId?: string,
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("create_workflow_run", {
     projectRootPath,
@@ -65,7 +67,8 @@ export function createVideoQaWorkflow(
     input: {
       assetVersionId,
       adapterId: "openai",
-      providerId: "openai",
+      providerId: providerId || undefined,
+      modelId: modelId || undefined,
     },
   });
 }

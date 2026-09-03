@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkflowRunDetail, WorkflowRunRecord } from "@cinematic/domain";
 import { VideoQaPanel } from "./VideoQaPanel";
 import * as api from "./api";
-import { getWorkflowRun, listWorkflowRuns } from "../workflows/api";
+import { getProviderCapabilities, getProviderConfigurationStatus, getWorkflowRun, listCustomProviders, listProviderModels, listProviders, listWorkflowRuns } from "../workflows/api";
 import type { QaCheckRecord, QaRunDetail, QaRunRecord, QaRunStatus } from "./types";
 
 vi.mock("./api");
@@ -218,7 +218,30 @@ describe("VideoQaPanel", () => {
     resolveCreation(workflowDetail("created"));
     await clicks;
 
-    expect(api.createVideoQaWorkflow).toHaveBeenCalledWith("C:/project", "video-v1");
+    expect(api.createVideoQaWorkflow).toHaveBeenCalledWith("C:/project", "video-v1", "", "");
+  });
+
+  it("sends the selected provider and model when running Video QA", async () => {
+    vi.mocked(listProviders).mockResolvedValue(["glm-5.3-flash"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([{
+      providerId: "glm-5.3-flash", displayName: "GLM 5.3 Flash", baseUrl: "https://api.example.test/v1",
+      purpose: "llm", models: [{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }], headers: [],
+    }]);
+    vi.mocked(listProviderModels).mockResolvedValue(["glm-5.3-flash"]);
+    vi.mocked(getProviderCapabilities).mockRejectedValue(new Error("custom provider"));
+    vi.mocked(getProviderConfigurationStatus).mockResolvedValue({
+      providerId: "glm-5.3-flash", enabled: true, credentialConfigured: true,
+      defaultModel: "glm-5.3-flash", models: ["glm-5.3-flash"],
+    });
+    vi.mocked(api.createVideoQaWorkflow).mockResolvedValue(workflowDetail("created"));
+    const user = userEvent.setup();
+
+    render(<VideoQaPanel projectRootPath="C:/project" assetVersionId="video-v1" versionLabel="V01" />);
+    await screen.findAllByDisplayValue("glm-5.3-flash");
+    const button = await screen.findByRole("button", { name: "Run Video QA" });
+    await user.click(button);
+
+    expect(api.createVideoQaWorkflow).toHaveBeenCalledWith("C:/project", "video-v1", "glm-5.3-flash", "glm-5.3-flash");
   });
 
   it("requires explicit Video QA approval before evaluator execution", async () => {

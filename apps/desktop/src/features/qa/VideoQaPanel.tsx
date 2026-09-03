@@ -3,6 +3,7 @@ import type { WorkflowRunDetail, WorkflowRunRecord } from "@cinematic/domain";
 import { describeError } from "../../lib/errors";
 import { getWorkflowRun, listWorkflowRuns } from "../workflows/api";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
+import { ProviderModelFields } from "../providers/ProviderModelFields";
 import { QaReviewControls } from "./QaReviewControls";
 import * as api from "./api";
 import type { QaCheckRecord, QaCheckStatus, QaReviewStatus, QaRunDetail, QaRunRecord } from "./types";
@@ -101,6 +102,7 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
   const [creating, setCreating] = useState(false);
   const [busyCheckId, setBusyCheckId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [qaSelection, setQaSelection] = useState({ providerId: "", modelId: "" });
   const creatingRef = useRef(false);
   const disclosure = workflow ? disclosureFrom(workflow) : null;
 
@@ -153,7 +155,12 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
     setCreating(true);
     setError(null);
     try {
-      const created = await api.createVideoQaWorkflow(projectRootPath, assetVersionId);
+      const created = await api.createVideoQaWorkflow(
+        projectRootPath,
+        assetVersionId,
+        qaSelection.providerId,
+        qaSelection.modelId,
+      );
       const next = await api.advanceQaWorkflow(projectRootPath, created.run.id);
       setWorkflow(next);
       if (TERMINAL_WORKFLOW_STATUSES.includes(next.run.status)) await loadQa();
@@ -236,6 +243,16 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
           Run Video QA
         </button>
       </header>
+
+      {!workflow ? (
+        <ProviderModelFields
+          projectRootPath={projectRootPath}
+          value={qaSelection}
+          mediaType="llm"
+          requiresReferences={false}
+          onChange={setQaSelection}
+        />
+      ) : null}
 
       {error ? <p role="alert">{error}</p> : null}
       {loading ? <p>Loading Video QA history…</p> : null}
