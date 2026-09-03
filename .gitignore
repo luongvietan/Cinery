@@ -32,3 +32,6 @@ Thumbs.db
 
 # Local git worktrees (isolated implementation workspaces)
 .worktrees/
+
+# Superpowers spec drafts — working notes, not part of the delivered docs.
+.superpowers/specs/
