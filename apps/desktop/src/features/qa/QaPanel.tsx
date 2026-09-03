@@ -64,6 +64,7 @@ export function QaPanel({
   const [busyCheckId, setBusyCheckId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairSelection, setRepairSelection] = useState({ providerId: "", modelId: "" });
+  const [qaSelection, setQaSelection] = useState({ providerId: "", modelId: "" });
 
   async function load(selectedId?: string | null) {
     const history = await api.listQaRuns(projectRootPath, assetVersionId);
@@ -104,7 +105,12 @@ export function QaPanel({
     setBusy(true);
     setError(null);
     try {
-      const created = await api.createVisualQaWorkflow(projectRootPath, assetVersionId);
+      const created = await api.createVisualQaWorkflow(
+        projectRootPath,
+        assetVersionId,
+        qaSelection.providerId,
+        qaSelection.modelId,
+      );
       setPendingOperation("qa");
       setPendingWorkflow(await api.advanceQaWorkflow(projectRootPath, created.run.id));
     } catch (reason: unknown) {
@@ -212,6 +218,16 @@ export function QaPanel({
           {busy ? "Preparing QA…" : "Run QA"}
         </button>
       </header>
+
+      {!pendingWorkflow ? (
+        <ProviderModelFields
+          projectRootPath={projectRootPath}
+          value={qaSelection}
+          mediaType="llm"
+          requiresReferences={false}
+          onChange={setQaSelection}
+        />
+      ) : null}
 
       {busy ? (
         <p className="qa-busy-note" role="note" id="qa-busy-reason">

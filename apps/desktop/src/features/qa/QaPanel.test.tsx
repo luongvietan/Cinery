@@ -3,8 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QaPanel } from "./QaPanel";
 import * as api from "./api";
+import { getProviderCapabilities, getProviderConfigurationStatus, listCustomProviders, listProviderModels, listProviders } from "../workflows/api";
 
 vi.mock("./api");
+vi.mock("../workflows/api", () => ({
+  listProviders: vi.fn(),
+  listCustomProviders: vi.fn(),
+  getProviderCapabilities: vi.fn(),
+  getProviderConfigurationStatus: vi.fn(),
+  listProviderModels: vi.fn(),
+}));
 
 const run = {
   id: "qa-1",
@@ -186,5 +194,46 @@ describe("QaPanel", () => {
       "approve-qa",
     );
     expect(api.advanceQaWorkflow).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends the selected provider and model when running QA", async () => {
+    vi.mocked(api.listQaRuns).mockResolvedValue([]);
+    vi.mocked(listProviders).mockResolvedValue(["glm-5.3-flash"]);
+    vi.mocked(listCustomProviders).mockResolvedValue([{
+      providerId: "glm-5.3-flash", displayName: "GLM 5.3 Flash", baseUrl: "https://api.example.test/v1",
+      purpose: "llm", models: [{ id: "glm-5.3-flash", name: "GLM 5.3 Flash" }], headers: [],
+    }]);
+    vi.mocked(listProviderModels).mockResolvedValue(["glm-5.3-flash"]);
+    vi.mocked(getProviderCapabilities).mockRejectedValue(new Error("custom provider"));
+    vi.mocked(getProviderConfigurationStatus).mockResolvedValue({
+      providerId: "glm-5.3-flash", enabled: true, credentialConfigured: true,
+      defaultModel: "glm-5.3-flash", models: ["glm-5.3-flash"],
+    });
+    vi.mocked(api.createVisualQaWorkflow).mockResolvedValue({
+      run: { id: "workflow-3", status: "created" }, steps: [], events: [], providerExecutions: [],
+    } as never);
+    vi.mocked(api.advanceQaWorkflow).mockResolvedValue({
+      run: { id: "workflow-3", status: "waiting_for_approval" }, steps: [], events: [], providerExecutions: [],
+    } as never);
+    const user = userEvent.setup();
+
+    render(
+      <QaPanel
+        projectRootPath="/projects/red-door"
+        assetVersionId="version-1"
+        versionLabel="v001"
+      />,
+    );
+    await screen.findByText("No QA history for this version.");
+    await screen.findAllByDisplayValue("glm-5.3-flash");
+    const button = await screen.findByRole("button", { name: "Run QA" });
+    await user.click(button);
+
+    expect(api.createVisualQaWorkflow).toHaveBeenCalledWith(
+      "/projects/red-door",
+      "version-1",
+      "glm-5.3-flash",
+      "glm-5.3-flash",
+    );
   });
 });
