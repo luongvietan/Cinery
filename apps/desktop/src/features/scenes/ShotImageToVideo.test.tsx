@@ -137,6 +137,41 @@ function generationResults(): GenerationResultSetDetail[] {
   ];
 }
 
+function generationResultsFor(runId: string, artifactId: string, sha256: string): GenerationResultSetDetail[] {
+  const [result] = generationResults();
+  const [artifact] = result.artifacts;
+  return [{
+    resultSet: { ...result.resultSet, id: `rs-${runId}`, workflowRunId: runId },
+    artifacts: [{
+      artifact: {
+        ...artifact.artifact,
+        id: artifactId,
+        resultSetId: `rs-${runId}`,
+        sha256,
+        storagePath: `generations/${runId}/${artifactId}.mp4`,
+      },
+      lineage: {
+        artifactId,
+        workflowRunId: runId,
+        workflowStepKey: "execute",
+        workflowDefinitionId: "scene-builder",
+        workflowVersion: "1.0.0",
+        skillId: "scene-builder",
+        skillVersion: "1.0.0",
+        compiledExecutionArtifactId: "c",
+        compiledRequestSha256: "b".repeat(64),
+        canonSnapshotId: null,
+        canonSnapshotSha256: null,
+        providerAttemptId: "attempt-1",
+        providerId: "i2v",
+        modelId: "motion-v1",
+        sourceAssetVersionIds: ["kf-v1"],
+        createdAt: "now",
+      },
+    }],
+  }];
+}
+
 function runningDetail(id: string): WorkflowRunDetail {
   return {
     run: {
@@ -353,6 +388,40 @@ describe("ShotImageToVideo", () => {
 
     expect(await screen.findByRole("button", { name: "Use for Shot" })).toBeInTheDocument();
     expect(listGenerationResults).toHaveBeenCalledWith("C:/project", "run-1");
+  });
+
+  it("restores Video QA panels for V1 and V2 candidates on the same Shot", async () => {
+    const v1 = completedRun();
+    v1.run.id = "run-v1";
+    v1.run.createdAt = "2026-09-01T00:00:00Z";
+    const v2 = completedRun();
+    v2.run.id = "run-v2";
+    v2.run.createdAt = "2026-09-02T00:00:00Z";
+    vi.mocked(listWorkflowRuns).mockResolvedValue([v2.run, v1.run]);
+    vi.mocked(getWorkflowRun).mockImplementation(async (_root, id) => id === "run-v1" ? v1 : v2);
+    vi.mocked(listGenerationResults).mockImplementation(async (_root, runId) => runId === "run-v1"
+      ? generationResultsFor("run-v1", "artifact-v1", "1".repeat(64))
+      : generationResultsFor("run-v2", "artifact-v2", "2".repeat(64)));
+    vi.mocked(listAssets).mockResolvedValue([{
+      id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
+      canonicalVersionId: null, createdAt: "now", updatedAt: "now", versionCount: 2,
+      canonicalVersionNumber: null, previewThumbnailPath: null,
+    }]);
+    vi.mocked(getAssetWithVersions).mockResolvedValue({
+      asset: {
+        id: "video-asset", projectId: "project-1", type: "video", label: "Scene video", ownerEntityId: "scene-1",
+        canonicalVersionId: null, createdAt: "now", updatedAt: "now",
+      },
+      versions: [
+        { id: "video-v1", assetId: "video-asset", versionNumber: 1, status: "candidate", filePath: "assets/video-v1.mp4", thumbnailPath: "", sha256: "1".repeat(64), originalFilename: "video-v1.mp4", mimeType: "video/mp4", byteSize: 24, width: null, height: null, parentVersionId: null, createdAt: "now" },
+        { id: "video-v2", assetId: "video-asset", versionNumber: 2, status: "candidate", filePath: "assets/video-v2.mp4", thumbnailPath: "", sha256: "2".repeat(64), originalFilename: "video-v2.mp4", mimeType: "video/mp4", byteSize: 24, width: null, height: null, parentVersionId: null, createdAt: "now" },
+      ],
+    });
+
+    render(<ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />);
+
+    expect(await screen.findByRole("region", { name: "Video QA for candidate V01" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Video QA for candidate V02" })).toBeInTheDocument();
   });
 
   it("mounts exact-version Video QA under a completed candidate without auto-running or auto-promoting", async () => {

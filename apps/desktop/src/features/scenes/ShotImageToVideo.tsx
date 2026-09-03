@@ -62,7 +62,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
   const [duration, setDuration] = useState(String(shot.durationSeconds));
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
-  const [run, setRun] = useState<ResultState | null>(null);
+  const [runs, setRuns] = useState<ResultState[]>([]);
   const [promoting, setPromoting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,15 +86,14 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     };
   }, [projectRootPath, shot.id, shot.keyframeAssetVersionId]);
 
-  // Durable status restoration: remount re-attaches to this Shot's latest
-  // persisted I2V run through WorkflowRunView. No local timer — observation
-  // is centralized. A transient read failure keeps the previous detail.
+  // Durable status restoration retains every persisted I2V run for this Shot
+  // so candidate-local QA history remains available after later generations.
   useEffect(() => {
     let cancelled = false;
     listWorkflowRuns(projectRootPath)
       .then((records) => {
         if (cancelled) return null;
-        const latest = records
+        const matching = records
           .filter((record) => record.operationId === "shot.image_to_video")
           .filter((record) => {
             try {
@@ -104,12 +103,12 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
               return false;
             }
           })
-          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-        return latest ? getWorkflowRun(projectRootPath, latest.id) : null;
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        return Promise.all(matching.map((record) => getWorkflowRun(projectRootPath, record.id)));
       })
-      .then((detail) => detail ? resolveRun(detail) : null)
+      .then((details) => details ? Promise.all(details.map(resolveRun)) : [])
       .then((restored) => {
-        if (!cancelled && restored) setRun(restored);
+        if (!cancelled) setRuns(restored);
       })
       .catch(() => {
         // Keep any previously-restored run; never surface a transient read
@@ -135,7 +134,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     const durationSeconds = parseDurationSeconds(duration);
     if (
       creatingRef.current
-      || isActiveRun(run)
+      || runs.some(isActiveRun)
       || !source
       || !selection.providerId
       || !selection.modelId
@@ -155,7 +154,8 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         generationParameters: { durationSeconds },
       });
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
-      setRun(await resolveRun(waiting));
+      const resolved = await resolveRun(waiting);
+      setRuns((current) => [resolved, ...current.filter((run) => run.detail.run.id !== resolved.detail.run.id)]);
     } catch (caught: unknown) {
       setError(describeError(caught));
     } finally {
@@ -205,12 +205,13 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
   }
 
   function handleRunChange(next: WorkflowRunDetail) {
-    if (!run) return;
     if (next.run.status === "completed") {
-      void resolveRun(next).then(setRun);
+      void resolveRun(next).then((resolved) => {
+        setRuns((current) => current.map((run) => run.detail.run.id === next.run.id ? resolved : run));
+      });
       return;
     }
-    setRun({ ...run, detail: next });
+    setRuns((current) => current.map((run) => run.detail.run.id === next.run.id ? { ...run, detail: next } : run));
   }
 
   async function handleUseForShot(artifactId: string) {
@@ -223,7 +224,6 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
         artifactId,
         shot.generatedVideoAssetVersionId,
       );
-      setRun(null);
       onShotChanged();
     } catch (caught: unknown) {
       setError(describeError(caught));
@@ -232,7 +232,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
     }
   }
 
-  const runActive = isActiveRun(run);
+  const runActive = runs.some(isActiveRun);
   const durationSeconds = parseDurationSeconds(duration);
   const disabledReason = !source
     ? "Add or generate a keyframe first."
@@ -318,9 +318,9 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
 
       {error ? <p role="alert">{error}</p> : null}
 
-      {run ? (
+      {runs.map((run) => (
         run.detail.run.status === "completed" ? (
-          <div style={{ display: "grid", gap: "var(--space-8)" }}>
+          <div key={run.detail.run.id} style={{ display: "grid", gap: "var(--space-8)" }}>
             {run.artifacts.length === 0 ? (
               <p role="status" style={{ margin: 0, color: "var(--c-muted)" }}>
                 The run completed but produced no reviewable candidates.
@@ -360,9 +360,9 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
             )}
           </div>
         ) : (
-          <WorkflowRunView projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
+          <WorkflowRunView key={run.detail.run.id} projectRootPath={projectRootPath} detail={run.detail} onChange={handleRunChange} />
         )
-      ) : null}
+      ))}
     </div>
   );
 }

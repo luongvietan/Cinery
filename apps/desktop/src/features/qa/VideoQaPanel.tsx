@@ -13,6 +13,43 @@ interface VideoQaPanelProps {
   versionLabel: string;
 }
 
+interface VideoQaDisclosure {
+  location: string;
+  adapterId: string;
+  modelId: string;
+  evidenceMode: string;
+  references: string[];
+}
+
+function disclosureFrom(workflow: WorkflowRunDetail): VideoQaDisclosure | null {
+  const output = workflow.steps.find((step) => step.stepType === "compile_request")?.outputJson;
+  if (!output) return null;
+  try {
+    const value = JSON.parse(output) as {
+      executionLocation?: string;
+      adapterId?: string;
+      modelId?: string;
+      evidenceMode?: string;
+      request?: { references?: Array<{ assetVersionId?: string }> };
+    };
+    return {
+      location: value.executionLocation ?? (value.adapterId === "mock" ? "local" : "cloud:provider"),
+      adapterId: value.adapterId ?? "unknown",
+      modelId: value.modelId ?? "unknown",
+      evidenceMode: value.evidenceMode === "sampled_frames" ? "Sampled-frame transfer" : "Direct video transfer",
+      references: value.request?.references?.flatMap((reference) => reference.assetVersionId ? [reference.assetVersionId] : []) ?? [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function locationLabel(location: string): string {
+  if (location === "local") return "LOCAL";
+  if (location.startsWith("cloud:")) return `CLOUD: ${location.slice(6)}`;
+  return location.toUpperCase();
+}
+
 const TERMINAL_WORKFLOW_STATUSES = ["completed", "cancelled", "failed", "rejected"];
 
 function isActiveWorkflow(detail: WorkflowRunDetail | null): boolean {
@@ -65,6 +102,7 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
   const [busyCheckId, setBusyCheckId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const creatingRef = useRef(false);
+  const disclosure = workflow ? disclosureFrom(workflow) : null;
 
   const loadQa = useCallback(async (preferredRunId?: string | null) => {
     const history = await api.listQaRuns(projectRootPath, assetVersionId);
@@ -211,8 +249,14 @@ export function VideoQaPanel({ projectRootPath, assetVersionId, versionLabel }: 
       {workflow?.run.status === "waiting_for_approval" ? (
         <section className="qa-execution-review" aria-label="Video QA execution review">
           <div>
-            <strong>Review exact video evidence</strong>
-            <p>Candidate {assetVersionId} and its declared immutable references will be evaluated only after approval.</p>
+            <strong>{disclosure ? locationLabel(disclosure.location) : "Review exact video evidence"}</strong>
+            {disclosure ? (
+              <>
+                <p>{disclosure.adapterId} · {disclosure.modelId} · {disclosure.evidenceMode}</p>
+                <p>Candidate {assetVersionId} and immutable references: {disclosure.references.join(", ") || "None"}.</p>
+                {disclosure.location.startsWith("cloud:") ? <p>Only this candidate and these listed immutable references leave the device.</p> : null}
+              </>
+            ) : <p>Candidate {assetVersionId} and its declared immutable references will be evaluated only after approval.</p>}
           </div>
           <button type="button" disabled={creating} onClick={() => void approveAndRun()}>
             Approve and Run Video QA
