@@ -12,7 +12,7 @@ export interface ProviderModelSelection {
 interface ProviderModelFieldsProps {
   projectRootPath: string;
   value: ProviderModelSelection;
-  mediaType: "image" | "video";
+  mediaType: "image" | "video" | "llm";
   requiresReferences: boolean;
   /** When set (e.g. "video.imageToVideo"), only providers advertising the
    * capability and models listing the operation are offered. */
@@ -88,7 +88,7 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
     const candidate = options.find((option) => {
       if (!option.configured) return false;
       if (option.purpose && option.purpose !== "legacy" && option.purpose !== mediaType) return false;
-      if (option.capabilities) {
+      if (option.capabilities && mediaType !== "llm") {
         if (!option.capabilities.mediaTypes.includes(mediaType)) return false;
         if (requiresReferences && !option.capabilities.supportsReferenceImage) return false;
         if (requiredOperation && !option.capabilities.supportsImageToVideo) return false;
@@ -105,16 +105,15 @@ export function ProviderModelFields({ projectRootPath, value, mediaType, require
   const compatible = (option: ProviderOption): boolean => {
     if (option.purpose && option.purpose !== "legacy" && option.purpose !== mediaType) return false;
     if (requiredOperation && (!option.capabilities || !option.capabilities.supportsImageToVideo)) return false;
-    if (!option.capabilities) return true;
-    const wanted = mediaType === "image" ? "image" : "video";
-    if (!option.capabilities.mediaTypes.includes(wanted)) return false;
+    if (!option.capabilities || mediaType === "llm") return true;
+    if (!option.capabilities.mediaTypes.includes(mediaType)) return false;
     if (requiresReferences && !option.capabilities.supportsReferenceImage) return false;
     return true;
   };
   const incompatibleReason = (option: ProviderOption): string | null => {
     if (compatible(option)) return null;
     if (requiredOperation && (!option.capabilities || !option.capabilities.supportsImageToVideo)) return "does not support image-to-video";
-    if (option.capabilities && !option.capabilities.mediaTypes.includes(mediaType)) return "does not support this media type";
+    if (mediaType !== "llm" && option.capabilities && !option.capabilities.mediaTypes.includes(mediaType)) return "does not support this media type";
     if (requiresReferences) return "cannot accept reference images";
     return "not compatible with this operation";
   };
