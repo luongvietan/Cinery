@@ -19,6 +19,7 @@ const run = {
   projectId: "project-1",
   assetId: "asset-1",
   assetVersionId: "version-1",
+  mediaKind: "image" as const,
   workflowRunId: "workflow-1",
   status: "succeeded" as const,
   overallStatus: "fail" as const,

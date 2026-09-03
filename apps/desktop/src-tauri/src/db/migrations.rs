@@ -116,6 +116,10 @@ pub const MIGRATIONS: &[Migration] = &[
         22,
         include_str!("../../migrations/0022_background_provider_jobs.sql"),
     ),
+    Migration::foreign_key_rebuild(
+        23,
+        include_str!("../../migrations/0023_video_qa_check_types.sql"),
+    ),
 ];
 
 /// Applies every migration that has not yet been recorded in
@@ -163,12 +167,12 @@ pub fn run_migrations(conn: &mut Connection) -> Result<(), AppError> {
                     .optional()
                     .map_err(|e| AppError::Database(e.to_string()))?;
                 if violations.is_some() {
-                    return Err(AppError::Database(
-                        "migration 0020 failed its foreign_key_check: the rebuilt \
+                    return Err(AppError::Database(format!(
+                        "migration {:04} failed its foreign_key_check: the rebuilt \
                          tables would violate a foreign key; the database was left \
-                         unchanged"
-                            .into(),
-                    ));
+                         unchanged",
+                        migration.version
+                    )));
                 }
             }
 
@@ -1372,5 +1376,167 @@ mod migration_regression_tests {
         ] {
             assert!(columns.iter().any(|column| column == original));
         }
+    }
+}
+
+#[cfg(test)]
+mod video_qa_check_type_migration_tests {
+    use super::*;
+
+    #[test]
+    fn migration_0023_preserves_p6_checks_and_accepts_typed_video_checks() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL
+             );",
+        )
+        .unwrap();
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 22)
+        {
+            conn.execute_batch(migration.sql).unwrap();
+            conn.execute(
+                "INSERT INTO schema_migrations (version, applied_at) VALUES (?1, 'now')",
+                [migration.version],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        conn.execute_batch(
+            "INSERT INTO projects (id, name, created_at, updated_at, schema_version)
+             VALUES ('project-1', 'Project', 'now', 'now', 1);
+             INSERT INTO assets (id, project_id, type, label, created_at, updated_at)
+             VALUES ('asset-1', 'project-1', 'image', 'Candidate', 'now', 'now');
+             INSERT INTO asset_versions
+             (id, asset_id, version_number, status, file_path, thumbnail_path, sha256,
+              original_filename, mime_type, byte_size, created_at)
+             VALUES ('version-1', 'asset-1', 1, 'candidate', 'candidate.png', 'thumb.png',
+                     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                     'candidate.png', 'image/png', 1, 'now');
+             INSERT INTO qa_runs
+             (id, project_id, asset_id, asset_version_id, status, overall_status,
+              execution_location, check_plan_json, context_snapshot_json, created_at)
+             VALUES ('qa-p6', 'project-1', 'asset-1', 'version-1', 'succeeded', 'fail',
+                     'local', '{}', '{}', 'now'),
+                    ('qa-video', 'project-1', 'asset-1', 'version-1', 'running', NULL,
+                     'local', '{}', '{}', 'now');
+             INSERT INTO qa_checks
+             (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+              confidence, observed, reason, repair_hint, review_status, review_note,
+              reviewed_at, created_at)
+             VALUES ('p6-row', 'qa-p6', 'lock:scar', 'permanent_visual_lock',
+                     'visual_lock', '{\"requirement\":\"Scar stays right\"}', 'fail',
+                     0.91, 'Wrong side', 'Mismatch', 'Move scar', 'overridden_pass',
+                     'False positive', 'later', 'now');",
+        )
+        .unwrap();
+
+        run_migrations(&mut conn).unwrap();
+
+        let preserved: (String, String, f64, String, String, String) = conn
+            .query_row(
+                "SELECT check_type, status, confidence, repair_hint, review_status, review_note
+                 FROM qa_checks WHERE id = 'p6-row'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            preserved,
+            (
+                "permanent_visual_lock".into(),
+                "fail".into(),
+                0.91,
+                "Move scar".into(),
+                "overridden_pass".into(),
+                "False positive".into(),
+            )
+        );
+
+        let video_types = [
+            "video_integrity",
+            "start_frame_continuity",
+            "identity_temporal_consistency",
+            "reference_temporal_consistency",
+            "motion_adherence",
+            "camera_motion_adherence",
+            "temporal_coherence",
+            "unexpected_cut",
+            "flicker",
+            "deformation_or_warping",
+        ];
+        for (index, check_type) in video_types.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  observed, reason, review_status, created_at)
+                 VALUES (?1, 'qa-video', ?2, ?3, 'artifact_detection', '{}', 'pass',
+                         'Observed', 'Reason', 'unreviewed', 'now')",
+                rusqlite::params![
+                    format!("video-row-{index}"),
+                    format!("video:{index}"),
+                    check_type
+                ],
+            )
+            .unwrap();
+        }
+
+        assert!(conn
+            .execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  observed, reason, review_status, created_at)
+                 VALUES ('duplicate', 'qa-video', 'video:0', 'video_integrity',
+                         'artifact_detection', '{}', 'pass', '', '', 'unreviewed', 'now')",
+                [],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  observed, reason, review_status, created_at)
+                 VALUES ('unknown', 'qa-video', 'video:unknown', 'invented_video_check',
+                         'artifact_detection', '{}', 'pass', '', '', 'unreviewed', 'now')",
+                [],
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "INSERT INTO qa_checks
+                 (id, qa_run_id, check_id, check_type, source, requirement_json, status,
+                  observed, reason, review_status, created_at)
+                 VALUES ('orphan', 'missing-run', 'video:orphan', 'video_integrity',
+                         'artifact_detection', '{}', 'pass', '', '', 'unreviewed', 'now')",
+                [],
+            )
+            .is_err());
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'index' AND name = 'idx_qa_checks_run_status'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_exists, 1);
+        let violations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(violations, 0);
     }
 }

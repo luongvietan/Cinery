@@ -2,10 +2,10 @@ use super::adapters::{MockVisualQaAdapter, OpenAiCompatibleVisualQaAdapter, Visu
 use super::check_planner::QaCheckPlanner;
 use super::context::{resolve_qa_context, QaPlanningRequest, ResolvedQaContext};
 use super::models::{
-    QaCheckPlan, QaCheckRecord, QaReviewStatus, QaRunRecord, QaRunStatus, VisualExpectation,
-    VisualQaMedia, VisualQaReference, VisualQaRequest,
+    QaCheckPlan, QaCheckRecord, QaMediaKind, QaReviewStatus, QaRunRecord, QaRunStatus,
+    VisualExpectation, VisualQaMedia, VisualQaReference, VisualQaRequest,
 };
-use super::normalizer::QaResponseNormalizer;
+use super::normalizer::{NormalizedQaResult, QaResponseNormalizer};
 use super::repository;
 use crate::error::AppError;
 use crate::providers;
@@ -82,6 +82,7 @@ pub fn resolve_and_persist(
             project_id: project_id.into(),
             asset_id: resolved.target.asset_id.clone(),
             asset_version_id: resolved.target.asset_version_id.clone(),
+            media_kind: QaMediaKind::Image,
             workflow_run_id: Some(workflow_run_id.into()),
             status: QaRunStatus::Queued,
             overall_status: None,
@@ -207,29 +208,12 @@ pub fn execute(
             );
         })?;
     let completed_at = Utc::now().to_rfc3339();
-    let checks = compiled
-        .plan
-        .checks
-        .iter()
-        .zip(&normalized.checks)
-        .map(|(definition, result)| QaCheckRecord {
-            id: ulid::Ulid::new().to_string(),
-            qa_run_id: compiled.qa_run_id.clone(),
-            check_id: result.check_id.clone(),
-            check_type: definition.check_type,
-            source: definition.source,
-            requirement: serde_json::to_value(definition).unwrap_or(Value::Null),
-            status: result.status,
-            confidence: result.confidence,
-            observed: result.observed.clone(),
-            reason: result.reason.clone(),
-            repair_hint: result.repair_hint.clone(),
-            review_status: QaReviewStatus::Unreviewed,
-            review_note: None,
-            reviewed_at: None,
-            created_at: completed_at.clone(),
-        })
-        .collect::<Vec<_>>();
+    let checks = normalized_check_records(
+        &compiled.qa_run_id,
+        &compiled.plan,
+        &normalized,
+        &completed_at,
+    );
     repository::complete_run(
         conn,
         &compiled.qa_run_id,
@@ -243,6 +227,35 @@ pub fn execute(
         overall_status: normalized.overall,
         check_count: checks.len(),
     })
+}
+
+pub(crate) fn normalized_check_records(
+    qa_run_id: &str,
+    plan: &QaCheckPlan,
+    normalized: &NormalizedQaResult,
+    created_at: &str,
+) -> Vec<QaCheckRecord> {
+    plan.checks
+        .iter()
+        .zip(&normalized.checks)
+        .map(|(definition, result)| QaCheckRecord {
+            id: ulid::Ulid::new().to_string(),
+            qa_run_id: qa_run_id.to_string(),
+            check_id: result.check_id.clone(),
+            check_type: definition.check_type,
+            source: definition.source,
+            requirement: serde_json::to_value(definition).unwrap_or(Value::Null),
+            status: result.status,
+            confidence: result.confidence,
+            observed: result.observed.clone(),
+            reason: result.reason.clone(),
+            repair_hint: result.repair_hint.clone(),
+            review_status: QaReviewStatus::Unreviewed,
+            review_note: None,
+            reviewed_at: None,
+            created_at: created_at.to_string(),
+        })
+        .collect()
 }
 
 fn adapter_metadata(

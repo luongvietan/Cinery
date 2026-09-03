@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { invokeCommand } from "../../lib/tauri";
-import { createVisualQaWorkflow } from "./api";
+import { createVideoQaWorkflow, createVisualQaWorkflow } from "./api";
 
 vi.mock("../../lib/tauri");
 
@@ -21,5 +21,13 @@ describe("QA workflow API", () => {
     const call = vi.mocked(invokeCommand).mock.calls[0][1] as { input: Record<string, unknown> };
     expect(call.input.providerId).toBe("glm-5.3-flash");
     expect(call.input.modelId).toBe("glm-5.3-flash");
+  });
+
+  it("omits providerId and modelId from Video QA input when nothing was selected", async () => {
+    vi.mocked(invokeCommand).mockResolvedValue({});
+    await createVideoQaWorkflow("C:/projects/red-door", "video-v1", "", "");
+    const call = vi.mocked(invokeCommand).mock.calls[0][1] as { input: Record<string, unknown> };
+    expect(call.input.providerId).toBeUndefined();
+    expect(call.input.modelId).toBeUndefined();
   });
 });

@@ -1,5 +1,7 @@
 use super::errors::QaError;
-use super::models::{QaCheckPlan, QaCheckResult, QaCheckStatus, QaOverallStatus, VisualQaResult};
+use super::models::{
+    QaCheckPlan, QaCheckResult, QaCheckStatus, QaEvaluatorResult, QaOverallStatus,
+};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,7 +26,7 @@ impl QaResponseNormalizer {
         if plan.schema_version != 1 {
             return Err(invalid("unsupported QA check-plan schema version"));
         }
-        let response: VisualQaResult = serde_json::from_str(response_text)
+        let response: QaEvaluatorResult = serde_json::from_str(response_text)
             .map_err(|error| invalid(format!("malformed QA response: {error}")))?;
         if response.schema_version != 1 {
             return Err(invalid("unsupported QA response schema version"));
@@ -96,10 +98,29 @@ pub fn compute_overall(
     if plan.checks.len() != results.len() {
         return Err(invalid("QA overall requires one result per planned check"));
     }
-    let by_id = results
+    let expected_ids = plan
+        .checks
         .iter()
-        .map(|result| (result.check_id.as_str(), result.status))
-        .collect::<BTreeMap<_, _>>();
+        .map(|definition| definition.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if expected_ids.len() != plan.checks.len() {
+        return Err(invalid("QA overall requires unique planned check ids"));
+    }
+    let mut by_id = BTreeMap::new();
+    for result in results {
+        if !expected_ids.contains(result.check_id.as_str()) {
+            return Err(invalid(format!("unknown QA check id: {}", result.check_id)));
+        }
+        if by_id
+            .insert(result.check_id.as_str(), result.status)
+            .is_some()
+        {
+            return Err(invalid("duplicate QA check id"));
+        }
+    }
+    if by_id.len() != expected_ids.len() {
+        return Err(invalid("QA overall requires one result per planned check"));
+    }
 
     if plan.checks.iter().any(|definition| {
         definition.blocking && by_id.get(definition.id.as_str()) == Some(&QaCheckStatus::Fail)

@@ -196,6 +196,9 @@ pub enum AppError {
     #[error("Visual QA data is invalid: {0}")]
     InvalidQaData(String),
 
+    #[error("Video QA requires immutable generated-video provenance")]
+    VideoQaProvenanceUnsupported,
+
     #[error("Scene was not found")]
     SceneNotFound,
 

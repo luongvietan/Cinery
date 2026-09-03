@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { qaCheckPlanSchema, visualQaResultSchema } from "./schemas";
+import { qaCheckPlanSchema, qaRunRecordSchema, visualQaResultSchema } from "./schemas";
 
 describe("visual QA schemas", () => {
   it("accepts an exact check plan and rejects provider-invented fields", () => {
@@ -55,5 +55,51 @@ describe("visual QA schemas", () => {
         checks: [{ ...result.checks[0], confidence: null }],
       }).checks[0].confidence,
     ).toBeNull();
+  });
+
+  it("accepts persisted video QA media and typed temporal checks", () => {
+    const run = {
+      id: "qa-video-1",
+      projectId: "project-1",
+      assetId: "video-asset",
+      assetVersionId: "video-v1",
+      mediaKind: "video",
+      workflowRunId: "workflow-1",
+      status: "succeeded",
+      overallStatus: "fail",
+      adapterId: "openai",
+      adapterVersion: "1",
+      modelId: "video-evaluator",
+      executionLocation: "cloud:openai",
+      checkPlan: {
+        schemaVersion: 1,
+        assetId: "video-asset",
+        assetVersionId: "video-v1",
+        ownerEntityId: "scene-1",
+        assetType: "video",
+        referenceAssetVersionIds: ["keyframe-v1"],
+        checks: [{
+          id: "video:integrity",
+          checkType: "video_integrity",
+          source: "artifact_detection",
+          key: "integrity",
+          label: "Video integrity",
+          requirement: "The video decodes continuously.",
+          validatorHint: null,
+          blocking: true,
+          referenceAssetVersionIds: [],
+        }],
+        createdAt: "2026-09-01T00:00:00Z",
+      },
+      contextSnapshot: {},
+      rawResponseMetadata: null,
+      errorCode: null,
+      errorMessage: null,
+      createdAt: "2026-09-01T00:00:00Z",
+      startedAt: "2026-09-01T00:00:01Z",
+      completedAt: "2026-09-01T00:00:02Z",
+    };
+
+    expect(qaRunRecordSchema.parse(run)).toEqual(run);
   });
 });

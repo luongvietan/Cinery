@@ -52,6 +52,27 @@ export function createVisualQaWorkflow(
   });
 }
 
+/** Creates Video QA through the shared workflow command surface. */
+export function createVideoQaWorkflow(
+  projectRootPath: string,
+  assetVersionId: string,
+  providerId?: string,
+  modelId?: string,
+): Promise<WorkflowRunDetail> {
+  return invokeCommand("create_workflow_run", {
+    projectRootPath,
+    skillId: "video-qa",
+    skillVersion: "1.0.0",
+    operationId: "asset.run_video_qa",
+    input: {
+      assetVersionId,
+      adapterId: "openai",
+      providerId: providerId || undefined,
+      modelId: modelId || undefined,
+    },
+  });
+}
+
 export function createVisualRepairWorkflow(
   projectRootPath: string,
   assetVersionId: string,
@@ -85,12 +106,13 @@ export function approveQaWorkflow(
   projectRootPath: string,
   workflowRunId: string,
   stepDefinitionId: string,
+  note = "Visual QA media disclosure reviewed",
 ): Promise<WorkflowRunDetail> {
   return invokeCommand("approve_workflow_step", {
     projectRootPath,
     workflowRunId,
     stepDefinitionId,
-    note: "Visual QA media disclosure reviewed",
+    note,
   });
 }
 
