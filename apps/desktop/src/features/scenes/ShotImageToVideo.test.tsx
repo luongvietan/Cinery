@@ -5,7 +5,7 @@ import type { GenerationResultSetDetail, WorkflowRunDetail } from "@cinematic/do
 import { ShotImageToVideo } from "./ShotImageToVideo";
 import type { Shot } from "./api";
 import { advanceWorkflowRun, createWorkflowRun, getProviderCapabilities, getProviderConfigurationStatus, getWorkflowRun, listCustomProviders, listProviderModels, listProviders, listWorkflowRuns } from "../workflows/api";
-import { getShotImageToVideoSource, listShotVideoCandidates } from "./api";
+import { getShotImageToVideoSource, listShotVideoCandidates, promoteShotVideoCandidate } from "./api";
 import { listGenerationResults } from "../generation/api";
 import { getAssetWithVersions, listAssets } from "../assets/api";
 import * as qaApi from "../qa/api";
@@ -20,6 +20,7 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     getShotImageToVideoSource: vi.fn(),
     listShotVideoCandidates: vi.fn(),
+    promoteShotVideoCandidate: vi.fn(),
   };
 });
 vi.mock("../generation/api");
@@ -380,6 +381,31 @@ describe("ShotImageToVideo", () => {
 
     expect(await screen.findByRole("button", { name: "V01" })).toBeInTheDocument();
     expect(listGenerationResults).toHaveBeenCalledWith("C:/project", "run-1");
+  });
+
+  it("never auto-runs Video QA or auto-promotes a restored candidate", async () => {
+    const persisted = completedRun();
+    vi.mocked(listWorkflowRuns).mockResolvedValue([persisted.run]);
+    vi.mocked(getWorkflowRun).mockResolvedValue(persisted);
+    vi.mocked(listGenerationResults).mockResolvedValue(generationResults());
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([
+      {
+        assetVersionId: "video-v1", versionNumber: 1, shotId: "shot-1", sceneId: "scene-1",
+        createdAt: "2026-09-03T00:00:00Z", filePath: "assets/video-v1.mp4", mimeType: "video/mp4",
+        byteSize: 24, reviewState: "active", isCanonical: false, qaOverallStatus: "fail",
+        qaRunCount: 1, providerId: "i2v", modelId: "motion-v1", workflowRunId: "run-1",
+        sourceAssetVersionId: "kf-v1", sourceKeyframeIsCurrent: true,
+      },
+    ]);
+
+    render(
+      <ShotImageToVideo projectRootPath="C:/project" sceneId="scene-1" shot={shot()} onShotChanged={vi.fn()} />,
+    );
+
+    expect(await screen.findByRole("button", { name: "V01" })).toBeInTheDocument();
+    expect(qaApi.createVideoQaWorkflow).not.toHaveBeenCalled();
+    expect(promoteShotVideoCandidate).not.toHaveBeenCalled();
+    expect(createWorkflowRun).not.toHaveBeenCalled();
   });
 
   it.each(["completed", "cancelled", "failed", "rejected"] as const)(

@@ -9,6 +9,7 @@ import {
 } from "../workflows/api";
 import { WorkflowRunView } from "../workflows/WorkflowRunView";
 import { AssetInspector } from "../assets/AssetInspector";
+import { ProviderModelFields, type ProviderModelSelection } from "../providers/ProviderModelFields";
 import { createWorldPlateWorkflowRun } from "./api";
 import type { WorldDetail } from "./types";
 import { formatVersionNumber } from "@cinematic/domain";
@@ -31,6 +32,7 @@ export function WorldPlatePanel({
   const [pending, setPending] = useState(false);
   const [showVersions, setShowVersions] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [providerSelection, setProviderSelection] = useState<ProviderModelSelection>({ providerId: "", modelId: "" });
 
   const worldPlateAssetId = detail.worldPlateAsset.id;
 
@@ -63,6 +65,8 @@ export function WorldPlatePanel({
         projectRootPath,
         detail.world.id,
         [],
+        providerSelection.providerId,
+        providerSelection.modelId,
       );
       // advance to waiting_for_approval (first advance creates snapshot etc)
       const waiting = await advanceWorkflowRun(projectRootPath, created.run.id);
@@ -160,11 +164,19 @@ export function WorldPlatePanel({
           <p>NO WORLD PLATE YET — generate a candidate to create the first version.</p>
         )}
 
+        <ProviderModelFields
+          projectRootPath={projectRootPath}
+          value={providerSelection}
+          mediaType="image"
+          requiresReferences={false}
+          onChange={setProviderSelection}
+        />
+
         <div style={{ display: "flex", gap: "var(--space-8)", flexWrap: "wrap" }}>
           <button
             type="button"
             onClick={() => void handleGenerate()}
-            disabled={pending}
+            disabled={pending || !providerSelection.providerId || !providerSelection.modelId}
           >
             {pending ? "Preparing…" : "Generate Candidate"}
           </button>

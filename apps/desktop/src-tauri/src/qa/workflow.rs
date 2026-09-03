@@ -266,7 +266,11 @@ fn adapter_metadata(
     match adapter_id {
         "mock" => Ok(("mock-vlm".into(), "local".into())),
         "openai" => {
-            let config = providers::repository::get_provider_config(conn, "openai")?
+            let provider_id = input
+                .get("providerId")
+                .and_then(Value::as_str)
+                .unwrap_or("openai");
+            let config = providers::repository::get_provider_config(conn, provider_id)?
                 .filter(|config| config.enabled)
                 .ok_or_else(|| {
                     AppError::ProviderConfiguration(
@@ -307,7 +311,11 @@ fn build_adapter(
             Ok(Box::new(MockVisualQaAdapter::new(response)))
         }
         "openai" => {
-            let config = providers::repository::get_provider_config(conn, "openai")?
+            let provider_id = input
+                .get("providerId")
+                .and_then(Value::as_str)
+                .unwrap_or("openai");
+            let config = providers::repository::get_provider_config(conn, provider_id)?
                 .filter(|config| config.enabled)
                 .ok_or_else(|| {
                     AppError::ProviderConfiguration("OpenAI provider is disabled".into())

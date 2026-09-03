@@ -1,5 +1,6 @@
 use cinematic_desktop_lib::db;
 use cinematic_desktop_lib::project::service::ProjectService;
+use cinematic_desktop_lib::providers::repository::{upsert_provider_config, ProviderConfigRecord};
 use cinematic_desktop_lib::qa::repository;
 use cinematic_desktop_lib::workflow::runtime::WorkflowRuntime;
 use serde_json::json;
@@ -234,4 +235,64 @@ fn reopening_project_marks_interrupted_visual_qa_failed_without_reexecution() {
         .unwrap()
         .checks
         .is_empty());
+}
+
+#[test]
+fn visual_qa_openai_adapter_honors_an_explicit_provider_id_override() {
+    let fixture = Fixture::new();
+    let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+    upsert_provider_config(
+        &conn,
+        &ProviderConfigRecord {
+            provider_id: "openai".into(),
+            enabled: true,
+            credential_reference: None,
+            default_model: Some("gpt-4o-mini".into()),
+            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            request_timeout_seconds: 30,
+            polling_interval_seconds: 1,
+        },
+    )
+    .unwrap();
+    upsert_provider_config(
+        &conn,
+        &ProviderConfigRecord {
+            provider_id: "my-custom-llm".into(),
+            enabled: true,
+            credential_reference: None,
+            default_model: Some("custom-vision-model".into()),
+            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            request_timeout_seconds: 30,
+            polling_interval_seconds: 1,
+        },
+    )
+    .unwrap();
+    drop(conn);
+
+    let created = WorkflowRuntime::create_run(
+        &fixture.root,
+        "visual-qa",
+        "1.0.0",
+        "asset.run_visual_qa",
+        json!({
+            "projectRootPath": fixture.root,
+            "assetVersionId": "target-v1",
+            "adapterId": "openai",
+            "providerId": "my-custom-llm",
+            "expectations": [],
+        }),
+    )
+    .unwrap();
+    let waiting = WorkflowRuntime::advance_run(&fixture.root, &created.run.id).unwrap();
+    assert_eq!(waiting.run.status, "waiting_for_approval");
+
+    let conn = db::open_existing_connection(&fixture.root.join("project.db")).unwrap();
+    let qa_id = repository::list_runs_for_asset_version(&conn, &fixture.project_id, "target-v1")
+        .unwrap()[0]
+        .id
+        .clone();
+    let qa = repository::get_run(&conn, &fixture.project_id, &qa_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(qa.run.model_id.as_deref(), Some("custom-vision-model"));
 }

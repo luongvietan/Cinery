@@ -26,11 +26,56 @@ f25f124 fix: transfer verified video QA references
 7512b60 feat: add shot-local video QA panel
 b120015 fix: resolve Video QA provenance for unpromoted candidates
 335c327 test: cover video QA immutable golden path
+6457c0f docs: record P10.3 video QA release evidence
+9eb227a fix: correct stale skill-count assertions in registry tests
+e55390b ui: disclose exact evaluator and retain shot candidate history
+4fc1695 docs: add the P10.3 Shot Video QA implementation plan
+763d117 merge: bring in the master provider/model selector fixes
+ea227ba feat: let Video QA choose its evaluator provider and model
+7e3fee8 fix: omit unset providerId/modelId instead of sending empty strings
+c4c9152 merge: bring in the empty-string provider/model omission fix
 ```
 
 `b120015` is a post-review correctness fix, not a new task: code review of
 the Task 6 panel found the central golden-path behavior non-functional (see
 below), and `335c327` is Task 7's end-to-end acceptance test.
+
+The commits after `6457c0f` are a second, post-review-evidence pass:
+
+- `9eb227a` fixes two `skills::registry` tests that still asserted the
+  pre-video-qa skill count (4) after `video-qa@1.0.0` became a fifth
+  built-in skill — these were the "pre-existing unrelated failures"
+  documented (and excused) in the prior version of this record. They are
+  gone; see the Automated gates table below.
+- `e55390b` adds the cloud-approval disclosure to `VideoQaPanel` (exact
+  adapter/model/evidence-mode and declared references, not a generic
+  "review evidence" line — matching the plan's Global Constraint) and
+  changes `ShotImageToVideo` to retain every persisted I2V run for a Shot
+  instead of only the latest, so an earlier candidate's QA history stays
+  reachable after a later generation.
+- `763d117` merges in a sibling change made directly on `master`
+  (`feature/provider-model-selector-gaps`, since merged): World Plate and
+  Visual QA generation both lacked any provider/model picker and silently
+  used an ambiguous "configured default" (World Plate) or a
+  hardcoded-to-the-literal-string-`"openai"` provider (Visual QA). Both
+  now use the same `ProviderModelFields` selector already used by Shot
+  Image-to-Video, Scene Compile, Character Sheet, Face Lock, and Outfit
+  generation, widened to accept an `"llm"` media type for QA-evaluator
+  selection.
+- `ea227ba` applies the identical fix to Video QA itself: its `createRun`
+  call hardcoded `adapterId`/`providerId` to `"openai"`, so it could only
+  ever use a saved provider literally named that. `VideoQaPanel` now shows
+  the same picker (filtered to `llm`-purpose providers) before "Run Video
+  QA".
+- `7e3fee8` / `c4c9152` fix a correctness bug the above surfaced: an empty
+  string is a *present* value to the Rust-side `input.get("providerId")`
+  lookup, not an absence, so a fast click before `ProviderModelFields`'
+  async auto-select resolves (or a project with no configured provider at
+  all) would send `providerId: ""` and skip the "fall back to `openai`"
+  path entirely, surfacing a confusing configuration error instead. The
+  three affected `create*Workflow` functions (Visual QA, Video QA, World
+  Plate) now omit `providerId`/`modelId` from the request whenever they're
+  falsy, so the backend's own default resolution applies as before.
 
 ## Evidence architecture
 
@@ -94,13 +139,16 @@ and changed resolution control flow only.
 | 6 — Shot-local UI | `VideoQaPanel.test.tsx`, `ShotImageToVideo.test.tsx` | RED → GREEN |
 | Post-review fix | `video_qa_context.rs` (+2 tests), `video_qa_workflow.rs` (+1 test), `VideoQaPanel.test.tsx` (+1 test) | RED (reproduced `VIDEO_QA_PROVENANCE_UNSUPPORTED` and the stale-approval UI state) → GREEN |
 | 7 — golden path | `shot_video_qa_golden_path.rs` | GREEN: project → Scene/Shot → K1 → I2V → V1 → QA (create/approve/mock execute/review) on the unpromoted candidate → explicit promotion → keyframe drift to K2 + unrelated Canon growth → V2 captured and promoted → V1's QA re-read byte-identical |
+| Post-evidence — registry fix | `skills::registry` unit tests | RED: 2/10 failing (stale count `4`) → GREEN: 10/10 |
+| Post-evidence — QA/World Plate provider selection | `ProviderModelFields.test.tsx` (+1), `WorldPlatePanel.test.tsx` (new), `QaPanel.test.tsx` (+1), `VideoQaPanel.test.tsx` (+1) | RED (no selector; hardcoded/ambiguous provider) → GREEN |
+| Post-evidence — empty-string omission | `qa/api.test.ts`, `worlds/api.test.ts` (new) | RED (`providerId`/`modelId` present as `""` instead of absent) → GREEN |
 
-## Automated gates (2026-09-02)
+## Automated gates (2026-09-03, post-evidence pass)
 
 | Gate | Result |
 | --- | --- |
-| `pnpm -r test` | domain 53/53; desktop 187/187; 59 test files passed |
-| `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` (`CARGO_BUILD_JOBS=1`) | 366 unit tests (364 passed, 2 pre-existing unrelated failures — see below), all 34 integration test binaries passed in full, 0 doc tests |
+| `pnpm -r test` | domain 53/53; desktop 199/199; 62 test files passed |
+| `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` (`CARGO_BUILD_JOBS=1`) | 366 unit tests passed, all integration test binaries passed in full, 0 doc tests |
 | `pnpm --filter @cinematic/desktop exec tsc --noEmit` | passed |
 | `pnpm --filter @cinematic/desktop exec vite build` | passed; pre-existing chunk-size advisory (>500 kB) remains non-fatal |
 | `cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings` | passed |
@@ -108,23 +156,19 @@ and changed resolution control flow only.
 | `git diff --check` | passed (no trailing-whitespace/conflict-marker issues) |
 | `pnpm --filter @cinematic/desktop tauri build` | passed; MSI and NSIS artifacts produced |
 
-### Pre-existing unrelated `--lib` failures
-
-`skills::registry::tests::builtin_registry_resolves_the_versioned_scene_keyframe_operation`
-and `...world_plate_operation` fail on an unrelated step-count assertion
-(`left: 5, right: 4`). Confirmed present, identically, on baseline `7512b60`
-(pre-fix HEAD) before any P10.3 review-fix or golden-path work — not
-introduced or affected by this branch's changes. Every P10.3-specific
-suite (`video_qa_*`, `generation_*`, `cinema_*`, `qa_*`,
-`shot_image_to_video_golden_path`, `shot_video_qa_golden_path`, and all
-other integration binaries) is fully green.
+The `skills::registry` count assertions are green now (`9eb227a`); the
+"pre-existing unrelated failures" this document previously excused no
+longer exist on this branch.
 
 ## Production bundle artifacts
 
+Rebuilt after the post-evidence commits above; supersedes any
+earlier-dated MSI/EXE hash for this branch.
+
 | Artifact | Bytes | SHA-256 |
 | --- | ---: | --- |
-| `AI Cinematic Production OS_0.0.0_x64_en-US.msi` | 7,868,416 | `180233734C5E782591C709C191D930B7DCE2B63E14F4C45B5D9D5B38DA46B0CF` |
-| `AI Cinematic Production OS_0.0.0_x64-setup.exe` | 5,777,116 | `586E72AE3590C3C9BF80F854F808AAD621BC578922825788541998587D3EB4A8` |
+| `AI Cinematic Production OS_0.0.0_x64_en-US.msi` | 7,868,416 | `F4F7DCEE1CE6EE012BDA7017643D990E13A4214A33DF658B8E22E4F2543022ED` |
+| `AI Cinematic Production OS_0.0.0_x64-setup.exe` | 5,776,897 | `D21F67D4CBD18BB8B0FB21581614EE916A45DF07454AEBB25040081B800E8E59` |
 
 ## Open manual gates
 

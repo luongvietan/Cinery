@@ -45,12 +45,14 @@ export function createWorldPlateWorkflowRun(
   projectRootPath: string,
   worldId: string,
   tbdDecisions: TbdDecision[] = [],
+  providerId?: string,
+  modelId?: string,
 ): Promise<WorkflowRunDetail> {
   return invokeCommand<WorkflowRunDetail>("create_workflow_run", {
     projectRootPath,
     skillId: "world-builder",
     skillVersion: "1.0.0",
     operationId: "world.create_plate",
-    input: { worldId, tbdDecisions },
+    input: { worldId, tbdDecisions, providerId: providerId || undefined, modelId: modelId || undefined },
   });
 }
