@@ -410,7 +410,7 @@ mod tests {
             operation.expected_output.as_ref().unwrap().asset_type,
             crate::skills::model::AssetType::WorldPlate
         );
-        assert_eq!(registry.list().len(), 4);
+        assert_eq!(registry.list().len(), 5);
         let snapshot = serde_json::to_value(skill).unwrap();
         assert!(snapshot.to_string().contains("world_plate"));
         assert!(snapshot.get("provider").is_none());
@@ -431,7 +431,7 @@ mod tests {
             operation.expected_output.as_ref().unwrap().asset_type,
             crate::skills::model::AssetType::ShotKeyframe
         );
-        assert_eq!(registry.list().len(), 4);
+        assert_eq!(registry.list().len(), 5);
         let snapshot = serde_json::to_value(skill).unwrap();
         assert!(snapshot.to_string().contains("shot_keyframe"));
         assert!(snapshot.get("provider").is_none());
