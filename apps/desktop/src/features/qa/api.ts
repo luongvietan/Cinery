@@ -45,8 +45,8 @@ export function createVisualQaWorkflow(
       projectRootPath,
       assetVersionId,
       adapterId: "openai",
-      providerId,
-      modelId,
+      providerId: providerId || undefined,
+      modelId: modelId || undefined,
       expectations: [],
     },
   });
