@@ -6,7 +6,7 @@ use super::config::{
     AsyncJobConfig, AuthConfig, AuthMode, EndpointConfig, ErrorMapping, FinalOutputConfig,
     MultipartFieldConfig, MultipartFieldKind, PollingConfig, ProviderRuntimeConfig, RequestType,
     ResponseMapping, StatusEndpointConfig, OPERATION_IMAGE_EDIT, OPERATION_IMAGE_GENERATE,
-    OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE,
+    OPERATION_VALIDATE, OPERATION_VIDEO_GENERATE, OPERATION_VIDEO_IMAGE_TO_VIDEO,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -110,8 +110,45 @@ fn openai_validate_endpoint() -> EndpointConfig {
     }
 }
 
+/// The submit → poll → download contract shared by both video operations.
+/// The completed job never carries the asset inline: the bytes are served
+/// separately from `/videos/{id}/content`, so the final output is a binary
+/// fetch rather than a URL read off the status body.
+fn openai_video_job() -> AsyncJobConfig {
+    AsyncJobConfig {
+        job_id_path: "id".into(),
+        status: StatusEndpointConfig {
+            method: "GET".into(),
+            path_template: "/videos/{jobId}".into(),
+            status_path: "status".into(),
+            completed_values: vec!["completed".into()],
+            failed_values: vec!["failed".into(), "cancelled".into()],
+            progress_path: Some("progress".into()),
+            error_message_path: Some("error.message".into()),
+        },
+        output: FinalOutputConfig {
+            fetch_path_template: Some("/videos/{jobId}/content".into()),
+            fetch_method: "GET".into(),
+            response: ResponseMapping {
+                binary_response: true,
+                mime_type: "video/mp4".into(),
+                filename: "video.mp4".into(),
+                ..Default::default()
+            },
+        },
+        polling: PollingConfig {
+            interval_ms: 5000,
+            timeout_ms: 900_000,
+        },
+    }
+}
+
 /// OpenAI-compatible video job API (`/videos`): submit → poll → download.
-/// Used for legacy video-purpose providers.
+///
+/// `seconds` and `size` are sent as the fixed values the API enumerates
+/// (`4`/`8`/`12` and a handful of exact resolutions). They are deliberately
+/// not templated from the canonical `{{duration}}`, which renders a float
+/// the API rejects; a Shot wanting another length edits this operation.
 pub fn openai_compatible_video_runtime() -> ProviderRuntimeConfig {
     let mut operations = BTreeMap::new();
     operations.insert(
@@ -122,33 +159,34 @@ pub fn openai_compatible_video_runtime() -> ProviderRuntimeConfig {
             request_type: RequestType::Json,
             request_mapping: Some(serde_json::json!({
                 "model": "{{model}}",
-                "prompt": "{{prompt}}"
+                "prompt": "{{prompt}}",
+                "size": "1280x720",
+                "seconds": "4"
             })),
             response: ResponseMapping::default(),
-            job: Some(AsyncJobConfig {
-                job_id_path: "id".into(),
-                status: StatusEndpointConfig {
-                    method: "GET".into(),
-                    path_template: "/videos/{jobId}".into(),
-                    status_path: "status".into(),
-                    completed_values: vec!["completed".into()],
-                    failed_values: vec!["failed".into(), "cancelled".into()],
-                    progress_path: Some("progress".into()),
-                    error_message_path: Some("error".into()),
-                },
-                output: FinalOutputConfig {
-                    fetch_path_template: None,
-                    fetch_method: "GET".into(),
-                    response: ResponseMapping {
-                        url_path: Some("url".into()),
-                        ..Default::default()
-                    },
-                },
-                polling: PollingConfig {
-                    interval_ms: 3000,
-                    timeout_ms: 600_000,
-                },
-            }),
+            job: Some(openai_video_job()),
+            ..Default::default()
+        },
+    );
+    // Image-to-video pins the Shot's exact keyframe. `input_reference` takes
+    // exactly one of `file_id` or `image_url`; the canonical `{{image}}`
+    // renders the reference as a data URI, which `image_url` accepts, so no
+    // separate file upload step is needed.
+    operations.insert(
+        OPERATION_VIDEO_IMAGE_TO_VIDEO.to_string(),
+        EndpointConfig {
+            method: "POST".into(),
+            path_template: "/videos".into(),
+            request_type: RequestType::Json,
+            request_mapping: Some(serde_json::json!({
+                "model": "{{model}}",
+                "prompt": "{{prompt}}",
+                "size": "1280x720",
+                "seconds": "4",
+                "input_reference": { "image_url": "{{image}}" }
+            })),
+            response: ResponseMapping::default(),
+            job: Some(openai_video_job()),
             ..Default::default()
         },
     );
@@ -564,16 +602,17 @@ pub fn all_presets() -> Vec<ProviderPreset> {
                 }
             },
         },
-        // --- Legacy migration targets (internal) ----------------------------
+        // --- OpenAI-compatible video -------------------------------------
         ProviderPreset {
             id: "openai-compatible-video",
             label: "OpenAI Compatible Video",
-            description: "OpenAI-compatible /videos job API (legacy migration target).",
-            internal: true,
+            description: "Any service speaking the OpenAI video job API (/v1/videos). \
+                          Animates a Shot's pinned keyframe through image-to-video.",
+            internal: false,
             default_base_url: "https://api.openai.com/v1",
             requires_account_id: false,
             auth: bearer_auth(),
-            default_models: vec![],
+            default_models: vec![("sora-2", "Sora 2"), ("sora-2-pro", "Sora 2 Pro")],
             runtime: openai_compatible_video_runtime(),
         },
     ]
@@ -688,6 +727,39 @@ mod tests {
             .unwrap();
         assert_eq!(job.job_id_path, "output.task_id");
         assert_eq!(job.status.status_path, "output.task_status");
+    }
+
+    #[test]
+    fn openai_video_preset_animates_a_pinned_keyframe_and_fetches_the_bytes() {
+        let preset = preset_by_id("openai-compatible-video").unwrap();
+        assert!(
+            !preset.internal,
+            "the video preset must be selectable, not a migration-only target"
+        );
+
+        let i2v = preset
+            .runtime
+            .operations
+            .get(OPERATION_VIDEO_IMAGE_TO_VIDEO)
+            .expect("image-to-video operation");
+        // Without this the provider never advertises supportsImageToVideo and
+        // the Shot's animate panel filters it out.
+        assert!(i2v.accepts_reference_images());
+        assert_eq!(
+            i2v.request_mapping.as_ref().unwrap()["input_reference"]["image_url"],
+            serde_json::json!("{{image}}")
+        );
+
+        // A completed job carries no inline asset: the bytes come from a
+        // separate binary fetch, never a url read off the status body.
+        let job = i2v.job.as_ref().unwrap();
+        assert_eq!(
+            job.output.fetch_path_template.as_deref(),
+            Some("/videos/{jobId}/content")
+        );
+        assert!(job.output.response.binary_response);
+        assert!(job.output.response.url_path.is_none());
+        assert_eq!(job.output.response.mime_type, "video/mp4");
     }
 
     #[test]
