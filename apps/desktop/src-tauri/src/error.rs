@@ -307,6 +307,21 @@ pub enum AppError {
     CanonicalCandidateCannotBeRejected,
     #[error("this candidate needs an explicit override reason before promotion")]
     QaOverrideRequired,
+
+    #[error("The sequence flow for this scene does not exist yet")]
+    SequenceFlowNotFound,
+
+    #[error("The director brief is invalid: intent, energy, duration, and credit cap must be valid")]
+    InvalidSequenceBrief,
+
+    #[error("The sequence flow changed before your action completed; review the current stage and try again")]
+    SequenceFlowStageConflict,
+
+    #[error("Extension direction must be 'prequel' or 'sequel'")]
+    InvalidSequenceExtensionDirection,
+
+    #[error("This sequence has no canonical video to extend yet: promote a shot's take first")]
+    SequenceCanonicalVideoMissing,
 }
 
 /// Serializable error shape sent across the Tauri IPC boundary.

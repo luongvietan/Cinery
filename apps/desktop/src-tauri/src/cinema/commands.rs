@@ -262,3 +262,88 @@ pub fn restore_shot_video_candidate(
     )
     .map_err(AppCommandError::from)
 }
+
+// ---------------------------------------------------------------------------
+// Sequence-first flow (Joey): explicit, guarded stage transitions. Every
+// mutation below is a deliberate user action; the flow state is persisted
+// per scene and all stage changes are compare-and-set guarded.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_sequence_flow(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<crate::cinema::sequence_flow::SequenceFlowRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::get_flow(
+        root_path(&project_root_path)?,
+        &scene_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
+pub fn update_sequence_brief(
+    project_root_path: String,
+    scene_id: String,
+    brief: crate::cinema::sequence_flow::SequenceBriefInput,
+) -> Result<crate::cinema::sequence_flow::SequenceFlowRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::update_brief(
+        root_path(&project_root_path)?,
+        &scene_id,
+        &brief,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
+pub fn mark_sequence_references_ready(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<crate::cinema::sequence_flow::ReferencesReadyReport, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::mark_references_ready(
+        root_path(&project_root_path)?,
+        &scene_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
+pub fn approve_sequence_preflight(
+    project_root_path: String,
+    scene_id: String,
+    approved_compilation_id: Option<String>,
+) -> Result<crate::cinema::sequence_flow::SequenceFlowRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::approve_preflight(
+        root_path(&project_root_path)?,
+        &scene_id,
+        approved_compilation_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
+pub fn begin_sequence_review(
+    project_root_path: String,
+    scene_id: String,
+) -> Result<crate::cinema::sequence_flow::SequenceFlowRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::begin_review(
+        root_path(&project_root_path)?,
+        &scene_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
+pub fn prepare_sequence_extension(
+    project_root_path: String,
+    scene_id: String,
+    direction: String,
+) -> Result<crate::cinema::sequence_flow::ExtensionRequestRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::prepare_extension(
+        root_path(&project_root_path)?,
+        &scene_id,
+        &direction,
+    )
+    .map_err(AppCommandError::from)
+}
+
