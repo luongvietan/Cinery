@@ -1,5 +1,10 @@
 import { invokeCommand } from "../../lib/tauri";
-import type { ShotImageToVideoSource, ShotVideoPromotionResult } from "@cinematic/domain";
+import type {
+  CinemaCompilation as DomainCinemaCompilation,
+  SequencePreflight,
+  ShotImageToVideoSource,
+  ShotVideoPromotionResult,
+} from "@cinematic/domain";
 import type {
   ResolvedSceneReference,
   ResolvedSceneReferences,
@@ -317,6 +322,99 @@ export function setShotVideo(
     shotId,
     videoAssetVersionId,
   });
+}
+
+/** The compiled, provider-neutral prompt stored inside a compilation record. */
+interface CompiledPrompt {
+  totalDurationSeconds: number;
+  providerPrompt: string;
+  shots: DomainCinemaCompilation["shots"];
+  behavioralLocks?: DomainCinemaCompilation["behavioralLocks"];
+  worldContinuity?: DomainCinemaCompilation["worldContinuity"];
+  continuity?: string | null;
+}
+
+/**
+ * Composes the read-only generation disclosure from the existing read-only
+ * commands: compile readiness (blockers), resolved references (exact
+ * versions), and the latest compilation (full prompt + runtime). No credit
+ * estimator exists yet, so `estimatedCredits` honestly reports 0 — the UI
+ * labels it "not reported" until a connected service provides one.
+ */
+export async function buildSequencePreflight(
+  projectRootPath: string,
+  sceneId: string,
+): Promise<SequencePreflight> {
+  const [readiness, references, compilations] = await Promise.all([
+    getCompileReadiness(projectRootPath, sceneId),
+    resolveSceneReferences(projectRootPath, sceneId),
+    listCinemaCompilations(projectRootPath, sceneId),
+  ]);
+
+  const record = compilations[0] ?? null;
+  let compiled: CompiledPrompt | null = null;
+  if (record) {
+    try {
+      compiled = JSON.parse(record.compilationJson) as CompiledPrompt;
+    } catch {
+      compiled = null;
+    }
+  }
+
+  const blockers = readiness.blockers.map((blocker) => ({
+    code: blocker.code,
+    message: blocker.message,
+  }));
+  if (!record || !compiled) {
+    blockers.push({
+      code: "compilation_missing",
+      message: "Compile the scene prompt before approving generation",
+    });
+  }
+
+  const totalSeconds = compiled?.totalDurationSeconds ?? 0;
+  return {
+    sceneId,
+    compilation: {
+      id: record?.id ?? "",
+      projectId: record?.projectId ?? "",
+      sceneId,
+      totalDurationSeconds: totalSeconds,
+      shots: compiled?.shots ?? [],
+      behavioralLocks: compiled?.behavioralLocks ?? {},
+      worldContinuity: compiled?.worldContinuity ?? {},
+      continuityNotes: compiled?.continuity ?? undefined,
+      providerPrompt: compiled?.providerPrompt ?? "",
+      createdAt: record?.createdAt ?? "",
+    },
+    providerPrompt: compiled?.providerPrompt ?? "",
+    references: [
+      ...(references.world && references.world.pinnedVersionId
+        ? [{ assetId: references.world.assetId, versionId: references.world.pinnedVersionId, role: "world plate" }]
+        : []),
+      ...references.characters
+        .filter((character) => character.pinnedVersionId)
+        .map((character) => ({
+          assetId: character.assetId,
+          versionId: character.pinnedVersionId as string,
+          role: "character look",
+        })),
+      ...references.props
+        .filter((prop) => prop.pinnedVersionId)
+        .map((prop) => ({
+          assetId: prop.assetId,
+          versionId: prop.pinnedVersionId as string,
+          role: "prop plate",
+        })),
+    ],
+    estimatedCredits: 0,
+    runtimeRecommendation:
+      totalSeconds > 15
+        ? `Joey recommends ~15-second prompt units: consider splitting this ${totalSeconds}s sequence before generating`
+        : `Within Joey's recommended ~15-second prompt unit (${totalSeconds}s)`,
+    canGenerate: blockers.length === 0,
+    blockers,
+  };
 }
 
 /** Display-only projection of the Shot's exact pinned keyframe — the frozen

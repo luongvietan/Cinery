@@ -9,10 +9,11 @@ import { SceneReadinessPanel } from "./SceneReadinessPanel";
 import { SceneShots } from "./SceneShots";
 import { SceneCompile } from "./SceneCompile";
 import { SequenceBrief } from "./SequenceBrief";
-import { createScene, getCompileReadiness } from "./api";
+import { SequencePreflight } from "./SequencePreflight";
+import { buildSequencePreflight, createScene, getCompileReadiness } from "./api";
 import { getSequenceFlow } from "./sequenceFlowApi";
 import { describeError } from "../../lib/errors";
-import type { SequenceFlow } from "@cinematic/domain";
+import type { SequenceFlow, SequencePreflight } from "@cinematic/domain";
 
 type SceneTab = "Setup" | "Shots" | "Render";
 
@@ -34,6 +35,7 @@ export function SceneWorkspace({
   const [tab, setTab] = useState<SceneTab>(initialTab ?? "Setup");
   const [readiness, setReadiness] = useState<{ ready: boolean; blockers: Array<{ message: string }> } | null>(null);
   const [flow, setFlow] = useState<SequenceFlow | null>(null);
+  const [preflight, setPreflight] = useState<SequencePreflight | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
@@ -79,6 +81,17 @@ export function SceneWorkspace({
     getSequenceFlow(projectRootPath, selectedSceneId)
       .then((next) => { if (!cancelled) setFlow(next); })
       .catch(() => { if (!cancelled) setFlow(null); });
+    return () => { cancelled = true; };
+  }, [projectRootPath, selectedSceneId, refreshKey]);
+
+  // Read-only preflight composition; a failure (e.g. no scene) hides the
+  // disclosure rather than blocking the workspace.
+  useEffect(() => {
+    if (!selectedSceneId) { setPreflight(null); return; }
+    let cancelled = false;
+    buildSequencePreflight(projectRootPath, selectedSceneId)
+      .then((next) => { if (!cancelled) setPreflight(next); })
+      .catch(() => { if (!cancelled) setPreflight(null); });
     return () => { cancelled = true; };
   }, [projectRootPath, selectedSceneId, refreshKey]);
 
@@ -236,12 +249,24 @@ export function SceneWorkspace({
                   />
                 ) : null}
                 {tab === "Render" ? (
-                  <SceneCompile
-                    key={`compile-${selectedSceneId}-${refreshKey}`}
-                    projectRootPath={projectRootPath}
-                    sceneId={selectedSceneId}
-                    onChanged={handleChanged}
-                  />
+                  <>
+                    {preflight ? (
+                      <SequencePreflight
+                        projectRootPath={projectRootPath}
+                        sceneId={selectedSceneId}
+                        flow={flow}
+                        preflight={preflight}
+                        onChanged={handleChanged}
+                      />
+                    ) : null}
+                    <SceneCompile
+                      key={`compile-${selectedSceneId}-${refreshKey}`}
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      onChanged={handleChanged}
+                      generationApproved={flow?.stage === "prompt_approved"}
+                    />
+                  </>
                 ) : null}
               </div>
             </>

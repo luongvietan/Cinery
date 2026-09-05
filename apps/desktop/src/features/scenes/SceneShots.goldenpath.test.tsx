@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SceneWorkspace } from "./SceneWorkspace";
 import {
+  buildSequencePreflight,
   createShot,
   ensureSceneKeyframeAsset,
   getCompileReadiness,
@@ -109,6 +110,7 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
       blockers: ready ? [] : [{ code: "missing_shot", sceneId: scene.id, entityId: null, shotId: null, message: "This scene has no shots.", actionTarget: "shot" }],
     }));
     vi.mocked(listCinemaCompilations).mockResolvedValue([]);
+    vi.mocked(buildSequencePreflight).mockResolvedValue(null);
     vi.mocked(createShot).mockImplementation(async (_root, _sceneId, durationSeconds, intent) => {
       const shot: Shot = {
         id: `shot-${shots.length + 1}`,

@@ -40,6 +40,7 @@ vi.mock("./api", () => ({
   getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-1", ready: true, blockers: [] }),
   listCinemaCompilations: vi.fn().mockResolvedValue([]),
   compileCinema: vi.fn(),
+  buildSequencePreflight: vi.fn().mockResolvedValue(null),
   ensureSceneKeyframeAsset: vi.fn(),
 }));
 vi.mock("../worlds/api", () => ({

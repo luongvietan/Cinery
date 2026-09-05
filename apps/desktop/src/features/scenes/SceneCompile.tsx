@@ -29,6 +29,12 @@ interface SceneCompileProps {
   projectRootPath: string;
   sceneId: string;
   onChanged?: () => void;
+  /**
+   * Sequence-first guard: the explicit preflight approval has been recorded.
+   * Defaults to true so standalone callers keep their behavior;
+   * SceneWorkspace passes the real flow gate.
+   */
+  generationApproved?: boolean;
 }
 
 /**
@@ -38,7 +44,12 @@ interface SceneCompileProps {
  * approval, execution, a reviewable candidate gallery, explicit promotion
  * into the scene's video asset, and an optional exact shot video pin.
  */
-export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompileProps) {
+export function SceneCompile({
+  projectRootPath,
+  sceneId,
+  onChanged,
+  generationApproved = true,
+}: SceneCompileProps) {
   const [readiness, setReadiness] = useState<CompileReadiness | null>(null);
   const [compilations, setCompilations] = useState<CinemaCompilation[]>([]);
   const [shots, setShots] = useState<Shot[]>([]);
@@ -261,11 +272,16 @@ export function SceneCompile({ projectRootPath, sceneId, onChanged }: SceneCompi
             requiresReferences={false}
             onChange={setVideoSelection}
           />
+          {!generationApproved ? (
+            <p role="status" style={{ margin: "0 0 var(--space-8)", fontSize: "var(--fs-md)", color: "var(--c-muted)" }}>
+              Approve the generation preflight above before generating.
+            </p>
+          ) : null}
           <button
             type="button"
             style={{ marginTop: "var(--space-8)" }}
             onClick={() => void handleGenerateVideo()}
-            disabled={generatingVideo || compilations.length === 0}
+            disabled={generatingVideo || compilations.length === 0 || !generationApproved}
           >
             {generatingVideo ? "Preparing video request…" : "Generate video from latest compilation"}
           </button>
