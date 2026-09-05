@@ -106,6 +106,7 @@ pub fn run() {
             cinema::commands::mark_sequence_references_ready,
             cinema::commands::approve_sequence_preflight,
             cinema::commands::begin_sequence_review,
+            cinema::commands::mark_sequence_canonical_take,
             cinema::commands::prepare_sequence_extension,
             recovery::commands::get_project_recovery_state,
             diagnostics::commands::export_diagnostics,

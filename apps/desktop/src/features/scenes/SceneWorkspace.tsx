@@ -10,6 +10,7 @@ import { SceneShots } from "./SceneShots";
 import { SceneCompile } from "./SceneCompile";
 import { SequenceBrief } from "./SequenceBrief";
 import { SequencePreflight } from "./SequencePreflight";
+import { SequenceExtend } from "./SequenceExtend";
 import { buildSequencePreflight, createScene, getCompileReadiness } from "./api";
 import { getSequenceFlow } from "./sequenceFlowApi";
 import { describeError } from "../../lib/errors";
@@ -265,6 +266,12 @@ export function SceneWorkspace({
                       sceneId={selectedSceneId}
                       onChanged={handleChanged}
                       generationApproved={flow?.stage === "prompt_approved"}
+                    />
+                    <SequenceExtend
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      flow={flow}
+                      onChanged={handleChanged}
                     />
                   </>
                 ) : null}

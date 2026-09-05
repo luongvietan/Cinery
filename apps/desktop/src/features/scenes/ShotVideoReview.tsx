@@ -8,11 +8,18 @@ import {
   restoreShotVideoCandidate,
   type ShotVideoCandidate,
 } from "./api";
+import { markSequenceCanonicalTake } from "./sequenceFlowApi";
 import { VideoQaPanel } from "../qa/VideoQaPanel";
 
 interface ShotVideoReviewProps {
   projectRootPath: string;
   shotId: string;
+  /**
+   * When provided, a successful explicit promotion also records the human's
+   * canonical take on the scene's sequence flow (in_review →
+   * canonical_selected). Legacy callers without it keep their behavior.
+   */
+  sceneId?: string | null;
   onChanged(): void;
 }
 
@@ -63,7 +70,7 @@ function formatBytes(byteSize: number): string {
 /** Human review workspace for a Shot's generated video candidates (P10.4):
  * newest-first gallery, playback, QA + provenance, reject/restore, compare,
  * and explicit canonical promotion with a conflict-safe confirmation. */
-export function ShotVideoReview({ projectRootPath, shotId, onChanged }: ShotVideoReviewProps) {
+export function ShotVideoReview({ projectRootPath, shotId, sceneId, onChanged }: ShotVideoReviewProps) {
   const [candidates, setCandidates] = useState<ShotVideoCandidate[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [compareId, setCompareId] = useState<string | null>(null);
@@ -131,6 +138,16 @@ export function ShotVideoReview({ projectRootPath, shotId, onChanged }: ShotVide
         expected,
         needsOverride ? overrideReason.trim() : null,
       );
+      if (sceneId) {
+        // Sequence-first: only a successful, explicit promotion records the
+        // canonical take on the flow — never a reject, restore, or conflict.
+        try {
+          await markSequenceCanonicalTake(projectRootPath, sceneId, shotId);
+        } catch (flowError: unknown) {
+          // The pin succeeded; surface the flow lag without faking a stage.
+          setError(describeError(flowError));
+        }
+      }
       setPendingPromotion(null);
       setSelectedId(pendingPromotion.assetVersionId);
       await refreshAfterChange();
@@ -337,7 +354,7 @@ export function ShotVideoReview({ projectRootPath, shotId, onChanged }: ShotVide
                           onClick={() => beginPromotion(candidate)}
                           disabled={busy !== null || candidate.isCanonical}
                         >
-                          {candidate.isCanonical ? "Canonical ✓" : busy === `promote-${candidate.assetVersionId}` ? "Promoting…" : "Promote"}
+                          {candidate.isCanonical ? "Canonical ✓" : busy === `promote-${candidate.assetVersionId}` ? "Promoting…" : "Promote as canonical"}
                         </button>
                       </>
                     )}
@@ -432,7 +449,11 @@ export function ShotVideoReview({ projectRootPath, shotId, onChanged }: ShotVide
                     (!confirmOverride || overrideReason.trim() === ""))
                 }
               >
-                {busy !== null ? "Promoting…" : exceptionOf(pendingPromotion) ? "Promote anyway" : "Promote"}
+                {busy !== null
+                  ? "Promoting…"
+                  : exceptionOf(pendingPromotion)
+                    ? "Confirm promotion anyway"
+                    : "Confirm promotion"}
               </button>
             </div>
           </section>

@@ -517,6 +517,52 @@ impl SequenceFlowService {
         )
     }
 
+    /// Records the human's canonical take on the flow: the selected shot must
+    /// already carry an exact generated-video pin (promotion is what creates
+    /// one), and only a flow at `in_review` may advance to
+    /// `canonical_selected`.
+    pub fn mark_canonical_take(
+        project_root: &Path,
+        scene_id: &str,
+        shot_id: &str,
+    ) -> Result<SequenceFlowRecord, AppError> {
+        let project = ProjectService::open(project_root)?;
+        let mut conn = db::open_existing_connection(&project_root.join("project.db"))?;
+        cinema_repository::ensure_scene_in_project(&conn, &project.id, scene_id)?;
+
+        let pinned: Option<Option<String>> = conn
+            .query_row(
+                "SELECT generated_video_asset_version_id FROM scene_shots \
+                 WHERE id = ?1 AND scene_id = ?2",
+                params![shot_id, scene_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if pinned.flatten().is_none() {
+            return Err(AppError::SequenceCanonicalVideoMissing);
+        }
+        Self::read_flow(&conn, scene_id)?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::transition(
+            &tx,
+            scene_id,
+            SequenceStage::InReview,
+            SequenceStage::CanonicalSelected,
+        )?;
+        tx.execute(
+            "UPDATE sequence_flows SET canonical_shot_id = ?1 WHERE scene_id = ?2",
+            params![shot_id, scene_id],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::read_flow(&conn, scene_id)
+    }
+
     /// Prepares (never executes) the extension of the scene's exact canonical
     /// video: resolves the pinned version, carries the scene's locked
     /// behavioral and world continuity, and returns a disclosure object. A

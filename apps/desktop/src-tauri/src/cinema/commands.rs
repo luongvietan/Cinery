@@ -334,6 +334,20 @@ pub fn begin_sequence_review(
 }
 
 #[tauri::command]
+pub fn mark_sequence_canonical_take(
+    project_root_path: String,
+    scene_id: String,
+    shot_id: String,
+) -> Result<crate::cinema::sequence_flow::SequenceFlowRecord, AppCommandError> {
+    crate::cinema::sequence_flow::SequenceFlowService::mark_canonical_take(
+        root_path(&project_root_path)?,
+        &scene_id,
+        &shot_id,
+    )
+    .map_err(AppCommandError::from)
+}
+
+#[tauri::command]
 pub fn prepare_sequence_extension(
     project_root_path: String,
     scene_id: String,

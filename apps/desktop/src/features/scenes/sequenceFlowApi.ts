@@ -71,6 +71,18 @@ export function beginSequenceReview(
   });
 }
 
+export function markSequenceCanonicalTake(
+  projectRootPath: string,
+  sceneId: string,
+  shotId: string,
+): Promise<SequenceFlow> {
+  return invokeCommand<SequenceFlow>("mark_sequence_canonical_take", {
+    projectRootPath,
+    sceneId,
+    shotId,
+  });
+}
+
 export function prepareSequenceExtension(
   projectRootPath: string,
   sceneId: string,

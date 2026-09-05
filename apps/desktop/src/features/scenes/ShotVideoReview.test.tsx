@@ -9,10 +9,14 @@ import {
   restoreShotVideoCandidate,
   type ShotVideoCandidate,
 } from "./api";
+import { markSequenceCanonicalTake } from "./sequenceFlowApi";
 import * as qaApi from "../qa/api";
 
 vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (path: string) => `asset://localhost/${path}`,
+}));
+vi.mock("./sequenceFlowApi", () => ({
+  markSequenceCanonicalTake: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("./api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./api")>();
@@ -149,7 +153,7 @@ describe("ShotVideoReview (P10.4)", () => {
     render(<ShotVideoReview projectRootPath="C:/project" shotId="shot-1" onChanged={onChanged} />);
 
     await user.click(await screen.findByRole("button", { name: "V02" }));
-    await user.click(screen.getByRole("button", { name: "Promote" }));
+    await user.click(screen.getByRole("button", { name: "Promote as canonical" }));
 
     // Replacement warning names both versions.
     const dialog = screen.getByRole("dialog");
@@ -157,10 +161,41 @@ describe("ShotVideoReview (P10.4)", () => {
     expect(dialog).toHaveTextContent(/replaces V01 as the canonical selection/);
     expect(dialog).toHaveTextContent(/V01 will remain available/);
 
-    await user.click(within(dialog).getByRole("button", { name: "Promote" }));
+    await user.click(within(dialog).getByRole("button", { name: "Confirm promotion" }));
     await waitFor(() => expect(promoteShotVideoCandidate).toHaveBeenCalledWith(
       "C:/project", "shot-1", "video-v2", "video-v1", null,
     ));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("moves to canonical-selected only after the user promotes a take", async () => {
+    vi.mocked(listShotVideoCandidates).mockResolvedValue([
+      candidate({ assetVersionId: "video-v1", versionNumber: 1 }),
+    ]);
+    vi.mocked(promoteShotVideoCandidate).mockResolvedValue({
+      shotId: "shot-1",
+      artifactId: "artifact-1",
+      assetVersionId: "video-v1",
+      previousAssetVersionId: null,
+    });
+    const onChanged = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <ShotVideoReview
+        projectRootPath="/project"
+        shotId="shot-1"
+        sceneId="scene-1"
+        onChanged={onChanged}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "V01" }));
+    await user.click(screen.getByRole("button", { name: "Promote as canonical" }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm promotion" }),
+    );
+    await waitFor(() =>
+      expect(markSequenceCanonicalTake).toHaveBeenCalledWith("/project", "scene-1", "shot-1"),
+    );
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
@@ -185,7 +220,7 @@ describe("ShotVideoReview (P10.4)", () => {
     await user.click(await screen.findByRole("button", { name: "V01" }));
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Promote" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Promote as canonical" })).not.toBeInTheDocument();
   });
 
   it("requires an explicit override with a reason for a QA-failed candidate", async () => {
@@ -202,11 +237,11 @@ describe("ShotVideoReview (P10.4)", () => {
     render(<ShotVideoReview projectRootPath="C:/project" shotId="shot-1" onChanged={vi.fn()} />);
 
     await user.click(await screen.findByRole("button", { name: "V01" }));
-    await user.click(screen.getByRole("button", { name: "Promote" }));
+    await user.click(screen.getByRole("button", { name: "Promote as canonical" }));
 
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent(/Video QA reported a failure/);
-    const promoteAnyway = within(dialog).getByRole("button", { name: "Promote anyway" });
+    const promoteAnyway = within(dialog).getByRole("button", { name: "Confirm promotion anyway" });
     // Blocked until the acknowledgement + reason are provided.
     expect(promoteAnyway).toBeDisabled();
 
@@ -232,10 +267,10 @@ describe("ShotVideoReview (P10.4)", () => {
     render(<ShotVideoReview projectRootPath="C:/project" shotId="shot-1" onChanged={vi.fn()} />);
 
     await user.click(await screen.findByRole("button", { name: "V01" }));
-    await user.click(screen.getByRole("button", { name: "Promote" }));
+    await user.click(screen.getByRole("button", { name: "Promote as canonical" }));
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveTextContent(/generated from an earlier keyframe/);
-    expect(within(dialog).getByRole("button", { name: "Promote anyway" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Confirm promotion anyway" })).toBeDisabled();
   });
 
   it("surfaces a canonical conflict by reloading state instead of retrying", async () => {
@@ -250,8 +285,8 @@ describe("ShotVideoReview (P10.4)", () => {
     render(<ShotVideoReview projectRootPath="C:/project" shotId="shot-1" onChanged={vi.fn()} />);
 
     await user.click(await screen.findByRole("button", { name: "V02" }));
-    await user.click(screen.getByRole("button", { name: "Promote" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Promote" }));
+    await user.click(screen.getByRole("button", { name: "Promote as canonical" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirm promotion" }));
 
     await waitFor(() => {
       const alerts = screen.getAllByRole("alert");

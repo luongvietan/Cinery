@@ -308,6 +308,7 @@ export function ShotImageToVideo({ projectRootPath, sceneId, shot, onShotChanged
       <ShotVideoReview
         projectRootPath={projectRootPath}
         shotId={shot.id}
+        sceneId={sceneId}
         onChanged={onShotChanged}
       />
     </div>

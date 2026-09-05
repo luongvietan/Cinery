@@ -300,6 +300,58 @@ fn mark_references_ready_returns_blockers_without_mutating_state() {
     assert_eq!(flow.brief.intent, "Tay counts the exits");
 }
 
+/// Walks a flow from `generating` to `in_review` so canonical-take tests can
+/// start from the review stage.
+fn begin_review(f: &Fixture, scene_id: &str) {
+    let conn =
+        db::open_existing_connection(&Path::new(&f.root).join("project.db")).unwrap();
+    conn.execute(
+        "UPDATE sequence_flows SET stage = 'generating' WHERE scene_id = ?1",
+        params![scene_id],
+    )
+    .unwrap();
+    drop(conn);
+    begin_sequence_review(f.root.clone(), scene_id.to_string()).unwrap();
+}
+
+#[test]
+fn canonical_take_requires_a_pinned_video_and_the_review_stage() {
+    let f = fixture();
+    let scene = create_scene(&f);
+    update_sequence_brief(f.root.clone(), scene.id.clone(), brief("Tay picks the take"))
+        .unwrap();
+
+    // A shot without a pinned canonical video cannot be selected, at any
+    // stage; the flow itself does not even exist at brief_locked.
+    complete_references(&f, &scene.id);
+    let shot = create_shot(
+        f.root.clone(),
+        scene.id.clone(),
+        None,
+        4.0,
+        "Establish".into(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_err_contains(
+        mark_sequence_canonical_take(f.root.clone(), scene.id.clone(), shot.id.clone()),
+        "canonical video",
+    );
+
+    // Promote a candidate for the shot, move to in_review, then select.
+    let (pinned_shot, version_id) = promote_fixture_candidate(&f, &scene);
+    begin_review(&f, &scene.id);
+    let flow = mark_sequence_canonical_take(f.root.clone(), scene.id.clone(), pinned_shot.clone())
+        .unwrap();
+    assert_eq!(flow.stage.as_str(), "canonical_selected");
+    assert_eq!(flow.canonical_shot_id.as_deref(), Some(pinned_shot.as_str()));
+
+    // The recorded take is the exact pinned version.
+    let resolved = resolve_canonical_shot_video(f.root.clone(), pinned_shot).unwrap();
+    assert_eq!(resolved.as_deref(), Some(version_id.as_str()));
+}
+
 #[test]
 fn begin_review_moves_generating_to_in_review() {
     let f = fixture();
