@@ -8,8 +8,11 @@ import { SceneTbdPanel } from "./SceneTbdPanel";
 import { SceneReadinessPanel } from "./SceneReadinessPanel";
 import { SceneShots } from "./SceneShots";
 import { SceneCompile } from "./SceneCompile";
+import { SequenceBrief } from "./SequenceBrief";
 import { createScene, getCompileReadiness } from "./api";
+import { getSequenceFlow } from "./sequenceFlowApi";
 import { describeError } from "../../lib/errors";
+import type { SequenceFlow } from "@cinematic/domain";
 
 type SceneTab = "Setup" | "Shots" | "Render";
 
@@ -30,6 +33,7 @@ export function SceneWorkspace({
   const [refreshKey, setRefreshKey] = useState(0);
   const [tab, setTab] = useState<SceneTab>(initialTab ?? "Setup");
   const [readiness, setReadiness] = useState<{ ready: boolean; blockers: Array<{ message: string }> } | null>(null);
+  const [flow, setFlow] = useState<SequenceFlow | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
@@ -64,6 +68,17 @@ export function SceneWorkspace({
     getCompileReadiness(projectRootPath, selectedSceneId)
       .then((next) => { if (!cancelled) setReadiness(next); })
       .catch(() => { if (!cancelled) setReadiness(null); });
+    return () => { cancelled = true; };
+  }, [projectRootPath, selectedSceneId, refreshKey]);
+
+  // A scene without a saved flow yet simply has none (SEQUENCE_FLOW_NOT_FOUND
+  // is the normal fresh-scene case, surfaced here as null).
+  useEffect(() => {
+    if (!selectedSceneId) { setFlow(null); return; }
+    let cancelled = false;
+    getSequenceFlow(projectRootPath, selectedSceneId)
+      .then((next) => { if (!cancelled) setFlow(next); })
+      .catch(() => { if (!cancelled) setFlow(null); });
     return () => { cancelled = true; };
   }, [projectRootPath, selectedSceneId, refreshKey]);
 
@@ -172,6 +187,12 @@ export function SceneWorkspace({
               >
                 {tab === "Setup" ? (
                   <>
+                    <SequenceBrief
+                      projectRootPath={projectRootPath}
+                      sceneId={selectedSceneId}
+                      flow={flow}
+                      onChanged={handleChanged}
+                    />
                     <SceneEditor
                       key={`editor-${selectedSceneId}-${refreshKey}`}
                       projectRootPath={projectRootPath}
