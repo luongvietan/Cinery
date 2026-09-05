@@ -10,6 +10,7 @@ export * from "./execution";
 export * from "./generation";
 export * from "./lineage";
 export * from "./cinema";
+export * from "./sequence-flow";
 export * from "./integration";
 export * from "./jobs/mod";
 export * from "./diagnostics";
