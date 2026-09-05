@@ -413,7 +413,7 @@ git commit -m "feat: add persistent AI co-director rail"
 - Consumes: every public contract and explicit action from Tasks 1–6.
 - Produces: end-to-end confidence that the user controls the full short-sequence flow.
 
-- [ ] **Step 1: Write the complete failing frontend acceptance journey.**
+- [x] **Step 1: Write the complete failing frontend acceptance journey.**
 
 ```tsx
 it("guides a director from brief through a canonical take to a prepared sequel without autonomous AI actions", async () => {
@@ -430,29 +430,29 @@ it("guides a director from brief through a canonical take to a prepared sequel w
 });
 ```
 
-- [ ] **Step 2: Run the frontend and Rust acceptance targets and verify the new journey fails before wiring is complete.**
+- [x] **Step 2: Run the frontend and Rust acceptance targets and verify the new journey fails before wiring is complete.**
 
 Run: `pnpm --filter @cinematic/desktop test -- joey-sequence-flow.test.tsx && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test sequence_flow`
 
 Expected: FAIL until the integration wiring from Tasks 1–6 is present.
 
-- [ ] **Step 3: Wire only the missing integration seams found by the test.**
+- [x] **Step 3: Wire only the missing integration seams found by the test.**
 
 Keep fixture data explicit: one scene plate, one character look, one shot, two generated video candidates, and one promoted canonical candidate. Mock the Tauri facade at the frontend boundary; use the existing Rust fixture/database helpers at the backend boundary. Do not add sleeps, automatic retries, or live-provider calls.
 
-- [ ] **Step 4: Run the complete verification suite.**
+- [x] **Step 4: Run the complete verification suite.**
 
 Run: `pnpm --filter @cinematic/domain test && pnpm --filter @cinematic/desktop test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`
 
 Expected: all commands exit 0.
 
-- [ ] **Step 5: Build the desktop application.**
+- [x] **Step 5: Build the desktop application.**
 
 Run: `pnpm --filter @cinematic/desktop build`
 
 Expected: TypeScript and Vite build exit 0.
 
-- [ ] **Step 6: Commit acceptance coverage.**
+- [x] **Step 6: Commit acceptance coverage.**
 
 ```bash
 git add apps/desktop/src/__tests__/joey-sequence-flow.test.tsx apps/desktop/src-tauri/tests/sequence_flow.rs
