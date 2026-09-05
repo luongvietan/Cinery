@@ -9,6 +9,7 @@ import { SceneReadinessPanel } from "./SceneReadinessPanel";
 import { SceneShots } from "./SceneShots";
 import { SceneCompile } from "./SceneCompile";
 import { SequenceBrief } from "./SequenceBrief";
+import { AiCoDirectorRail, type SequenceStageHint } from "./AiCoDirectorRail";
 import { SequencePreflight } from "./SequencePreflight";
 import { SequenceExtend } from "./SequenceExtend";
 import { buildSequencePreflight, createScene, getCompileReadiness } from "./api";
@@ -95,6 +96,17 @@ export function SceneWorkspace({
       .catch(() => { if (!cancelled) setPreflight(null); });
     return () => { cancelled = true; };
   }, [projectRootPath, selectedSceneId, refreshKey]);
+
+  // Which stage canvas the co-director rail comments on: the extension
+  // choice outranks the visible tab once a canonical take exists.
+  const activeStage: SequenceStageHint =
+    flow?.stage === "canonical_selected"
+      ? "extension"
+      : tab === "Setup"
+        ? "brief"
+        : tab === "Shots"
+          ? "review"
+          : "preflight";
 
   function handleCreated(sceneId: string) {
     setRefreshKey((k) => k + 1);
@@ -194,10 +206,13 @@ export function SceneWorkspace({
                 </div>
               </div>
               <div
+                style={{ display: "flex", gap: "var(--space-16)", alignItems: "flex-start", flexWrap: "wrap" }}
+              >
+              <div
                 role="tabpanel"
                 id={`scene-panel-${tab.toLowerCase()}`}
                 aria-labelledby={`scene-tab-${tab.toLowerCase()}`}
-                style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)" }}
+                style={{ display: "flex", flexDirection: "column", gap: "var(--space-16)", flex: "1 1 0", minWidth: 0 }}
               >
                 {tab === "Setup" ? (
                   <>
@@ -275,6 +290,10 @@ export function SceneWorkspace({
                     />
                   </>
                 ) : null}
+              </div>
+              <aside aria-label="AI co-director" style={{ flex: "0 1 300px", maxWidth: "100%" }}>
+                <AiCoDirectorRail flow={flow} readiness={readiness} activeStage={activeStage} />
+              </aside>
               </div>
             </>
           ) : (

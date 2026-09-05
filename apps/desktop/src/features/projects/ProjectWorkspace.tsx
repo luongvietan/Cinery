@@ -30,7 +30,7 @@ const CREATE_NAV: Array<{ view: PanelView; label: string }> = [
   { view: "overview", label: "Overview" },
   { view: "canon", label: "Story" },
   { view: "worlds", label: "Worlds" },
-  { view: "scenes", label: "Scenes" },
+  { view: "scenes", label: "Sequences" },
   { view: "assets", label: "Assets" },
 ];
 const OUTPUT_NAV: Array<{ view: PanelView; label: string }> = [

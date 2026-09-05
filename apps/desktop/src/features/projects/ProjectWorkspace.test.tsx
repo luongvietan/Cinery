@@ -105,6 +105,14 @@ describe("ProjectWorkspace", () => {
     expect(listWorkflowRuns).toHaveBeenCalledWith(project.rootPath);
   });
 
+  it("labels the stable scenes panel as Sequences in project navigation", async () => {
+    render(<ProjectWorkspace project={project} onCloseProject={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sequences" }));
+
+    expect(await screen.findByRole("region", { name: /Scenes workspace/i })).toBeInTheDocument();
+  });
+
   it("resets the import button's in-flight state when switching assets mid-import", async () => {
     let resolveImport!: (value: AssetVersion) => void;
     let rejectImport!: (reason: unknown) => void;
