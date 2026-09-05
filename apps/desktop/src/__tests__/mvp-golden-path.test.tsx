@@ -38,6 +38,10 @@ vi.mock("../features/scenes/api", () => ({
   ]),
   getCompileReadiness: vi.fn().mockResolvedValue({ sceneId: "scene-001", ready: true, blockers: [] }),
   listCinemaCompilations: vi.fn().mockResolvedValue([]),
+  buildSequencePreflight: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("../features/scenes/sequenceFlowApi", () => ({
+  getSequenceFlow: vi.fn().mockRejectedValue({ code: "SEQUENCE_FLOW_NOT_FOUND", message: "No sequence flow yet" }),
 }));
 vi.mock("../features/overview/api", () => ({
   getProjectOverview: vi.fn(),
@@ -202,7 +206,7 @@ describe("MVP golden path (deterministic UI portions)", () => {
       "Overview",
       "Story",
       "Worlds",
-      "Scenes",
+      "Sequences",
       "Assets",
       "Generations",
       "AI Services",

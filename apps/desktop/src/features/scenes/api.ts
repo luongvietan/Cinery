@@ -393,17 +393,17 @@ export async function buildSequencePreflight(
         ? [{ assetId: references.world.assetId, versionId: references.world.pinnedVersionId, role: "world plate" }]
         : []),
       ...references.characters
-        .filter((character) => character.pinnedVersionId)
+        .filter((character) => character.look.pinnedVersionId)
         .map((character) => ({
-          assetId: character.assetId,
-          versionId: character.pinnedVersionId as string,
+          assetId: character.look.assetId,
+          versionId: character.look.pinnedVersionId,
           role: "character look",
         })),
       ...references.props
-        .filter((prop) => prop.pinnedVersionId)
+        .filter((prop) => prop.reference.pinnedVersionId)
         .map((prop) => ({
-          assetId: prop.assetId,
-          versionId: prop.pinnedVersionId as string,
+          assetId: prop.reference.assetId,
+          versionId: prop.reference.pinnedVersionId,
           role: "prop plate",
         })),
     ],

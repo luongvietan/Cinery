@@ -429,3 +429,77 @@ fn sequence_briefs_are_validated_before_any_write() {
         "SCENE_NOT_FOUND"
     );
 }
+
+/// Task 7 acceptance coverage: the full happy path in one continuous flow —
+/// brief -> references ready -> prompt approved -> generating -> in review ->
+/// canonical selected -> extension prepared — exercised end to end through
+/// the public command surface rather than in isolated per-transition tests.
+/// The single stage this command set does not expose (prompt_approved ->
+/// generating, which the workflow runtime owns) is advanced the same way the
+/// other tests above do: a direct row update simulating that the provider
+/// run has started, immediately followed by the explicit `begin_sequence_review`
+/// command that only this test suite is responsible for covering end to end.
+#[test]
+fn full_sequence_flow_reaches_a_prepared_extension_in_one_continuous_journey() {
+    let f = fixture();
+    let scene = create_scene(&f);
+
+    // 1. Lock the director brief.
+    let locked = update_sequence_brief(
+        f.root.clone(),
+        scene.id.clone(),
+        brief("Tay notices the door"),
+    )
+    .unwrap();
+    assert_eq!(locked.stage.as_str(), "brief_locked");
+
+    // 2. Attach the required references (world plate, cast look, one shot),
+    // then explicitly mark them ready.
+    complete_references(&f, &scene.id);
+    let references_ready =
+        mark_sequence_references_ready(f.root.clone(), scene.id.clone()).unwrap();
+    assert!(references_ready.blockers.is_empty());
+    assert_eq!(
+        references_ready.flow.unwrap().stage.as_str(),
+        "references_ready"
+    );
+
+    // 3. Approve the generation preflight.
+    let approved = approve_sequence_preflight(f.root.clone(), scene.id.clone(), None).unwrap();
+    assert_eq!(approved.stage.as_str(), "prompt_approved");
+    // The locked brief survives every explicit transition unchanged.
+    assert_eq!(approved.brief.intent, "Tay notices the door");
+
+    // 4. The provider run starts (owned by the workflow runtime, outside this
+    // command set) and completes; the flow moves into review.
+    let conn = db::open_existing_connection(&Path::new(&f.root).join("project.db")).unwrap();
+    conn.execute(
+        "UPDATE sequence_flows SET stage = 'generating' WHERE scene_id = ?1",
+        params![scene.id],
+    )
+    .unwrap();
+    drop(conn);
+    let in_review = begin_sequence_review(f.root.clone(), scene.id.clone()).unwrap();
+    assert_eq!(in_review.stage.as_str(), "in_review");
+
+    // 5. Promote one of the generated candidates as the shot's canonical take.
+    let (shot_id, version_id) = promote_fixture_candidate(&f, &scene);
+    let canonical =
+        mark_sequence_canonical_take(f.root.clone(), scene.id.clone(), shot_id.clone()).unwrap();
+    assert_eq!(canonical.stage.as_str(), "canonical_selected");
+    assert_eq!(canonical.canonical_shot_id.as_deref(), Some(shot_id.as_str()));
+
+    // 6. Prepare — not execute — a sequel extension from the exact canonical
+    // pin. No credits are spent and no provider work is enqueued by this call.
+    let prepared =
+        prepare_sequence_extension(f.root.clone(), scene.id.clone(), "sequel".into()).unwrap();
+    assert_eq!(prepared.direction.as_str(), "sequel");
+    assert_eq!(prepared.scene_id, scene.id);
+    assert_eq!(prepared.shot_id, shot_id);
+    assert_eq!(prepared.canonical_video_asset_version_id, version_id);
+
+    // The brief locked in step 1 is still exactly what was written.
+    let final_flow = get_sequence_flow(f.root, scene.id).unwrap();
+    assert_eq!(final_flow.brief.intent, "Tay notices the door");
+    assert_eq!(final_flow.stage.as_str(), "canonical_selected");
+}

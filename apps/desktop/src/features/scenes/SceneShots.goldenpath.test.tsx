@@ -110,7 +110,7 @@ describe("Scene → Shot → Keyframe → Compile golden path (UI portions)", ()
       blockers: ready ? [] : [{ code: "missing_shot", sceneId: scene.id, entityId: null, shotId: null, message: "This scene has no shots.", actionTarget: "shot" }],
     }));
     vi.mocked(listCinemaCompilations).mockResolvedValue([]);
-    vi.mocked(buildSequencePreflight).mockResolvedValue(null);
+    vi.mocked(buildSequencePreflight).mockResolvedValue(null as never);
     vi.mocked(createShot).mockImplementation(async (_root, _sceneId, durationSeconds, intent) => {
       const shot: Shot = {
         id: `shot-${shots.length + 1}`,

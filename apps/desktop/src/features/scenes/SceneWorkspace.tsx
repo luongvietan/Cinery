@@ -15,7 +15,7 @@ import { SequenceExtend } from "./SequenceExtend";
 import { buildSequencePreflight, createScene, getCompileReadiness } from "./api";
 import { getSequenceFlow } from "./sequenceFlowApi";
 import { describeError } from "../../lib/errors";
-import type { SequenceFlow, SequencePreflight } from "@cinematic/domain";
+import type { SequenceFlow, SequencePreflight as SequencePreflightData } from "@cinematic/domain";
 
 type SceneTab = "Setup" | "Shots" | "Render";
 
@@ -37,7 +37,7 @@ export function SceneWorkspace({
   const [tab, setTab] = useState<SceneTab>(initialTab ?? "Setup");
   const [readiness, setReadiness] = useState<{ ready: boolean; blockers: Array<{ message: string }> } | null>(null);
   const [flow, setFlow] = useState<SequenceFlow | null>(null);
-  const [preflight, setPreflight] = useState<SequencePreflight | null>(null);
+  const [preflight, setPreflight] = useState<SequencePreflightData | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newSummary, setNewSummary] = useState("");
